@@ -130,8 +130,8 @@ void flightC(const SampleFlight &f) {
   t6(2, 1, f.airline, WHITE, 60);
   t6(2, 9, f.route, CYAN, 60);
   tt(2, 21, f.type, AMBER, 60);
-  tt(2, 27, String("alt ") + f.alt + " spd " + f.spdVal, GREY, 60);
-  tt(2, 32, String("trk ") + f.trackDeg + '^' + " vr " + f.vr, GREY, 60);
+  tt(2, 27, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 60);
+  tt(2, 32, String(f.trackDeg) + '^' + " " + f.vr, GREY, 60);
 }
 
 // ---- weather ------------------------------------------------------------------------------------------------
@@ -217,12 +217,12 @@ void idleClock(float t, uint32_t ms) {
 }
 
 // ---- setup mode, layout B -------------------------------------------------------------------------------------
-void setupB(float t) {
+void setupB(float t, const UiState &ui) {
   int p = (int)(t / 3) % 3;
   switch (p) {
-    case 0: t6(2, 4, "JOIN WIFI", AMBER, 62); t6(2, 16, "ledmatrix", WHITE, 62); break;
-    case 1: t6(2, 4, "PASSWORD", AMBER, 62); t6(2, 16, "7K3PQ9XM", WHITE, 62); break;
-    default: t6(2, 4, "THEN OPEN", AMBER, 62); tt(2, 22, "192.168.4.1", CYAN, 62); break;
+    case 0: t6(2, 4, "JOIN WIFI", AMBER, 62); t6(2, 16, ui.apSsid, WHITE, 62); break;
+    case 1: t6(2, 4, "PASSWORD", AMBER, 62); t6(2, 16, ui.apPass, WHITE, 62); break;
+    default: t6(2, 4, "THEN OPEN", AMBER, 62); tt(2, 22, ui.apIp, CYAN, 62); break;
   }
   for (int i = 0; i < 3; i++) matrix.fillRect(24 + i * 6, 29, 4, 2, i == p ? AMBER : c565(60, 60, 60));
 }
@@ -234,9 +234,9 @@ void bootScreen(float t) {
   String dots = String("connecting") + String("...").substring(0, 1 + (int)(t * 2) % 3);
   tt(14, 24, dots, GREY, 50);
 }
-void connectedScreen() {
+void connectedScreen(const UiState &ui) {
   tt(2, 8, "WIFI OK", GREEN, 60);
-  tt(2, 16, "192.168.1.100", WHITE, 62);
+  tt(2, 16, ui.staIp, WHITE, 62);
   tt(2, 24, "ledmatrix.local", CYAN, 62);
 }
 void staleScreen(float t) {
@@ -260,7 +260,7 @@ void noWifiScreen() {
 
 }  // namespace
 
-void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx) {
+void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiState &ui) {
   float t = ms / 1000.0f;
   const SampleFlight &f = SAMPLE_FLIGHTS[((flightIdx % SAMPLE_FLIGHT_COUNT) + SAMPLE_FLIGHT_COUNT) % SAMPLE_FLIGHT_COUNT];
   switch (s) {
@@ -281,9 +281,9 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx) {
     case Screen::Idle:
       if (layout == 0) idleClock(t, ms);  // layout 1 is the clean black screen: draw nothing
       break;
-    case Screen::Setup: setupB(t); break;
+    case Screen::Setup: setupB(t, ui); break;
     case Screen::Boot: bootScreen(t); break;
-    case Screen::Connected: connectedScreen(); break;
+    case Screen::Connected: connectedScreen(ui); break;
     case Screen::Stale: staleScreen(t); break;
     case Screen::NoWifi: noWifiScreen(); break;
   }

@@ -1,0 +1,243 @@
+#include "net.h"
+
+#include <DNSServer.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
+#include <WiFi.h>
+#include <esp_random.h>
+
+#include <vector>
+
+#include "settings.h"
+
+namespace {
+
+SemaphoreHandle_t lockHandle = nullptr;
+NetInfo info;
+WebServer server(80);
+DNSServer dns;
+
+const char *const AP_SSID = "ledmatrix";
+const char *const HOSTNAME = "ledmatrix";
+
+void setState(NetState s) {
+  xSemaphoreTake(lockHandle, portMAX_DELAY);
+  info.state = s;
+  xSemaphoreGive(lockHandle);
+}
+
+String htmlEscape(const String &s) {
+  String o;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    switch (c) {
+      case '&': o += "&amp;"; break;
+      case '<': o += "&lt;"; break;
+      case '>': o += "&gt;"; break;
+      case '"': o += "&quot;"; break;
+      case '\'': o += "&#39;"; break;
+      default: o += c;
+    }
+  }
+  return o;
+}
+
+String pageStart(const char *title) {
+  String h = F("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>");
+  h += title;
+  h += F("</title><style>body{font-family:system-ui,sans-serif;background:#0d0f12;color:#e6e8ec;margin:0;padding:20px}"
+         "main{max-width:420px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}p{color:#8d96a3}"
+         "label{display:block;margin:16px 0 4px;font-size:14px;color:#8d96a3}"
+         "input,select,button{width:100%;box-sizing:border-box;font:inherit;padding:10px;border-radius:8px;border:1px solid #232830;background:#14171c;color:#e6e8ec}"
+         "button{background:#ffb000;color:#1a1300;border:0;font-weight:600;margin-top:20px;cursor:pointer}"
+         "code{background:#14171c;padding:2px 6px;border-radius:4px}</style></head><body><main>");
+  return h;
+}
+const char *const PAGE_END = "</main></body></html>";
+
+// ---- setup mode ------------------------------------------------------------------------------------------
+struct NetItem {
+  String ssid;
+  int rssi;
+};
+
+std::vector<NetItem> scanNetworks() {
+  std::vector<NetItem> out;
+  int n = WiFi.scanNetworks();
+  for (int i = 0; i < n; i++) {
+    String s = WiFi.SSID(i);
+    if (s.length() == 0) continue;
+    bool dup = false;
+    for (auto &e : out)
+      if (e.ssid == s) {
+        dup = true;
+        if (WiFi.RSSI(i) > e.rssi) e.rssi = WiFi.RSSI(i);
+      }
+    if (!dup) out.push_back({s, (int)WiFi.RSSI(i)});
+  }
+  WiFi.scanDelete();
+  for (size_t i = 1; i < out.size(); i++)  // strongest first
+    for (size_t j = i; j > 0 && out[j].rssi > out[j - 1].rssi; j--) std::swap(out[j], out[j - 1]);
+  if (out.size() > 20) out.resize(20);
+  return out;
+}
+
+String randomPassword() {
+  static const char alphabet[] = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";  // no 0/O/1/I look-alikes
+  String p;
+  for (int i = 0; i < 8; i++) p += alphabet[esp_random() % (sizeof(alphabet) - 1)];
+  return p;
+}
+
+String setupForm(const std::vector<NetItem> &nets, const String &error) {
+  String h = pageStart("ledmatrix setup");
+  h += F("<h1>ledmatrix</h1><p>Choose the Wi-Fi network this display should use.</p>");
+  if (error.length()) h += "<p style='color:#ff7a45'>" + htmlEscape(error) + "</p>";
+  h += F("<form method=post action=/save><label for=ssid>Network</label><select name=ssid id=ssid>");
+  for (auto &n : nets) h += "<option value=\"" + htmlEscape(n.ssid) + "\">" + htmlEscape(n.ssid) + "</option>";
+  h += F("</select><label for=manual>Network not listed? Type its name</label><input name=manual id=manual maxlength=32 autocapitalize=off autocorrect=off>"
+         "<label for=pass>Password</label><input type=password name=pass id=pass maxlength=63 autocomplete=off>"
+         "<button type=submit>Save and connect</button></form>");
+  h += PAGE_END;
+  return h;
+}
+
+[[noreturn]] void runSetup() {
+  setState(NetState::Connecting);  // the panel shows "connecting" while we scan
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  vTaskDelay(pdMS_TO_TICKS(100));
+  std::vector<NetItem> nets = scanNetworks();
+
+  String pass = randomPassword();
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, pass.c_str());
+  IPAddress ip = WiFi.softAPIP();
+  dns.start(53, "*", ip);  // captive portal: every name resolves to us
+
+  xSemaphoreTake(lockHandle, portMAX_DELAY);
+  strlcpy(info.apSsid, AP_SSID, sizeof(info.apSsid));
+  strlcpy(info.apPass, pass.c_str(), sizeof(info.apPass));
+  strlcpy(info.apIp, ip.toString().c_str(), sizeof(info.apIp));
+  info.state = NetState::Setup;
+  xSemaphoreGive(lockHandle);
+  Serial.printf("SETUP network \"%s\" password %s at %s\n", AP_SSID, pass.c_str(), ip.toString().c_str());
+
+  server.on("/", HTTP_GET, [nets]() { server.send(200, "text/html", setupForm(nets, "")); });
+  server.on("/save", HTTP_POST, [nets]() {
+    String ssid = server.arg("manual");
+    ssid.trim();
+    if (ssid.length() == 0) ssid = server.arg("ssid");
+    String pw = server.arg("pass");
+    if (ssid.length() == 0 || ssid.length() > 32 || pw.length() > 63) {
+      server.send(400, "text/html", setupForm(nets, "Enter a network name (up to 32 characters) and a password (up to 63)."));
+      return;
+    }
+    settings::saveWifi(ssid, pw);
+    Serial.printf("SETUP saved network \"%s\"\n", ssid.c_str());
+    String h = pageStart("ledmatrix saved");
+    h += "<h1>Saved</h1><p>The display is restarting and will join <b>" + htmlEscape(ssid) +
+         "</b>. Reconnect your phone to your usual Wi-Fi, then open <code>http://ledmatrix.local</code>. "
+         "If the panel shows NO WIFI, hold the UP button for 5 seconds and try again.</p>";
+    h += PAGE_END;
+    server.send(200, "text/html", h);
+    vTaskDelay(pdMS_TO_TICKS(2500));
+    ESP.restart();
+  });
+  server.onNotFound([ip]() {  // captive-portal probes land here
+    server.sendHeader("Location", String("http://") + ip.toString() + "/");
+    server.send(302, "text/plain", "");
+  });
+  server.begin();
+  for (;;) {
+    dns.processNextRequest();
+    server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+}
+
+// ---- station mode ---------------------------------------------------------------------------------------------
+void registerStationRoutes() {
+  server.on("/", HTTP_GET, []() {
+    String h = pageStart("ledmatrix");
+    h += "<h1>ledmatrix</h1><p>Connected to <b>" + htmlEscape(WiFi.SSID()) + "</b> at " + WiFi.localIP().toString() +
+         " (signal " + String(WiFi.RSSI()) + " dBm). Up for " + String(millis() / 60000) +
+         " min.</p><p>The settings pages arrive in the next build.</p>"
+         "<form method=post action=/forget><button type=submit>Forget this Wi-Fi network</button></form>";
+    h += PAGE_END;
+    server.send(200, "text/html", h);
+  });
+  server.on("/status", HTTP_GET, []() {
+    char buf[200];
+    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u}", WiFi.SSID().c_str(),
+             WiFi.localIP().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap());
+    server.send(200, "application/json", buf);
+  });
+  server.on("/forget", HTTP_POST, []() {
+    String h = pageStart("ledmatrix");
+    h += "<h1>Forgotten</h1><p>The display is restarting in setup mode. Join the network <b>ledmatrix</b> using the password shown on the panel.</p>";
+    h += PAGE_END;
+    server.send(200, "text/html", h);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    netWipeAndRestart();
+  });
+}
+
+[[noreturn]] void runStation(const WifiCreds &c) {
+  setState(NetState::Connecting);
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(HOSTNAME);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(c.ssid.c_str(), c.pass.c_str());
+  uint32_t t0 = millis();
+  bool services = false;
+  for (;;) {
+    bool up = WiFi.status() == WL_CONNECTED;
+    if (up && !services) {
+      if (MDNS.begin(HOSTNAME)) MDNS.addService("http", "tcp", 80);
+      registerStationRoutes();
+      server.begin();
+      services = true;
+      Serial.printf("ONLINE %s as %s.local\n", WiFi.localIP().toString().c_str(), HOSTNAME);
+    }
+    xSemaphoreTake(lockHandle, portMAX_DELAY);
+    if (up) {
+      info.state = NetState::Online;
+      strlcpy(info.ip, WiFi.localIP().toString().c_str(), sizeof(info.ip));
+    } else {
+      info.state = (millis() - t0 < 20000) ? NetState::Connecting : NetState::Offline;
+    }
+    xSemaphoreGive(lockHandle);
+    if (services) server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(up ? 5 : 200));
+  }
+}
+
+void netTask(void *) {
+  settings::begin();
+  WifiCreds c = settings::loadWifi();
+  if (!c.valid()) runSetup();
+  runStation(c);
+}
+
+}  // namespace
+
+void netBegin() {
+  lockHandle = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(netTask, "net", 12288, nullptr, 1, nullptr, 0);
+}
+
+NetInfo netInfo() {
+  NetInfo copy;
+  xSemaphoreTake(lockHandle, portMAX_DELAY);
+  copy = info;
+  xSemaphoreGive(lockHandle);
+  return copy;
+}
+
+void netWipeAndRestart() {
+  settings::clearWifi();
+  delay(100);
+  ESP.restart();
+}
