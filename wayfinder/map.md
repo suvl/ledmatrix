@@ -28,6 +28,10 @@ A Matrix Portal S3 driving a Waveshare 64×32 P4 panel that shows nearby flights
 
 - [Display layouts](tickets/006-display-layout.md): picked from the preview page. Flights A/B/C, weather A/B/C and headlines A/B are all available and selectable on the portal. Idle is the clock or a black screen. Setup mode uses layout B. All four status screens kept. One active layout per screen, picked on the portal, which reuses the preview page's renderer.
 
+## Build progress
+
+- **Slice 1, screens on the real panel** (`arduino/ledmatrix/`): all 15 screens and layouts drawn from example data, ported from the preview page with the same fonts. UP/DOWN buttons step through them, and the demo advances every 8 s. Findings: the 4×6 font's degree sign is disabled in the library header, so degrees are drawn by hand; "American" is cut to "America" beside a logo (7 characters fit); flight layout C's telemetry lines are 1 to 2 characters too wide.
+
 ## Not yet specified
 
 - Wi-Fi/time-of-fetch behaviour: reconnect, retry, offline screen.
