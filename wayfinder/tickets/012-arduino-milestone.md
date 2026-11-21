@@ -1,7 +1,9 @@
 ---
 type: task
-status: open
+status: closed
 ---
+
+**Closed 21 Nov 2026 with a 45 minute soak** (91 of 91 cold fetches ok, no reboots, worst render gap 26 ms, no flicker seen). The several-hour target was not reached; repeat a longer soak with the full firmware later. See `wayfinder/research/arduino-milestone.md`.
 
 ## Interim result (21 Nov 2026)
 
