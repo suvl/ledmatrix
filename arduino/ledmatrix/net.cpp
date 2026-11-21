@@ -8,6 +8,7 @@
 
 #include <vector>
 
+#include "portal_page.h"
 #include "settings.h"
 
 namespace {
@@ -159,18 +160,28 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
 // ---- station mode ---------------------------------------------------------------------------------------------
 void registerStationRoutes() {
   server.on("/", HTTP_GET, []() {
-    String h = pageStart("ledmatrix");
-    h += "<h1>ledmatrix</h1><p>Connected to <b>" + htmlEscape(WiFi.SSID()) + "</b> at " + WiFi.localIP().toString() +
-         " (signal " + String(WiFi.RSSI()) + " dBm). Up for " + String(millis() / 60000) +
-         " min.</p><p>The settings pages arrive in the next build.</p>"
-         "<form method=post action=/forget><button type=submit>Forget this Wi-Fi network</button></form>";
-    h += PAGE_END;
-    server.send(200, "text/html", h);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send_P(200, "text/html", PORTAL_HTML);
+  });
+  server.on("/api/settings", HTTP_GET, []() {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", settings::toJson());
+  });
+  server.on("/api/settings", HTTP_POST, []() {
+    String body = server.arg("plain"), error;
+    if (!settings::setFromJson(body.c_str(), body.length(), error)) {
+      server.send(400, "application/json", String("{\"error\":\"") + error + "\"}");
+      return;
+    }
+    Serial.println("SETTINGS saved");
+    server.send(200, "application/json", settings::toJson());
   });
   server.on("/status", HTTP_GET, []() {
-    char buf[200];
-    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u}", WiFi.SSID().c_str(),
-             WiFi.localIP().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap());
+    char buf[420];
+    snprintf(buf, sizeof(buf),
+             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u}",
+             WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
+             WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap());
     server.send(200, "application/json", buf);
   });
   server.on("/forget", HTTP_POST, []() {
@@ -216,7 +227,6 @@ void registerStationRoutes() {
 }
 
 void netTask(void *) {
-  settings::begin();
   WifiCreds c = settings::loadWifi();
   if (!c.valid()) runSetup();
   runStation(c);

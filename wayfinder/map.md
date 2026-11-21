@@ -28,11 +28,16 @@ A Matrix Portal S3 driving a Waveshare 64×32 P4 panel that shows nearby flights
 
 - [Display layouts](tickets/006-display-layout.md): picked from the preview page. Flights A/B/C, weather A/B/C and headlines A/B are all available and selectable on the portal. Idle is the clock or a black screen. Setup mode is one static screen (network name, big password, address): the first cycling version was too fast to type from. All four status screens kept. One active layout per screen, picked on the portal, which reuses the preview page's renderer.
 
+- [Dual stack](tickets/015-dual-stack.md): IPv4 and IPv6 everywhere. Inbound verified on the board (link-local and global IPv6, mDNS publishes it); outbound fetches over both families still to verify in slice 4.
+- [Portal location picker](tickets/016-portal-location-picker.md): map with a draggable pin and radius circle, plus a place search (OpenStreetMap) and latitude/longitude fields as a fallback.
+
 ## Build progress
 
 - **Slice 1, screens on the real panel** (`arduino/ledmatrix/`): all 15 screens and layouts drawn from example data, ported from the preview page with the same fonts. UP/DOWN buttons step through them, and the demo advances every 8 s. Findings: the 4×6 font's degree sign is disabled in the library header, so degrees are drawn by hand; "American" is cut to "America" beside a logo (7 characters fit); flight layout C's telemetry lines are 1 to 2 characters too wide.
 
 - **Slice 2, Wi-Fi setup flow** (`arduino/ledmatrix/net.cpp`, `settings.cpp`): tested end to end by the owner on a phone, and it works. Boots into setup mode when no network is saved: WPA2 access point `ledmatrix` with a random password, captive page, form with a network list. Hold UP for 5 s (amber progress bar) forgets the network. Findings: the cycling setup screen was too fast to type from, so it is now one static screen; `ledmatrix.local` took exactly 5 s to resolve on macOS until the board got an IPv6 link-local address (`WiFi.enableIPv6()`), now 6 to 15 ms. Known weakness: the form does not verify the password before saving.
+
+- **Slice 3, settings portal** (`portal/`, `shared/`, `tools/`, `arduino/ledmatrix/settings.cpp`, `net.cpp`): the portal is a single page served by the board at `http://ledmatrix.local`. It edits what to show, one layout per screen (thumbnails drawn by the same renderer as the preview page), how long a plane stays (3 to 60 s, default 10), the location on a map with a draggable pin, radius circle, place search and coordinate fields, altitude limits, headline topics, 12/24 h clock, and has a forget-Wi-Fi button. Settings are validated on the device and kept in NVS. Tested with curl: defaults, valid save, four kinds of invalid save (400 with a clear message), persistence across a reboot, reading over IPv6 alone, and the playlist following the saved layouts and dwell. Not yet checked by a human in a browser. The portal has no password (LAN only); the map and place search need the visitor's browser to have internet. `tools/build_web.py` regenerates `preview/index.html` and `arduino/ledmatrix/portal_page.h` from the templates and the shared renderer.
 
 ## Not yet specified
 

@@ -206,13 +206,16 @@ void newsB(float t) {
 }
 
 // ---- idle ---------------------------------------------------------------------------------------------------
-void idleClock(float t, uint32_t ms) {
+void idleClock(float t, uint32_t ms, bool h24) {
   // Demo clock: starts at 21:47 and advances with uptime. Real time (SNTP, timezone) comes in slice 4.
   uint32_t minutes = 21 * 60 + 47 + ms / 60000;
+  unsigned hour = (minutes / 60) % 24;
+  bool pm = hour >= 12;
+  if (!h24) hour = hour % 12 == 0 ? 12 : hour % 12;
   char buf[8];
-  snprintf(buf, sizeof(buf), "%02u%c%02u", (unsigned)((minutes / 60) % 24), ((int)(t * 2) % 2 == 0) ? ':' : ' ', (unsigned)(minutes % 60));
+  snprintf(buf, sizeof(buf), "%02u%c%02u", hour, ((int)(t * 2) % 2 == 0) ? ':' : ' ', (unsigned)(minutes % 60));
   t6(2, 4, buf, WHITE, 64, 2);
-  String date = "SAT 21 NOV";
+  String date = h24 ? "SAT 21 NOV" : (String("SAT 21 NOV ") + (pm ? "PM" : "AM"));
   tt(centerX(tinyWidth(date)), 29, date, GREY, 62);
 }
 
@@ -277,7 +280,7 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
       else newsB(t);
       break;
     case Screen::Idle:
-      if (layout == 0) idleClock(t, ms);  // layout 1 is the clean black screen: draw nothing
+      if (layout == 0) idleClock(t, ms, ui.clock24h);  // layout 1 is the clean black screen: draw nothing
       break;
     case Screen::Setup: setupScreen(ui); break;
     case Screen::Boot: bootScreen(t); break;
