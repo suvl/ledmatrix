@@ -26,3 +26,9 @@ Still to verify (slice 4, live data):
 - Decision: the board-to-service link stays **IPv4 on the dual-stack LAN** for now. The device itself is dual-stack (portal on IPv4 and IPv6, uses IPv6 for any host that publishes it); the limit is the record, not the firmware.
 - Publishing the node's global IPv6 address in public DNS was rejected: it is publicly routable and, depending on the router firewall, could expose a service that has no login.
 - To verify in slice 4: the board's HTTPS client works against hosts with IPv4 only, IPv6 only and both.
+
+### Requirement restated 21 Nov 2026 (owner): IPv6 later must work **without firmware updates**
+- Findings: (1) the Arduino core already resolves IPv6 first when the board has a global IPv6 address and falls back to IPv4 only when the host has no AAAA record, so a newly published AAAA record is picked up automatically. (2) It connects to the single address it resolved and never tries the other family, so an AAAA record pointing at something that does not listen on IPv6 would break the link. (3) The cluster gateway currently refuses IPv6 connections (connection refused on 443, the node listens on IPv6 only on loopback), so a record could not be used today even if one could be added. Making the cluster dual-stack (k3s dual-stack plus the gateway service's IP family policy) is the owner's infrastructure change.
+- Design rules for the firmware: every remote host is reached by name, never by an IPv4 literal; resolve both families; try IPv6 first when the board has a global address, otherwise IPv4 first; give each attempt a short timeout and fall back to the other family; log which family was used.
+- Test in slice 4: fetch from an IPv6-only host (`api6.ipify.org`), from the IPv4-only service, and from a dual-stack host.
+
