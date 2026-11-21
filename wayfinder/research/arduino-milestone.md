@@ -26,6 +26,18 @@ Conclusions:
 
 The research suggested pausing the matrix around flash writes (Protomatter issue 71). In this build that blanked the panel permanently: black within about 5 seconds of boot, which is when the first settings write happens, while the CPU and render loop kept running (render gap 26 ms, fetches continuing). With the pause removed (`PAUSE_FOR_NVS 0`) and the same NVS write running while the matrix is live, the panel stayed lit and smooth. A/B observed by the owner, one run each. Not investigated: why `resume()` fails on the S3 LCD_CAM path, and whether an NVS write can still cause a brief glitch (none visible so far, writes are 2 to 3 ms). Settings writes are rare (only when the owner changes a setting), so a rare tiny glitch would be acceptable.
 
+## Soak result (45 minutes, 21 Nov 2026)
+
+The final build (`PAUSE_FOR_NVS 0`) ran 45 minutes on the real board: **91 cold fetches, 91 ok, 0 failures, no reboots, worst render frame gap 26 ms**, and the owner saw no flicker or freeze.
+
+| Cold connect time (TCP + TLS) | n | median | p90 | max |
+| --- | --- | --- | --- | --- |
+| ECDSA, api.adsb.lol (flights) | 30 | 2.36 s | 2.44 s | 4.93 s |
+| ECDSA, api.open-meteo.com (weather) | 31 | 2.26 s | 2.41 s | 4.31 s |
+| RSA-2048, www.amazon.com (comparison) | 30 | 0.37 s | 0.39 s | 3.74 s (one outlier) |
+
+RSA is about six times faster at the median, but a single 3.7 s outlier shows a cold handshake can spike regardless of key type (probably Wi-Fi retransmits). Every ECDSA fetch was over 1 s. In the task design none of this reached the panel. A several-hour run was the target; 45 minutes is what was done.
+
 ## Not done yet
 
 - Several-hour soak with the real log (running logger started after this note).
