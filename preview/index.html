@@ -1,0 +1,421 @@
+<title>LedMatrix Screen Previews</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a bench-instrument page. Dark workshop ground, one amber accent taken from the panel itself.
+   Each screen is a section; each section holds 1 to 3 candidate layouts as true-pixel 64x32 panels. */
+:root {
+  --bg: #0d0f12;
+  --surface: #14171c;
+  --line: #232830;
+  --text: #e6e8ec;
+  --muted: #8d96a3;
+  --amber: #ffb000;
+  --blue: #4a90ff;
+  --warn: #ff7a45;
+  --ok: #4cd08a;
+  --display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--body); font-size: 15px; line-height: 1.5;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 5vw, 44px); margin: 0 0 8px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 24px; margin: 0; }
+.lede { color: var(--muted); max-width: 70ch; margin: 0 0 20px; }
+.specs { display: flex; flex-wrap: wrap; gap: 8px 20px; font-family: var(--mono); font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+.specs b { color: var(--amber); font-weight: 500; }
+.controls {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-bottom: 36px;
+}
+.controls label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.controls input[type=range] { accent-color: var(--amber); width: 140px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { background: transparent; color: var(--muted); border: 0; padding: 6px 12px; font: inherit; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--amber); color: #1a1300; font-weight: 500; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+section { margin-bottom: 52px; }
+section header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 6px; }
+section header p { color: var(--muted); margin: 0; font-size: 14px; max-width: 70ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.chips button { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font: inherit; cursor: pointer; }
+.chips button[aria-pressed=true] { border-color: var(--amber); color: var(--amber); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 24px 20px; margin-top: 14px; }
+figure { margin: 0; min-width: 0; }
+canvas { display: block; width: 100%; height: auto; aspect-ratio: 2 / 1; border: 1px solid var(--line); border-radius: 6px; background: #07080a; }
+figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); }
+figcaption strong { display: block; color: var(--text); font-weight: 500; font-size: 14px; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.badge { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 4px; background: rgba(255,122,69,.14); color: var(--warn); }
+.badge.fit { background: rgba(76,208,138,.12); color: var(--ok); }
+.note { font-size: 13px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 12px; margin-top: 28px; max-width: 75ch; }
+</style>
+
+<div class="wrap">
+  <h1>LedMatrix screen previews</h1>
+  <p class="lede">Every screen the device will show, drawn at the real 64×32 resolution with the same pixel fonts the firmware will use. Layouts are candidates to react to. All flight, weather and headline text is example data, and the airline logos are placeholder drawings.</p>
+  <div class="specs">
+    <span><b>64×32</b> pixels</span>
+    <span><b>6×8</b> font: 10 characters per line</span>
+    <span><b>4×6</b> font: 16 characters per line</span>
+    <span><b>16×16</b> logo block</span>
+  </div>
+
+  <div class="controls" role="group" aria-label="Preview settings">
+    <span class="seg" role="group" aria-label="Pixel style">
+      <button type="button" id="style-dots" aria-pressed="true">LED dots</button>
+      <button type="button" id="style-px" aria-pressed="false">Flat pixels</button>
+    </span>
+    <label for="bright">Brightness <input type="range" id="bright" min="25" max="100" value="100"></label>
+    <label for="pause"><input type="checkbox" id="pause"> Pause animation</label>
+  </div>
+
+  <section id="flight">
+    <header><h2>Flight card</h2><p>Shown once when a plane enters the radar, for the time set on the portal (default 10 s).</p></header>
+    <div class="chips" id="flight-chips" role="group" aria-label="Example flight"></div>
+    <div class="grid" id="flight-grid"></div>
+  </section>
+
+  <section id="weather">
+    <header><h2>Weather</h2><p>Shown when no plane is on screen.</p></header>
+    <div class="grid" id="weather-grid"></div>
+  </section>
+
+  <section id="news">
+    <header><h2>Headlines</h2><p>Cycled when there is a new headline and no plane is on screen.</p></header>
+    <div class="grid" id="news-grid"></div>
+  </section>
+
+  <section id="idle">
+    <header><h2>Idle</h2><p>Nothing to show: no plane, weather or headline.</p></header>
+    <div class="grid" id="idle-grid"></div>
+  </section>
+
+  <section id="setup">
+    <header><h2>Setup mode</h2><p>After a long press on UP. The password is generated each time and shown here.</p></header>
+    <div class="grid" id="setup-grid"></div>
+  </section>
+
+  <section id="status">
+    <header><h2>Status screens</h2><p>Boot, connected, stale data and no Wi-Fi.</p></header>
+    <div class="grid" id="status-grid"></div>
+  </section>
+
+  <p class="note">Fonts are the Adafruit GFX default 5×7 (6×8 cell) and Tom Thumb 3×5 (4×6 cell), read from the library installed for the firmware. A red badge means a line is wider than the space it is given, and the preview cuts it where the panel would. Real logos would be 16×16 bitmaps sent by the cloud service and stored on the device.</p>
+</div>
+
+<script>
+const FONTS = {"glcd":[0,0,0,0,0,62,91,79,91,62,62,107,79,107,62,28,62,124,62,28,24,60,126,60,24,28,87,125,87,28,28,94,127,94,28,0,24,60,24,0,255,231,195,231,255,0,24,36,24,0,255,231,219,231,255,48,72,58,6,14,38,41,121,41,38,64,127,5,5,7,64,127,5,37,63,90,60,231,60,90,127,62,28,28,8,8,28,28,62,127,20,34,127,34,20,95,95,0,95,95,6,9,127,1,127,0,102,137,149,106,96,96,96,96,96,148,162,255,162,148,8,4,126,4,8,16,32,126,32,16,8,8,42,28,8,8,28,42,8,8,30,16,16,16,16,12,30,12,30,12,48,56,62,56,48,6,14,62,14,6,0,0,0,0,0,0,0,95,0,0,0,7,0,7,0,20,127,20,127,20,36,42,127,42,18,35,19,8,100,98,54,73,86,32,80,0,8,7,3,0,0,28,34,65,0,0,65,34,28,0,42,28,127,28,42,8,8,62,8,8,0,128,112,48,0,8,8,8,8,8,0,0,96,96,0,32,16,8,4,2,62,81,73,69,62,0,66,127,64,0,114,73,73,73,70,33,65,73,77,51,24,20,18,127,16,39,69,69,69,57,60,74,73,73,49,65,33,17,9,7,54,73,73,73,54,70,73,73,41,30,0,0,20,0,0,0,64,52,0,0,0,8,20,34,65,20,20,20,20,20,0,65,34,20,8,2,1,89,9,6,62,65,93,89,78,124,18,17,18,124,127,73,73,73,54,62,65,65,65,34,127,65,65,65,62,127,73,73,73,65,127,9,9,9,1,62,65,65,81,115,127,8,8,8,127,0,65,127,65,0,32,64,65,63,1,127,8,20,34,65,127,64,64,64,64,127,2,28,2,127,127,4,8,16,127,62,65,65,65,62,127,9,9,9,6,62,65,81,33,94,127,9,25,41,70,38,73,73,73,50,3,1,127,1,3,63,64,64,64,63,31,32,64,32,31,63,64,56,64,63,99,20,8,20,99,3,4,120,4,3,97,89,73,77,67,0,127,65,65,65,2,4,8,16,32,0,65,65,65,127,4,2,1,2,4,64,64,64,64,64,0,3,7,8,0,32,84,84,120,64,127,40,68,68,56,56,68,68,68,40,56,68,68,40,127,56,84,84,84,24,0,8,126,9,2,24,164,164,156,120,127,8,4,4,120,0,68,125,64,0,32,64,64,61,0,127,16,40,68,0,0,65,127,64,0,124,4,120,4,120,124,8,4,4,120,56,68,68,68,56,252,24,36,36,24,24,36,36,24,252,124,8,4,4,8,72,84,84,84,36,4,4,63,68,36,60,64,64,32,124,28,32,64,32,28,60,64,48,64,60,68,40,16,40,68,76,144,144,144,124,68,100,84,76,68,0,8,54,65,0,0,0,119,0,0,0,65,54,8,0,2,1,2,4,2,60,38,35,38,60,30,161,161,97,18,58,64,64,32,122,56,84,84,85,89,33,85,85,121,65,34,84,84,120,66,33,85,84,120,64,32,84,85,121,64,12,30,82,114,18,57,85,85,85,89,57,84,84,84,89,57,85,84,84,88,0,0,69,124,65,0,2,69,125,66,0,1,69,124,64,125,18,17,18,125,240,40,37,40,240,124,84,85,69,0,32,84,84,124,84,124,10,9,127,73,50,73,73,73,50,58,68,68,68,58,50,74,72,72,48,58,65,65,33,122,58,66,64,32,120,0,157,160,160,125,61,66,66,66,61,61,64,64,64,61,60,36,255,36,36,72,126,73,67,102,43,47,252,47,43,255,9,41,246,32,192,136,126,9,3,32,84,84,121,65,0,0,68,125,65,48,72,72,74,50,56,64,64,34,122,0,122,10,10,114,125,13,25,49,125,38,41,41,47,40,38,41,41,41,38,48,72,77,64,32,56,8,8,8,8,8,8,8,8,56,47,16,200,172,186,47,16,40,52,250,0,0,123,0,0,8,20,42,20,34,34,20,42,20,8,85,0,85,0,85,170,85,170,85,170,255,85,255,85,255,0,0,0,255,0,16,16,16,255,0,20,20,20,255,0,16,16,255,0,255,16,16,240,16,240,20,20,20,252,0,20,20,247,0,255,0,0,255,0,255,20,20,244,4,252,20,20,23,16,31,16,16,31,16,31,20,20,20,31,0,16,16,16,240,0,0,0,0,31,16,16,16,16,31,16,16,16,16,240,16,0,0,0,255,16,16,16,16,16,16,16,16,16,255,16,0,0,0,255,20,0,0,255,0,255,0,0,31,16,23,0,0,252,4,244,20,20,23,16,23,20,20,244,4,244,0,0,255,0,247,20,20,20,20,20,20,20,247,0,247,20,20,20,23,20,16,16,31,16,31,20,20,20,244,20,16,16,240,16,240,0,0,31,16,31,0,0,0,31,20,0,0,0,252,20,0,0,240,16,240,16,16,255,16,255,20,20,20,255,20,16,16,16,31,0,0,0,0,240,16,255,255,255,255,255,240,240,240,240,240,255,255,255,0,0,0,0,0,255,255,15,15,15,15,15,56,68,68,56,68,252,74,74,74,52,126,2,2,6,6,2,126,2,126,2,99,85,73,65,99,56,68,68,60,4,64,126,32,30,32,6,2,126,2,2,153,165,231,165,153,28,42,73,42,28,76,114,1,114,76,48,74,77,77,48,48,72,120,72,48,188,98,90,70,61,62,73,73,73,0,126,1,1,1,126,42,42,42,42,42,68,68,95,68,68,64,81,74,68,64,64,68,74,81,64,0,0,255,1,3,224,128,255,0,0,8,8,107,107,8,54,18,54,36,54,6,15,9,15,6,0,0,24,24,0,0,0,16,16,0,48,64,255,1,1,0,31,1,1,30,0,25,29,23,18,0,60,60,60,60,0,0,0,0,0],"tt":{"bitmaps":[0,232,180,190,250,121,228,133,66,219,214,192,106,64,149,128,170,128,93,0,96,224,128,37,72,118,220,117,64,197,78,197,28,183,146,243,28,115,222,229,72,247,222,247,156,160,70,42,34,227,128,136,168,229,4,87,198,87,218,215,92,114,70,214,220,243,206,243,200,115,214,183,218,233,46,36,212,183,90,146,78,191,218,191,250,86,212,215,72,86,246,215,234,113,28,233,36,182,214,182,164,183,250,181,90,181,36,229,78,242,78,136,128,228,158,84,224,144,206,240,154,220,114,48,46,214,119,48,43,164,119,148,154,218,184,32,154,128,151,106,201,46,255,208,214,208,86,160,214,232,118,178,114,64,121,224,93,38,182,176,183,160,191,240,169,80,181,148,239,112,106,38,216,200,172,120,184,94,116,107,174,171,170,181,116,216,106,172,160,113,128,119,142,100,228,192,218,128,224,85,0,93,14,201,128,239,128,96,182,232,117,182,255,128,71,0,224,85,14,152,144,50,144,102,216,50,65,78,69,122,81,122,225,122,121,122,170,250,218,250,123,238,114,50,128,71,238,83,238,227,238,163,238,71,174,83,174,227,174,163,174,215,220,206,250,71,222,83,222,227,222,207,222,163,222,170,128,119,220,138,222,42,222,226,222,162,222,42,244,158,248,119,93,0,69,222,81,222,225,222,121,222,161,222,109,222,127,224,113,148,69,246,81,246,225,246,161,246,154,128,101,64,225,36,161,36,121,214,207,90,69,84,81,84,225,84,205,84,161,84,67,132,126,224,138,214,42,214,226,214,162,214,42,178,128,154,232,162,178,128,0,123,230,127,112,175,60,175,60,162,164,189,238,189,238,0,0,128,160,127,230,234,170,224],"glyphs":{"32":[0,1,1,2,0,-5],"33":[1,1,5,2,0,-5],"34":[2,3,2,4,0,-5],"35":[3,3,5,4,0,-5],"36":[5,3,5,4,0,-5],"37":[7,3,5,4,0,-5],"38":[9,3,5,4,0,-5],"39":[11,1,2,2,0,-5],"40":[12,2,5,3,0,-5],"41":[14,2,5,3,0,-5],"42":[16,3,3,4,0,-5],"43":[18,3,3,4,0,-4],"44":[20,2,2,3,0,-2],"45":[21,3,1,4,0,-3],"46":[22,1,1,2,0,-1],"47":[23,3,5,4,0,-5],"48":[25,3,5,4,0,-5],"49":[27,2,5,3,0,-5],"50":[29,3,5,4,0,-5],"51":[31,3,5,4,0,-5],"52":[33,3,5,4,0,-5],"53":[35,3,5,4,0,-5],"54":[37,3,5,4,0,-5],"55":[39,3,5,4,0,-5],"56":[41,3,5,4,0,-5],"57":[43,3,5,4,0,-5],"58":[45,1,3,2,0,-4],"59":[46,2,4,3,0,-4],"60":[47,3,5,4,0,-5],"61":[49,3,3,4,0,-4],"62":[51,3,5,4,0,-5],"63":[53,3,5,4,0,-5],"64":[55,3,5,4,0,-5],"65":[57,3,5,4,0,-5],"66":[59,3,5,4,0,-5],"67":[61,3,5,4,0,-5],"68":[63,3,5,4,0,-5],"69":[65,3,5,4,0,-5],"70":[67,3,5,4,0,-5],"71":[69,3,5,4,0,-5],"72":[71,3,5,4,0,-5],"73":[73,3,5,4,0,-5],"74":[75,3,5,4,0,-5],"75":[77,3,5,4,0,-5],"76":[79,3,5,4,0,-5],"77":[81,3,5,4,0,-5],"78":[83,3,5,4,0,-5],"79":[85,3,5,4,0,-5],"80":[87,3,5,4,0,-5],"81":[89,3,5,4,0,-5],"82":[91,3,5,4,0,-5],"83":[93,3,5,4,0,-5],"84":[95,3,5,4,0,-5],"85":[97,3,5,4,0,-5],"86":[99,3,5,4,0,-5],"87":[101,3,5,4,0,-5],"88":[103,3,5,4,0,-5],"89":[105,3,5,4,0,-5],"90":[107,3,5,4,0,-5],"91":[109,3,5,4,0,-5],"92":[111,3,3,4,0,-4],"93":[113,3,5,4,0,-5],"94":[115,3,2,4,0,-5],"95":[116,3,1,4,0,-1],"96":[117,2,2,3,0,-5],"97":[118,3,4,4,0,-4],"98":[120,3,5,4,0,-5],"99":[122,3,4,4,0,-4],"100":[124,3,5,4,0,-5],"101":[126,3,4,4,0,-4],"102":[128,3,5,4,0,-5],"103":[130,3,5,4,0,-4],"104":[132,3,5,4,0,-5],"105":[134,1,5,2,0,-5],"106":[135,3,6,4,0,-5],"107":[138,3,5,4,0,-5],"108":[140,3,5,4,0,-5],"109":[142,3,4,4,0,-4],"110":[144,3,4,4,0,-4],"111":[146,3,4,4,0,-4],"112":[148,3,5,4,0,-4],"113":[150,3,5,4,0,-4],"114":[152,3,4,4,0,-4],"115":[154,3,4,4,0,-4],"116":[156,3,5,4,0,-5],"117":[158,3,4,4,0,-4],"118":[160,3,4,4,0,-4],"119":[162,3,4,4,0,-4],"120":[164,3,4,4,0,-4],"121":[166,3,5,4,0,-4],"122":[168,3,4,4,0,-4],"123":[170,3,5,4,0,-5],"124":[172,1,5,2,0,-5],"125":[173,3,5,4,0,-5],"126":[175,3,2,4,0,-5],"161":[176,1,5,2,0,-5],"162":[177,3,5,4,0,-5],"163":[179,3,5,4,0,-5],"164":[181,3,5,4,0,-5],"165":[183,3,5,4,0,-5],"166":[185,1,5,2,0,-5],"167":[186,3,5,4,0,-5],"168":[188,3,1,4,0,-5],"169":[189,3,3,4,0,-5],"170":[191,3,5,4,0,-5],"171":[193,2,3,3,0,-5],"172":[194,3,2,4,0,-4],"173":[195,2,1,3,0,-3],"174":[196,3,3,4,0,-5],"175":[198,3,1,4,0,-5],"176":[199,3,3,4,0,-5],"177":[201,3,5,4,0,-5],"178":[203,3,3,4,0,-5],"179":[205,3,3,4,0,-5],"180":[207,2,2,3,0,-5],"181":[208,3,5,4,0,-5],"182":[210,3,5,4,0,-5],"183":[212,3,3,4,0,-4],"184":[214,3,3,4,0,-3],"185":[216,1,3,2,0,-5],"186":[217,3,5,4,0,-5],"187":[219,2,3,3,0,-5],"188":[220,3,5,4,0,-5],"189":[222,3,5,4,0,-5],"190":[224,3,5,4,0,-5],"191":[226,3,5,4,0,-5],"192":[228,3,5,4,0,-5],"193":[230,3,5,4,0,-5],"194":[232,3,5,4,0,-5],"195":[234,3,5,4,0,-5],"196":[236,3,5,4,0,-5],"197":[238,3,5,4,0,-5],"198":[240,3,5,4,0,-5],"199":[242,3,6,4,0,-5],"200":[245,3,5,4,0,-5],"201":[247,3,5,4,0,-5],"202":[249,3,5,4,0,-5],"203":[251,3,5,4,0,-5],"204":[253,3,5,4,0,-5],"205":[255,3,5,4,0,-5],"206":[257,3,5,4,0,-5],"207":[259,3,5,4,0,-5],"208":[261,3,5,4,0,-5],"209":[263,3,5,4,0,-5],"210":[265,3,5,4,0,-5],"211":[267,3,5,4,0,-5],"212":[269,3,5,4,0,-5],"213":[271,3,5,4,0,-5],"214":[273,3,5,4,0,-5],"215":[275,3,3,4,0,-4],"216":[277,3,5,4,0,-5],"217":[279,3,5,4,0,-5],"218":[281,3,5,4,0,-5],"219":[283,3,5,4,0,-5],"220":[285,3,5,4,0,-5],"221":[287,3,5,4,0,-5],"222":[289,3,5,4,0,-5],"223":[291,3,6,4,0,-5],"224":[294,3,5,4,0,-5],"225":[296,3,5,4,0,-5],"226":[298,3,5,4,0,-5],"227":[300,3,5,4,0,-5],"228":[302,3,5,4,0,-5],"229":[304,3,5,4,0,-5],"230":[306,3,4,4,0,-4],"231":[308,3,5,4,0,-4],"232":[310,3,5,4,0,-5],"233":[312,3,5,4,0,-5],"234":[314,3,5,4,0,-5],"235":[316,3,5,4,0,-5],"236":[318,2,5,3,0,-5],"237":[320,2,5,3,0,-5],"238":[322,3,5,4,0,-5],"239":[324,3,5,4,0,-5],"240":[326,3,5,4,0,-5],"241":[328,3,5,4,0,-5],"242":[330,3,5,4,0,-5],"243":[332,3,5,4,0,-5],"244":[334,3,5,4,0,-5],"245":[336,3,5,4,0,-5],"246":[338,3,5,4,0,-5],"247":[340,3,5,4,0,-5],"248":[342,3,4,4,0,-4],"249":[344,3,5,4,0,-5],"250":[346,3,5,4,0,-5],"251":[348,3,5,4,0,-5],"252":[350,3,5,4,0,-5],"253":[352,3,6,4,0,-5],"254":[355,3,5,4,0,-4],"255":[357,3,6,4,0,-5],"285":[360,1,1,2,0,-1],"338":[361,3,5,4,0,-5],"339":[363,3,4,4,0,-4],"352":[365,3,5,4,0,-5],"353":[367,3,5,4,0,-5],"376":[369,3,5,4,0,-5],"381":[371,3,5,4,0,-5],"382":[373,3,5,4,0,-5],"3748":[375,1,1,2,0,-1],"5024":[376,1,1,2,0,-1],"8226":[377,1,1,2,0,-3],"8230":[378,3,1,4,0,-1],"8364":[379,3,5,4,0,-5],"65533":[381,4,5,5,0,-5]}}};
+const W = 64, H = 32, S = 8;
+
+/* ---------- framebuffer and fonts ---------- */
+class FB {
+  constructor() { this.d = new Uint8Array(W * H * 3); }
+  clear() { this.d.fill(0); }
+  px(x, y, c) {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const i = (y * W + x) * 3; this.d[i] = c[0]; this.d[i + 1] = c[1]; this.d[i + 2] = c[2];
+  }
+  rect(x, y, w, h, c) { for (let i = 0; i < w; i++) { this.px(x + i, y, c); this.px(x + i, y + h - 1, c); } for (let j = 0; j < h; j++) { this.px(x, y + j, c); this.px(x + w - 1, y + j, c); } }
+  fill(x, y, w, h, c) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, c); }
+}
+const WHITE = [255, 255, 255], AMBER = [255, 176, 0], BLUE = [40, 110, 255], GREEN = [0, 220, 90], RED = [255, 40, 40], GREY = [130, 130, 140], CYAN = [0, 200, 230];
+
+function glcdCode(ch) { return ch === '°' ? 248 : ch.charCodeAt(0) & 255; }
+function w6(s, size) { return s.length * 6 * (size || 1); }
+function wTT(s) { let w = 0; for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; w += g ? g[3] : 4; } return w; }
+function drawGlcd(fb, x, y, s, c, size) {
+  size = size || 1;
+  for (const ch of s) {
+    const code = glcdCode(ch);
+    for (let col = 0; col < 5; col++) {
+      const b = FONTS.glcd[code * 5 + col];
+      for (let row = 0; row < 8; row++) if (b & (1 << row)) fb.fill(x + col * size, y + row * size, size, size, c);
+    }
+    x += 6 * size;
+  }
+}
+function drawTT(fb, x, base, s, c) {
+  for (const ch of s) {
+    const g = FONTS.tt.glyphs[ch.charCodeAt(0)];
+    if (!g) { x += 4; continue; }
+    const [off, w, h, adv, xo, yo] = g; let bit = 0;
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+      if (FONTS.tt.bitmaps[off + (bit >> 3)] & (0x80 >> (bit & 7))) fb.px(x + xo + xx, base + yo + yy, c);
+      bit++;
+    }
+    x += adv;
+  }
+}
+// Draw text that must fit maxW; cut it like the panel would and report it.
+function T6(fb, ctx, x, y, s, c, maxW, size) {
+  size = size || 1; let t = s;
+  while (t.length && w6(t, size) > maxW) t = t.slice(0, -1);
+  if (t !== s) ctx.warn('"' + s + '" cut to "' + t + '"');
+  drawGlcd(fb, x, y, t, c, size); return t;
+}
+function TT(fb, ctx, x, base, s, c, maxW) {
+  let t = s;
+  while (t.length && wTT(t) > maxW) t = t.slice(0, -1);
+  if (t !== s) ctx.warn('"' + s + '" cut to "' + t + '"');
+  drawTT(fb, x, base, t, c); return t;
+}
+function centerX(w) { return Math.max(0, Math.floor((W - w) / 2)); }
+
+/* ---------- placeholder art ---------- */
+function logo(fb, x, y, kind) {
+  for (let j = 0; j < 16; j++) for (let i = 0; i < 16; i++) {
+    const dx = i - 7.5, dy = j - 7.5, r = Math.hypot(dx, dy);
+    if (r > 7.6) continue;
+    let c = null;
+    if (kind === 'roundel') {
+      const band = 7.5 + 3.2 * Math.sin((i - 7.5) / 7.5 * Math.PI * 0.9);
+      c = Math.abs(j - band) < 1.6 ? [235, 235, 245] : (j < band ? [30, 90, 255] : [230, 60, 60]);
+    } else if (kind === 'stripes') {
+      const k = Math.floor((i + j) / 3) % 3; c = [[235, 60, 60], [235, 235, 245], [40, 90, 220]][k];
+    } else if (kind === 'orb') {
+      c = (Math.abs(r - 3) < 0.7 || Math.abs(r - 6) < 0.7 || j === 8 || i === 8) ? [190, 205, 255] : [30, 70, 220];
+    } else {
+      const mer = Math.abs(Math.abs(dx) - 4 * Math.sqrt(Math.max(0, 1 - (dy / 7.5) ** 2))) < 0.7;
+      c = (r > 6.6 || mer || Math.abs(dy) < 0.6 || Math.abs(dy - 4) < 0.5 || Math.abs(dy + 4) < 0.5) ? [90, 160, 255] : [10, 40, 140];
+    }
+    fb.px(x + i, y + j, c);
+  }
+}
+function wxIcon(fb, x, y, kind, s) {
+  const k = s || 16, cx = x + k / 2 - 0.5, cy = y + k / 2 - 0.5;
+  const sun = (r, col) => { for (let j = -k; j <= k; j++) for (let i = -k; i <= k; i++) if (Math.hypot(i, j) <= r) fb.px(cx + i, cy + j, col); };
+  const cloud = (ox, oy, sc, col) => { [[-3, 1, 3], [0, -1, 4], [3, 1, 3], [0, 2, 3]].forEach(([a, b, r]) => { for (let j = -5; j <= 5; j++) for (let i = -6; i <= 6; i++) if (Math.hypot(i - a * sc, j - b * sc) <= r * sc) fb.px(cx + ox + i, cy + oy + j, col); }); };
+  const sc = k / 16;
+  if (kind === 'sun') {
+    sun(3.2 * sc * 1.4, [255, 200, 0]);
+    for (let a = 0; a < 8; a++) { const ang = a * Math.PI / 4; for (let r = 5.6 * sc; r < 7.6 * sc; r += 0.5) fb.px(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r, [255, 170, 0]); }
+  } else if (kind === 'part') {
+    sun(2.6 * sc * 1.4, [255, 200, 0]); cloud(2 * sc, 2 * sc, 0.8 * sc, [200, 210, 225]);
+  } else if (kind === 'cloud') {
+    cloud(0, 0, 1 * sc, [190, 200, 215]);
+  } else {
+    cloud(0, -2 * sc, 0.9 * sc, [150, 160, 180]);
+    for (let d = -1; d <= 1; d++) { fb.px(cx + d * 4 * sc, cy + 5 * sc, [60, 150, 255]); fb.px(cx + d * 4 * sc - 1, cy + 7 * sc, [60, 150, 255]); }
+  }
+}
+
+/* ---------- example data ---------- */
+const FLIGHTS = [
+  { chip: 'Korean · LAX-ICN', air: 'Korean', route: 'LAX-ICN', type: '747-8', from: 'Los Angeles Intl', to: 'Seoul Incheon', alt: '34.0kft', spd: '540mph', trk: '294°', vr: '+0ft/s', logo: 'roundel' },
+  { chip: 'American · DCA-ORD', air: 'American', route: 'DCA-ORD', type: 'E75L', from: 'Washington Reagan', to: "Chicago O'Hare", alt: '9.9kft', spd: '330kts', trk: '305°', vr: '+1ft/s', logo: 'stripes' },
+  { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9.8kft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
+  { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12.2kft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
+];
+const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
+const state = { flight: 0, style: 'dots', bright: 1, paused: false };
+
+/* ---------- screen drawings ---------- */
+const flightA = (fb, t, ctx) => {
+  const f = FLIGHTS[state.flight];
+  logo(fb, 1, 0, f.logo);
+  T6(fb, ctx, 19, 1, f.air, WHITE, 44);
+  T6(fb, ctx, 19, 9, f.route, CYAN, 44);
+  T6(fb, ctx, 1, 17, f.type, AMBER, 62);
+  TT(fb, ctx, 1, 30, f.alt + ' ' + f.spd, GREY, 62);
+};
+const flightB = (fb, t, ctx) => {
+  const f = FLIGHTS[state.flight];
+  logo(fb, 1, 0, f.logo);
+  T6(fb, ctx, 19, 1, f.air, WHITE, 44);
+  T6(fb, ctx, 19, 9, f.route, CYAN, 44);
+  TT(fb, ctx, 1, 23, f.type, AMBER, 62);
+  TT(fb, ctx, 1, 30, 'to ' + f.to, GREY, 62);
+};
+const flightC = (fb, t, ctx) => {
+  const f = FLIGHTS[state.flight];
+  T6(fb, ctx, 2, 1, f.air, WHITE, 60);
+  T6(fb, ctx, 2, 9, f.route, CYAN, 60);
+  TT(fb, ctx, 2, 21, f.type, AMBER, 60);
+  TT(fb, ctx, 2, 27, 'alt ' + f.alt + ' spd ' + f.spd.replace(/mph|kts/, ''), GREY, 60);
+  TT(fb, ctx, 2, 32, 'trk ' + f.trk + ' vr ' + f.vr, GREY, 60);
+};
+const wxA = (fb, t, ctx) => {
+  wxIcon(fb, 1, 2, 'part', 16);
+  T6(fb, ctx, 21, 3, '18', WHITE, 26, 2); drawGlcd(fb, 45, 3, '°', WHITE, 1); drawGlcd(fb, 51, 3, 'C', WHITE, 1);
+  TT(fb, ctx, 2, 25, 'Partly cloudy', AMBER, 60);
+  TT(fb, ctx, 2, 31, 'H21 L12 rain 10%', GREY, 60);
+};
+const wxB = (fb, t, ctx) => {
+  TT(fb, ctx, 2, 7, 'HOME', AMBER, 60);
+  T6(fb, ctx, centerX(w6('18°C', 2)), 10, '18°C', WHITE, 62, 2);
+  TT(fb, ctx, centerX(wTT('Partly cloudy')), 31, 'Partly cloudy', GREY, 62);
+};
+const wxC = (fb, t, ctx) => {
+  const cols = [['NOW', 'part', '18'], ['+3H', 'sun', '21'], ['+6H', 'rain', '15']];
+  cols.forEach(([lab, ic, tmp], i) => {
+    const x0 = 2 + i * 21;
+    TT(fb, ctx, x0 + 2, 7, lab, AMBER, 20);
+    wxIcon(fb, x0 + 3, 10, ic, 12);
+    TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 20);
+  });
+};
+const newsA = (fb, t, ctx) => {
+  const h = HEADLINES[Math.floor(t / 14) % HEADLINES.length];
+  fb.fill(0, 0, W, 8, [0, 40, 90]); TT(fb, ctx, 2, 6, 'NEWS', WHITE, 60);
+  const wpx = w6(h, 1), x = W - ((t % 14) / 14) * (W + wpx);
+  drawGlcd(fb, Math.round(x), 16, h, AMBER, 1);
+  fb.fill(0, 0, 1, H, [0, 0, 0]);
+};
+const wrap = (s, maxChars) => { const out = []; let cur = ''; s.split(' ').forEach(w => { if ((cur + ' ' + w).trim().length > maxChars) { out.push(cur); cur = w; } else cur = (cur + ' ' + w).trim(); }); out.push(cur); return out; };
+const newsB = (fb, t, ctx) => {
+  const h = HEADLINES[Math.floor(t / 4) % HEADLINES.length];
+  TT(fb, ctx, 2, 6, 'NEWS', BLUE, 60);
+  wrap(h, 15).slice(0, 4).forEach((l, i) => TT(fb, ctx, 2, 13 + i * 6, l, WHITE, 62));
+};
+const idleA = (fb, t, ctx) => {
+  const d = new Date(), hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+  const colon = Math.floor(t * 2) % 2 === 0 ? ':' : ' ';
+  const s = hh + colon + mm;
+  T6(fb, ctx, centerX(w6(s, 2)), 4, s, WHITE, 64, 2);
+  const date = d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).replace(',', '').toUpperCase();
+  TT(fb, ctx, centerX(wTT(date)), 29, date, GREY, 62);
+};
+const idleB = (fb, t, ctx) => {
+  TT(fb, ctx, centerX(wTT('NO FLIGHTS')), 6, 'NO FLIGHTS', GREY, 62);
+  const cx = 31.5, cy = 20, R = 10, ang = (t * 1.4) % (Math.PI * 2);
+  for (let a = 0; a < 40; a++) { const aa = ang - a * 0.05, br = Math.max(0, 1 - a / 40); for (let r = 1; r <= R; r++) fb.px(cx + Math.cos(aa) * r, cy + Math.sin(aa) * r, [0, 120 * br, 40 * br]); }
+  for (let a = 0; a < 40; a++) fb.px(cx + Math.cos(a / 40 * 6.283) * R, cy + Math.sin(a / 40 * 6.283) * R, [20, 60, 30]);
+  fb.px(cx, cy, GREEN);
+};
+const idleC = (fb, t) => {
+  for (let i = 0; i < 3; i++) { const v = 0.35 + 0.65 * Math.max(0, Math.sin(t * 2.5 - i * 0.9)); fb.fill(24 + i * 8, 15, 3, 3, [255 * v, 176 * v, 0]); }
+};
+const setupA = (fb, t, ctx) => {
+  TT(fb, ctx, 2, 6, 'SETUP MODE', AMBER, 62);
+  TT(fb, ctx, 2, 14, 'WIFI ledmatrix', WHITE, 62);
+  TT(fb, ctx, 2, 21, 'PASS 7K3PQ9XM', WHITE, 62);
+  TT(fb, ctx, 2, 28, 'OPEN 192.168.4.1', CYAN, 62);
+};
+const setupB = (fb, t, ctx) => {
+  const p = Math.floor(t / 3) % 3;
+  const pages = [['JOIN WIFI', 'ledmatrix'], ['PASSWORD', '7K3PQ9XM'], ['THEN OPEN', null]];
+  T6(fb, ctx, 2, 4, pages[p][0], AMBER, 62);
+  if (pages[p][1]) T6(fb, ctx, 2, 16, pages[p][1], WHITE, 62); else TT(fb, ctx, 2, 22, '192.168.4.1', CYAN, 62);
+  for (let i = 0; i < 3; i++) fb.fill(24 + i * 6, 29, 4, 2, i === p ? AMBER : [60, 60, 60]);
+};
+const boot = (fb, t, ctx) => {
+  T6(fb, ctx, centerX(w6('ledmatrix', 1)), 7, 'ledmatrix', WHITE, 62);
+  const dots = '.'.repeat(1 + Math.floor(t * 2) % 3);
+  TT(fb, ctx, 14, 24, 'connecting' + dots, GREY, 50);
+};
+const connected = (fb, t, ctx) => {
+  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, 'ledmatrix.local', CYAN, 62);
+};
+const stale = (fb, t, ctx) => {
+  wxIcon(fb, 4, 8, 'part', 16);
+  T6(fb, ctx, 26, 10, '18', WHITE, 26, 2); drawGlcd(fb, 50, 10, '°', WHITE, 1);
+  if (Math.floor(t * 1.5) % 2 === 0) fb.fill(60, 1, 3, 3, [255, 120, 20]);
+  TT(fb, ctx, 2, 30, 'stale data dot', GREY, 62);
+};
+const nowifi = (fb, t, ctx) => {
+  for (let i = 0; i < 12; i++) { fb.px(3 + i, 9 + i, RED); fb.px(14 - i, 9 + i, RED); fb.px(4 + i, 9 + i, RED); fb.px(13 - i, 9 + i, RED); }
+  TT(fb, ctx, 20, 10, 'NO WIFI', RED, 44); TT(fb, ctx, 20, 17, 'hold UP 5s', WHITE, 44); TT(fb, ctx, 20, 24, 'to set up', GREY, 44);
+};
+
+/* ---------- panels ---------- */
+const panels = [];
+const bgCache = {};
+function bg(style) {
+  if (bgCache[style]) return bgCache[style];
+  const c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
+  const g = c.getContext('2d'); g.fillStyle = '#07080a'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#15181d';
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (style === 'dots') { g.beginPath(); g.arc(x * S + S / 2, y * S + S / 2, S * 0.36, 0, 6.2832); g.fill(); } else g.fillRect(x * S + 0.5, y * S + 0.5, S - 1, S - 1);
+  }
+  return (bgCache[style] = c);
+}
+function addPanel(gridId, title, fonts, draw, animated) {
+  const fig = document.createElement('figure');
+  const cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S;
+  cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', title + ' preview');
+  const cap = document.createElement('figcaption');
+  cap.innerHTML = '<strong></strong><span></span><div class="badges"></div>';
+  cap.querySelector('strong').textContent = title; cap.querySelector('span').textContent = fonts;
+  fig.append(cv, cap); document.getElementById(gridId).append(fig);
+  panels.push({ cv, g: cv.getContext('2d'), fb: new FB(), badges: cap.querySelector('.badges'), draw, animated: !!animated, last: '' });
+}
+function render(p, t) {
+  p.fb.clear(); const warns = [];
+  p.draw(p.fb, t, { warn: m => { if (!warns.includes(m)) warns.push(m); } });
+  const g = p.g, b = state.bright; g.drawImage(bg(state.style), 0, 0);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 3, r = p.fb.d[i], gg = p.fb.d[i + 1], bl = p.fb.d[i + 2];
+    if (!(r | gg | bl)) continue;
+    const col = 'rgb(' + Math.round(r * b) + ',' + Math.round(gg * b) + ',' + Math.round(bl * b) + ')';
+    if (state.style === 'dots') {
+      g.globalAlpha = 0.18; g.fillStyle = col; g.beginPath(); g.arc(x * S + S / 2, y * S + S / 2, S * 0.52, 0, 6.2832); g.fill();
+      g.globalAlpha = 1; g.beginPath(); g.arc(x * S + S / 2, y * S + S / 2, S * 0.4, 0, 6.2832); g.fill();
+    } else { g.fillStyle = col; g.fillRect(x * S + 0.5, y * S + 0.5, S - 1, S - 1); }
+  }
+  const key = warns.join('|');
+  if (key !== p.last) {
+    p.last = key; p.badges.textContent = '';
+    if (!warns.length) { const s = document.createElement('span'); s.className = 'badge fit'; s.textContent = 'fits'; p.badges.append(s); }
+    warns.forEach(m => { const s = document.createElement('span'); s.className = 'badge'; s.textContent = m; p.badges.append(s); });
+  }
+}
+function renderAll(t) { panels.forEach(p => render(p, t || 0)); }
+
+const F6 = '6×8 font', FT = '4×6 font', FB6 = '6×8 + 4×6 fonts', F12 = '12×16 (6×8 doubled) + 4×6 fonts';
+addPanel('flight-grid', 'A · Logo, three lines, aircraft, speed strip', FB6, flightA);
+addPanel('flight-grid', 'B · Logo, three lines, destination name', FB6, flightB);
+addPanel('flight-grid', 'C · No logo, full telemetry', FB6, flightC);
+addPanel('weather-grid', 'A · Icon, big temperature, high and low', F12, wxA);
+addPanel('weather-grid', 'B · Location and big temperature', F12, wxB);
+addPanel('weather-grid', 'C · Now, +3 h, +6 h', FT, wxC);
+addPanel('news-grid', 'A · Scrolling headline', FB6, newsA, true);
+addPanel('news-grid', 'B · Paged, four lines, 4 s each', FT, newsB, true);
+addPanel('idle-grid', 'A · Clock and date', F12, idleA, true);
+addPanel('idle-grid', 'B · Radar sweep', FT, idleB, true);
+addPanel('idle-grid', 'C · Three pulsing dots', 'pixels only', idleC, true);
+addPanel('setup-grid', 'A · All on one screen', FT, setupA);
+addPanel('setup-grid', 'B · One item at a time, 3 s each', FB6, setupB, true);
+addPanel('status-grid', 'Booting', FB6, boot, true);
+addPanel('status-grid', 'Connected', FT, connected);
+addPanel('status-grid', 'Stale data indicator', FB6, stale, true);
+addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
+
+/* ---------- controls ---------- */
+const chips = document.getElementById('flight-chips');
+FLIGHTS.forEach((f, i) => {
+  const b = document.createElement('button'); b.type = 'button'; b.textContent = f.chip; b.setAttribute('aria-pressed', String(i === 0));
+  b.addEventListener('click', () => { state.flight = i; [...chips.children].forEach((c, j) => c.setAttribute('aria-pressed', String(j === i))); renderAll(clock()); });
+  chips.append(b);
+});
+function setStyle(s) { state.style = s; document.getElementById('style-dots').setAttribute('aria-pressed', String(s === 'dots')); document.getElementById('style-px').setAttribute('aria-pressed', String(s === 'px')); renderAll(clock()); }
+document.getElementById('style-dots').addEventListener('click', () => setStyle('dots'));
+document.getElementById('style-px').addEventListener('click', () => setStyle('px'));
+document.getElementById('bright').addEventListener('input', e => { state.bright = e.target.value / 100; renderAll(clock()); });
+const pauseBox = document.getElementById('pause');
+pauseBox.checked = window.matchMedia('(prefers-reduced-motion: reduce)').matches; state.paused = pauseBox.checked;
+pauseBox.addEventListener('change', () => { state.paused = pauseBox.checked; });
+let t0 = performance.now(), frozen = 0, pausedAt = null;
+function clock() { return (performance.now() - t0) / 1000 - frozen; }
+let last = 0;
+function loop(ts) {
+  if (state.paused) { if (pausedAt === null) pausedAt = performance.now(); }
+  else {
+    if (pausedAt !== null) { frozen += (performance.now() - pausedAt) / 1000; pausedAt = null; }
+    if (ts - last > 66) { last = ts; const t = clock(); panels.forEach(p => { if (p.animated) render(p, t); }); }
+  }
+  requestAnimationFrame(loop);
+}
+renderAll(0);
+requestAnimationFrame(loop);
+</script>
