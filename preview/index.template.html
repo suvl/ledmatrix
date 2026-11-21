@@ -303,11 +303,10 @@ const setupA = (fb, t, ctx) => {
   TT(fb, ctx, 2, 28, 'OPEN 192.168.4.1', CYAN, 62);
 };
 const setupB = (fb, t, ctx) => {
-  const p = Math.floor(t / 3) % 3;
-  const pages = [['JOIN WIFI', 'ledmatrix'], ['PASSWORD', '7K3PQ9XM'], ['THEN OPEN', null]];
-  T6(fb, ctx, 2, 4, pages[p][0], AMBER, 62);
-  if (pages[p][1]) T6(fb, ctx, 2, 16, pages[p][1], WHITE, 62); else TT(fb, ctx, 2, 22, '192.168.4.1', CYAN, 62);
-  for (let i = 0; i < 3; i++) fb.fill(24 + i * 6, 29, 4, 2, i === p ? AMBER : [60, 60, 60]);
+  T6(fb, ctx, 2, 0, 'ledmatrix', AMBER, 62);
+  TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
+  T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
+  TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
 };
 const boot = (fb, t, ctx) => {
   T6(fb, ctx, centerX(w6('ledmatrix', 1)), 7, 'ledmatrix', WHITE, 62);
@@ -385,7 +384,7 @@ addPanel('idle-grid', 'A · Clock and date', F12, idleA, true);
 addPanel('idle-grid', 'B · Radar sweep', FT, idleB, true);
 addPanel('idle-grid', 'C · Three pulsing dots', 'pixels only', idleC, true);
 addPanel('setup-grid', 'A · All on one screen', FT, setupA);
-addPanel('setup-grid', 'B · One item at a time, 3 s each', FB6, setupB, true);
+addPanel('setup-grid', 'B · Static, big password (in use)', FB6, setupB);
 addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
 addPanel('status-grid', 'Stale data indicator', FB6, stale, true);

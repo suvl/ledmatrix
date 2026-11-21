@@ -217,14 +217,12 @@ void idleClock(float t, uint32_t ms) {
 }
 
 // ---- setup mode, layout B -------------------------------------------------------------------------------------
-void setupB(float t, const UiState &ui) {
-  int p = (int)(t / 3) % 3;
-  switch (p) {
-    case 0: t6(2, 4, "JOIN WIFI", AMBER, 62); t6(2, 16, ui.apSsid, WHITE, 62); break;
-    case 1: t6(2, 4, "PASSWORD", AMBER, 62); t6(2, 16, ui.apPass, WHITE, 62); break;
-    default: t6(2, 4, "THEN OPEN", AMBER, 62); tt(2, 22, ui.apIp, CYAN, 62); break;
-  }
-  for (int i = 0; i < 3; i++) matrix.fillRect(24 + i * 6, 29, 4, 2, i == p ? AMBER : c565(60, 60, 60));
+// Static on purpose: the owner has to read the password and type it on a phone, so nothing cycles.
+void setupScreen(const UiState &ui) {
+  t6(2, 0, ui.apSsid, AMBER, 62);
+  tt(2, 14, "WIFI PASSWORD", GREY, 62);
+  t6(2, 16, ui.apPass, WHITE, 62);
+  tt(2, 30, ui.apIp, CYAN, 62);
 }
 
 // ---- status screens ---------------------------------------------------------------------------------------------
@@ -281,7 +279,7 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Idle:
       if (layout == 0) idleClock(t, ms);  // layout 1 is the clean black screen: draw nothing
       break;
-    case Screen::Setup: setupB(t, ui); break;
+    case Screen::Setup: setupScreen(ui); break;
     case Screen::Boot: bootScreen(t); break;
     case Screen::Connected: connectedScreen(ui); break;
     case Screen::Stale: staleScreen(t); break;

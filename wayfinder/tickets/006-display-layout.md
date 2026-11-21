@@ -11,7 +11,7 @@ Chosen from the screen preview page (`preview/index.html`, published privately; 
 - **Weather:** all three (A icon + big temperature + high/low, B location + big temperature, C now / +3 h / +6 h).
 - **Headlines:** both (A scrolling line, B paged four lines).
 - **Idle:** the clock and date (A), or a clean black screen. Radar and dots dropped.
-- **Setup mode:** B (one item at a time, 3 s each: network, password, address).
+- **Setup mode:** B was first chosen as one item at a time, 3 s each. Testing on the real board showed that is too fast to read and type a password, so it is now **one static screen** with the network name, the password in the big font, and the address (owner's call, 21 Nov 2026).
 - **Status screens:** all four as previewed (booting, connected, stale-data dot, no Wi-Fi).
 
 Data these layouts need, passed to ticket 005: airline name, route (IATA/ICAO codes), aircraft type, airport names, altitude, speed, heading, vertical rate, a 16×16 logo, weather (temperature, condition, high/low, rain chance, +3 h and +6 h), headline text. Pixel limits: 10 characters per line at 6×8, 16 at 4×6, logo 16×16.

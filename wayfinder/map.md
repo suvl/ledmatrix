@@ -26,7 +26,7 @@ A Matrix Portal S3 driving a Waveshare 64×32 P4 panel that shows nearby flights
 
 - [When a plane shows](tickets/014-when-a-plane-shows.md): each plane is shown once, when it enters the radar, for a duration set on the portal (default 10 s). A plane always takes priority over weather and headlines. Layout modeled on theflightwall.com, adapted to 64×32.
 
-- [Display layouts](tickets/006-display-layout.md): picked from the preview page. Flights A/B/C, weather A/B/C and headlines A/B are all available and selectable on the portal. Idle is the clock or a black screen. Setup mode uses layout B. All four status screens kept. One active layout per screen, picked on the portal, which reuses the preview page's renderer.
+- [Display layouts](tickets/006-display-layout.md): picked from the preview page. Flights A/B/C, weather A/B/C and headlines A/B are all available and selectable on the portal. Idle is the clock or a black screen. Setup mode is one static screen (network name, big password, address): the first cycling version was too fast to type from. All four status screens kept. One active layout per screen, picked on the portal, which reuses the preview page's renderer.
 
 ## Build progress
 
