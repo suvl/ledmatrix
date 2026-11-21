@@ -1,0 +1,4 @@
+# Copy to the board's CIRCUITPY drive as settings.toml and fill in.
+# Never commit the real file.
+CIRCUITPY_WIFI_SSID = "your-network"
+CIRCUITPY_WIFI_PASSWORD = "your-password"
