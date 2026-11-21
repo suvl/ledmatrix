@@ -22,3 +22,5 @@ Build the firmware: `arduino-cli compile --fqbn esp32:esp32:adafruit_matrixporta
 - Routes and airlines: adsbdb, https://www.adsbdb.com
 - Headlines: Google News
 - Map: © OpenStreetMap contributors, Leaflet
+
+Third-party licences (Adafruit GFX and the Tom Thumb font data this repository contains): see `THIRD_PARTY_NOTICES.md`.
