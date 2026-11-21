@@ -32,6 +32,8 @@ A Matrix Portal S3 driving a Waveshare 64×32 P4 panel that shows nearby flights
 
 - **Slice 1, screens on the real panel** (`arduino/ledmatrix/`): all 15 screens and layouts drawn from example data, ported from the preview page with the same fonts. UP/DOWN buttons step through them, and the demo advances every 8 s. Findings: the 4×6 font's degree sign is disabled in the library header, so degrees are drawn by hand; "American" is cut to "America" beside a logo (7 characters fit); flight layout C's telemetry lines are 1 to 2 characters too wide.
 
+- **Slice 2, Wi-Fi setup flow** (`arduino/ledmatrix/net.cpp`, `settings.cpp`): tested end to end by the owner on a phone, and it works. Boots into setup mode when no network is saved: WPA2 access point `ledmatrix` with a random password, captive page, form with a network list. Hold UP for 5 s (amber progress bar) forgets the network. Findings: the cycling setup screen was too fast to type from, so it is now one static screen; `ledmatrix.local` took exactly 5 s to resolve on macOS until the board got an IPv6 link-local address (`WiFi.enableIPv6()`), now 6 to 15 ms. Known weakness: the form does not verify the password before saving.
+
 ## Not yet specified
 
 - Wi-Fi/time-of-fetch behaviour: reconnect, retry, offline screen.

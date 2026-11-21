@@ -186,6 +186,7 @@ void registerStationRoutes() {
 [[noreturn]] void runStation(const WifiCreds &c) {
   setState(NetState::Connecting);
   WiFi.mode(WIFI_STA);
+  WiFi.enableIPv6();  // so mDNS can answer AAAA too; without it macOS waits 5 s for the missing record
   WiFi.setHostname(HOSTNAME);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
