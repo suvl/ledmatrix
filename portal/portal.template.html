@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ledmatrix</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+:root{--bg:#0d0f12;--surface:#14171c;--line:#232830;--text:#e6e8ec;--muted:#8d96a3;--amber:#ffb000;--blue:#4a90ff;--warn:#ff7a45;--ok:#4cd08a;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:20px max(16px,env(safe-area-inset-left,0px)) 96px max(16px,env(safe-area-inset-right,0px))}
+main{max-width:760px;margin:0 auto}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;margin:0 0 10px}
+p.lede{color:var(--muted);margin:0 0 24px}
+section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+label{display:block;font-size:14px;color:var(--muted);margin:12px 0 4px}
+input[type=text],input[type=number],input[type=search]{width:100%;font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#0f1216;color:var(--text)}
+input[type=range]{width:100%;accent-color:var(--amber)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.switch{display:flex;align-items:center;gap:10px;margin:8px 0;color:var(--text);font-size:15px}
+.switch input{width:20px;height:20px;accent-color:var(--amber)}
+.opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:8px}
+.opt{background:#0b0d10;border:2px solid var(--line);border-radius:8px;padding:6px;color:var(--muted);font:inherit;font-size:13px;cursor:pointer;text-align:center}
+.opt canvas{width:100%;height:auto;aspect-ratio:2/1;display:block;border-radius:4px;margin-bottom:4px}
+.opt[aria-pressed=true]{border-color:var(--amber);color:var(--amber)}
+#map{height:320px;border-radius:8px;border:1px solid var(--line);margin:10px 0;background:#0b0d10}
+.note{color:var(--muted);font-size:13px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px max(16px,env(safe-area-inset-left,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-right,0px));display:flex;gap:12px;align-items:center;justify-content:center}
+button.primary{background:var(--amber);color:#1a1300;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.search{margin-top:8px}
+#status{font-size:14px;color:var(--muted)}#status.ok{color:var(--ok)}#status.err{color:var(--warn)}
+code{background:#0b0d10;padding:2px 6px;border-radius:4px}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+<h1>ledmatrix</h1>
+<p class="lede">Settings for the display. Changes apply when you press Save.</p>
+
+<section>
+<h2>What to show</h2>
+<label class="switch"><input type="checkbox" id="showFlights"> Nearby flights</label>
+<label class="switch"><input type="checkbox" id="showWeather"> Weather</label>
+<label class="switch"><input type="checkbox" id="showNews"> Headlines</label>
+<label for="dwell">Show each new plane for <b id="dwellVal">10</b> seconds</label>
+<input type="range" id="dwell" min="3" max="60" step="1" value="10">
+</section>
+
+<section>
+<h2>Layouts</h2>
+<p class="note">One layout is active for each screen. These are drawn at the panel's real 64×32 pixels with example data.</p>
+<label>Flight card</label><div class="opts" id="lay-flight"></div>
+<label>Weather</label><div class="opts" id="lay-weather"></div>
+<label>Headlines</label><div class="opts" id="lay-news"></div>
+<label>When there is nothing to show</label><div class="opts" id="lay-idle"></div>
+<label class="switch"><input type="checkbox" id="c24"> 24-hour clock</label>
+</section>
+
+<section>
+<h2>Location</h2>
+<p class="note" id="mapNote">Click the map, drag the pin, search for a place, or type the coordinates.</p>
+<div id="map" role="application" aria-label="Map for choosing the location"></div>
+<div style="display:flex;gap:8px"><input type="search" id="q" placeholder="Search for an address or place" aria-label="Search for a place"><button type="button" class="ghost" id="go">Search</button></div>
+<div class="row">
+<div><label for="lat">Latitude</label><input type="number" id="lat" step="0.0001" min="-90" max="90"></div>
+<div><label for="lon">Longitude</label><input type="number" id="lon" step="0.0001" min="-180" max="180"></div>
+<div><label for="radius">Radius (km)</label><input type="number" id="radius" min="1" max="250" step="1"></div>
+<div><label for="altmin">Lowest altitude (ft)</label><input type="number" id="altmin" min="0" max="60000" step="500"></div>
+<div><label for="altmax">Highest altitude (ft)</label><input type="number" id="altmax" min="0" max="60000" step="500"></div>
+</div>
+</section>
+
+<section>
+<h2>Headline topics</h2>
+<p class="note">Up to five searches, one per line. Leave empty for none.</p>
+<div id="queries"></div>
+</section>
+
+<section>
+<h2>Wi-Fi and device</h2>
+<p id="wifi" class="note">Loading…</p>
+<form method="post" action="/forget" onsubmit="return confirm('Forget this Wi-Fi network and restart into setup mode?')"><button type="submit" class="ghost">Forget this Wi-Fi network</button></form>
+</section>
+</main>
+
+<div class="bar"><span id="status" role="status"></span><button type="button" class="primary" id="save">Save</button></div>
+
+<script>
+__RENDERER__
+</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const sel = { flight: 0, weather: 0, news: 0, idle: 'clock' };
+  let hasLoc = false, map = null, marker = null, circle = null;
+
+  /* ---- layout thumbnails, drawn with the same code as the panel ---- */
+  function paint(cv, draw, t) {
+    const fb = new FB(); draw(fb, t || 0, { warn() {} });
+    const g = cv.getContext('2d'), s = cv.width / W;
+    g.fillStyle = '#07080a'; g.fillRect(0, 0, cv.width, cv.height);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 3, r = fb.d[i], gg = fb.d[i + 1], b = fb.d[i + 2];
+      g.fillStyle = (r | gg | b) ? 'rgb(' + r + ',' + gg + ',' + b + ')' : '#15181d';
+      g.beginPath(); g.arc((x + .5) * s, (y + .5) * s, s * .4, 0, 6.2832); g.fill();
+    }
+  }
+  state.flight = 1;
+  const groups = {
+    flight: [['A', flightA], ['B', flightB], ['C', flightC]],
+    weather: [['A', wxA], ['B', wxB], ['C', wxC]],
+    news: [['A · scrolling', (fb, t, c) => newsA(fb, 3, c)], ['B · pages', (fb, t, c) => newsB(fb, 0, c)]],
+    idle: [['Clock and date', idleA], ['Black screen', () => {}]],
+  };
+  const idleValues = ['clock', 'black'];
+  function buildGroup(key) {
+    const box = $('lay-' + key); box.textContent = '';
+    groups[key].forEach(([label, draw], i) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'opt';
+      const cv = document.createElement('canvas'); cv.width = W * 4; cv.height = H * 4; paint(cv, draw, 0);
+      b.append(cv, document.createTextNode(label.length === 1 ? 'Layout ' + label : label));
+      b.addEventListener('click', () => { sel[key] = key === 'idle' ? idleValues[i] : i; refreshGroups(); });
+      box.append(b);
+    });
+  }
+  function refreshGroups() {
+    ['flight', 'weather', 'news', 'idle'].forEach(key => {
+      [...$('lay-' + key).children].forEach((b, i) => b.setAttribute('aria-pressed', String(key === 'idle' ? sel.idle === idleValues[i] : sel[key] === i)));
+    });
+  }
+
+  /* ---- map ---- */
+  function currentLatLon() { return [parseFloat($('lat').value), parseFloat($('lon').value)]; }
+  function drawMapState(fit) {
+    if (!map) return;
+    const [lat, lon] = currentLatLon();
+    if (isNaN(lat) || isNaN(lon) || !hasLoc) return;
+    if (!marker) {
+      marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+      marker.on('dragend', () => { const p = marker.getLatLng(); setLoc(p.lat, p.lng, false); });
+      circle = L.circle([lat, lon], { radius: 1000, color: '#ffb000', weight: 2, fillOpacity: .08 }).addTo(map);
+    }
+    marker.setLatLng([lat, lon]); circle.setLatLng([lat, lon]);
+    circle.setRadius(Math.max(1, +$('radius').value || 1) * 1000);
+    if (fit) map.fitBounds(circle.getBounds(), { maxZoom: 13 });
+  }
+  function setLoc(lat, lon, fit) {
+    hasLoc = true; $('lat').value = lat.toFixed(5); $('lon').value = lon.toFixed(5); drawMapState(fit);
+  }
+  function initMap() {
+    if (!window.L) { $('mapNote').textContent = 'The map could not load (it needs internet). Type the coordinates below instead.'; $('map').hidden = true; return; }
+    map = L.map('map').setView(hasLoc ? currentLatLon() : [30, 0], hasLoc ? 11 : 2);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap contributors' }).addTo(map);
+    map.on('click', e => setLoc(e.latlng.lat, e.latlng.lng, false));
+    drawMapState(true);
+  }
+  ['lat', 'lon'].forEach(id => $(id).addEventListener('change', () => { const [a, b] = currentLatLon(); if (!isNaN(a) && !isNaN(b)) { hasLoc = true; drawMapState(true); } }));
+  $('radius').addEventListener('input', () => drawMapState(true));
+  $('go').addEventListener('click', async () => {
+    const q = $('q').value.trim(); if (!q) return;
+    setStatus('Searching…');
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(q));
+      const j = await r.json();
+      if (!j.length) { setStatus('Nothing found for that search.', 'err'); return; }
+      setLoc(parseFloat(j[0].lat), parseFloat(j[0].lon), true); if (map) map.setView([j[0].lat, j[0].lon], 12); setStatus('');
+    } catch (e) { setStatus('Search needs internet and is unavailable. Type the coordinates instead.', 'err'); }
+  });
+  $('q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('go').click(); } });
+
+  /* ---- settings <-> form ---- */
+  function setStatus(msg, cls) { const s = $('status'); s.textContent = msg; s.className = cls || ''; }
+  function apply(c) {
+    $('showFlights').checked = c.showFlights; $('showWeather').checked = c.showWeather; $('showNews').checked = c.showNews;
+    $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
+    sel.flight = c.layouts.flight; sel.weather = c.layouts.weather; sel.news = c.layouts.news; sel.idle = c.layouts.idle;
+    $('c24').checked = c.clock24h;
+    hasLoc = !!c.location.set;
+    if (hasLoc) { $('lat').value = c.location.lat; $('lon').value = c.location.lon; }
+    $('radius').value = c.location.radiusKm; $('altmin').value = c.location.altMinFt; $('altmax').value = c.location.altMaxFt;
+    const qs = $('queries'); qs.textContent = '';
+    for (let i = 0; i < 5; i++) {
+      const inp = document.createElement('input'); inp.type = 'text'; inp.maxLength = 40; inp.id = 'query' + i; inp.setAttribute('aria-label', 'Headline topic ' + (i + 1));
+      inp.value = c.queries[i] || ''; inp.style.marginBottom = '8px'; qs.append(inp);
+    }
+    refreshGroups();
+  }
+  function collect() {
+    const q = []; for (let i = 0; i < 5; i++) q.push($('query' + i).value.trim());
+    const [lat, lon] = currentLatLon();
+    return {
+      showFlights: $('showFlights').checked, showWeather: $('showWeather').checked, showNews: $('showNews').checked,
+      layouts: { flight: sel.flight, weather: sel.weather, news: sel.news, idle: sel.idle },
+      dwellSec: +$('dwell').value, clock24h: $('c24').checked,
+      location: { set: hasLoc && !isNaN(lat) && !isNaN(lon), lat: isNaN(lat) ? 0 : lat, lon: isNaN(lon) ? 0 : lon,
+        radiusKm: +$('radius').value, altMinFt: +$('altmin').value, altMaxFt: +$('altmax').value },
+      queries: q,
+    };
+  }
+  $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
+  $('save').addEventListener('click', async () => {
+    setStatus('Saving…');
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collect()) });
+      const j = await r.json();
+      if (!r.ok) { setStatus(j.error || 'Could not save.', 'err'); return; }
+      apply(j); drawMapState(false); setStatus('Saved.', 'ok');
+    } catch (e) { setStatus('Could not reach the display.', 'err'); }
+  });
+
+  /* ---- start ---- */
+  Object.keys(groups).forEach(buildGroup);
+  fetch('/api/settings').then(r => r.json()).then(c => { apply(c); initMap(); }).catch(() => { setStatus('Could not load the settings.', 'err'); initMap(); });
+  fetch('/status').then(r => r.json()).then(s => {
+    $('wifi').textContent = 'Connected to ' + s.ssid + ' (signal ' + s.rssi + ' dBm). IPv4 ' + s.ip + (s.ip6_global ? ', IPv6 ' + s.ip6_global : '') + '. Up ' + Math.round(s.uptime_s / 60) + ' min.';
+  }).catch(() => { $('wifi').textContent = 'Status unavailable.'; });
+})();
+</script>
+</body>
+</html>

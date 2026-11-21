@@ -1,16 +1,18 @@
 // LedMatrix firmware.
 //   slice 1: every screen and layout on the real panel, with example data
-//   slice 2: Wi-Fi setup flow (this file): saved network, setup access point, mDNS, long-press UP to reset
+//   slice 2: Wi-Fi setup flow: saved network, setup access point, mDNS, long-press UP to reset
+//   slice 3: settings portal (this file picks screens from the saved settings; see net.cpp and portal/)
 //
-//   core 1: render task   ~30 fps, picks the screen from the network state
-//   core 0: net task      Wi-Fi, setup access point, DNS, web server (see net.cpp)
-//   loop(): buttons       UP = next demo screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network
+//   core 1: render task   ~30 fps, picks the screen from the network state and the saved settings
+//   core 0: net task      Wi-Fi, setup access point, DNS, web server and portal API (see net.cpp)
+//   loop(): buttons       UP = next screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network
 
 #include <Adafruit_Protomatter.h>
 
 #include "display.h"
 #include "net.h"
 #include "screens.h"
+#include "settings.h"
 
 // ---- panel wiring (Matrix Portal S3), 64x32 uses address lines A-D --------------------------
 static uint8_t rgbPins[] = {42, 41, 40, 38, 39, 37};
@@ -25,23 +27,20 @@ static const uint8_t BUTTON_DOWN = 7;
 static const uint32_t HOLD_TO_RESET_MS = 5000;
 static const uint32_t CONNECTED_SCREEN_MS = 5000;
 
-// ---- demo playlist (stands in for live data until slice 4) -------------------------------------
+// ---- demo playlist: the enabled screens with their chosen layouts, until live data arrives (slice 4) ----
 struct Item {
   Screen screen;
   uint8_t layout;
   const char *name;
 };
-static const Item PLAYLIST[] = {
-  {Screen::Flight, 0, "flight A"}, {Screen::Flight, 1, "flight B"}, {Screen::Flight, 2, "flight C"},
-  {Screen::Weather, 0, "weather A"}, {Screen::Weather, 1, "weather B"}, {Screen::Weather, 2, "weather C"},
-  {Screen::News, 0, "headlines A"}, {Screen::News, 1, "headlines B"},
-  {Screen::Idle, 0, "idle clock"}, {Screen::Idle, 1, "idle black"},
-  {Screen::Setup, 0, "setup B"},
-  {Screen::Boot, 0, "status boot"}, {Screen::Connected, 0, "status connected"},
-  {Screen::Stale, 0, "status stale"}, {Screen::NoWifi, 0, "status no wifi"},
-};
-static const int PLAYLIST_LEN = sizeof(PLAYLIST) / sizeof(PLAYLIST[0]);
-static const uint32_t AUTO_ADVANCE_MS = 8000;
+static int buildPlaylist(const Settings &s, Item out[4]) {
+  int n = 0;
+  if (s.showFlights) out[n++] = {Screen::Flight, s.flightLayout, "flight"};
+  if (s.showWeather) out[n++] = {Screen::Weather, s.weatherLayout, "weather"};
+  if (s.showNews) out[n++] = {Screen::News, s.newsLayout, "headlines"};
+  if (n == 0) out[n++] = {Screen::Idle, (uint8_t)(s.idleClock ? 0 : 1), "idle"};
+  return n;
+}
 
 static volatile int gIndex = 0;
 static volatile int gPass = 0;       // increments each time the playlist wraps; picks the example flight
@@ -59,12 +58,13 @@ static void renderTask(void *) {
     if (gMatrixOk) {
       uint32_t now = millis();
       NetInfo ni = netInfo();
+      Settings cfg = settings::get();
       if (ni.state != lastState) {
         lastState = ni.state;
         Serial.printf("NET state %d\n", (int)ni.state);
       }
       UiState ui = {ni.apSsid[0] ? ni.apSsid : "ledmatrix", ni.apPass[0] ? ni.apPass : "7K3PQ9XM",
-                    ni.apIp[0] ? ni.apIp : "192.168.4.1", ni.ip[0] ? ni.ip : "192.168.1.100"};
+                    ni.apIp[0] ? ni.apIp : "192.168.4.1", ni.ip[0] ? ni.ip : "192.168.1.100", cfg.clock24h};
 
       Screen screen;
       uint8_t layout = 0;
@@ -83,10 +83,12 @@ static void renderTask(void *) {
       } else if (now - onlineSince < CONNECTED_SCREEN_MS) {
         screen = Screen::Connected;
       } else {
-        const Item &it = PLAYLIST[gIndex];
+        Item list[4];
+        int n = buildPlaylist(cfg, list);
+        const Item &it = list[gIndex % n];
         screen = it.screen;
         layout = it.layout;
-        flightIdx = gPass + (it.screen == Screen::Flight ? it.layout : 0);
+        flightIdx = gPass;
       }
 
       matrix.fillScreen(0);
@@ -100,11 +102,12 @@ static void renderTask(void *) {
 }
 
 static void goTo(int index) {
-  int n = PLAYLIST_LEN;
+  Item list[4];
+  int n = buildPlaylist(settings::get(), list);
   int next = ((index % n) + n) % n;
   if (next == 0 && index > gIndex) gPass = gPass + 1;
   gIndex = next;
-  Serial.printf("SCREEN %d/%d %s\n", next + 1, n, PLAYLIST[next].name);
+  Serial.printf("SCREEN %d/%d %s\n", next + 1, n, list[next].name);
 }
 
 void setup() {
@@ -112,8 +115,9 @@ void setup() {
   pinMode(BUTTON_UP, INPUT_PULLUP);
   pinMode(BUTTON_DOWN, INPUT_PULLUP);
   delay(1500);
-  Serial.println("\nledmatrix: slice 2, Wi-Fi setup flow");
-  netBegin();  // must run before the render task asks for the network state
+  Serial.println("\nledmatrix: slice 3, settings portal");
+  settings::begin();  // loads the saved settings; must run before the tasks read them
+  netBegin();         // must run before the render task asks for the network state
   xTaskCreatePinnedToCore(renderTask, "render", 8192, nullptr, 2, nullptr, 1);
 }
 
@@ -143,7 +147,7 @@ void loop() {
   }
   upWas = up;
   downWas = down;
-  if (millis() - lastChange >= AUTO_ADVANCE_MS) {
+  if (millis() - lastChange >= (uint32_t)settings::get().dwellSec * 1000) {
     goTo(gIndex + 1);
     lastChange = millis();
   }

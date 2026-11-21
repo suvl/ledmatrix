@@ -10,6 +10,7 @@ struct UiState {
   const char *apPass;
   const char *apIp;
   const char *staIp;
+  bool clock24h;
 };
 
 // Draws one frame of a screen into the Protomatter back buffer (the caller clears and calls show()).
