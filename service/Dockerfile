@@ -11,5 +11,5 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ledmatrix-api /ledmatrix-api
 EXPOSE 8080
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/ledmatrix-api"]
