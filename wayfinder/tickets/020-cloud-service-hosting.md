@@ -17,3 +17,5 @@ Where does the owner's data service run, and how is it reached?
 - **Consequence for the device:** one HTTPS host, RSA certificate, small JSON. With fetching done in a background task, even a slow handshake would not touch the panel; the RSA certificate just keeps first data fast.
 
 Open: implementation language, image build and deploy flow, cache (memory or Valkey), the request and response format, and access control on the service.
+
+Note: the real hostname, node name and addresses are not kept in this repository (placeholders appear above). The deploy manifest takes the hostname from `API_HOST` at deploy time.

@@ -1,5 +1,6 @@
-# ledmatrix-api on the k3s cluster, reachable on the LAN as https://apis.example.com
-# (the wildcard certificate *.example.com is served by the existing Envoy gateway).
+# ledmatrix-api on a k3s cluster behind an Envoy Gateway that already serves a wildcard certificate.
+# The hostname is not stored in the repository. Deploy with your own name:
+#   API_HOST=apis.your-domain.example envsubst '${API_HOST}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
 # Optional token: kubectl create secret generic ledmatrix-api --from-literal=token=... then set the
 # API_TOKEN env below to use it. The device must then send it in the X-Token header.
 apiVersion: apps/v1
@@ -59,7 +60,7 @@ metadata:
   name: ledmatrix-api
   namespace: default
 spec:
-  hostnames: ["apis.example.com"]
+  hostnames: ["${API_HOST}"]
   parentRefs:
     - {group: gateway.networking.k8s.io, kind: Gateway, name: gateway, namespace: default}
   rules:
