@@ -41,7 +41,12 @@ Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (optional, 
 Gateway already serves a wildcard certificate. The hostname is a variable, so the repository never
 holds the real one:
 
-    API_HOST=apis.your-domain.example envsubst '${API_HOST}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
+    API_HOST=apis.your-domain.example IMAGE=ghcr.io/suvl/ledmatrix-api:latest PULL_POLICY=Always \
+      envsubst '${API_HOST} ${IMAGE} ${PULL_POLICY}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
+
+If the package is private, build the image for the node (`docker buildx build --platform linux/amd64 -t ledmatrix-api:local --load service`),
+load it with `docker save ledmatrix-api:local | ssh NODE sudo k3s ctr -n k8s.io images import -`, and deploy with
+`IMAGE=ledmatrix-api:local PULL_POLICY=Never`.
 
 The GitHub Actions workflow `.github/workflows/service.yml` tests the code and publishes
 `ghcr.io/suvl/ledmatrix-api` (linux/amd64).

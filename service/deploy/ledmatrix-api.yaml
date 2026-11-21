@@ -1,6 +1,8 @@
 # ledmatrix-api on a k3s cluster behind an Envoy Gateway that already serves a wildcard certificate.
 # The hostname is not stored in the repository. Deploy with your own name:
-#   API_HOST=apis.your-domain.example envsubst '${API_HOST}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
+#   API_HOST=apis.your-domain.example IMAGE=ghcr.io/suvl/ledmatrix-api:latest PULL_POLICY=Always \
+#     envsubst '${API_HOST} ${IMAGE} ${PULL_POLICY}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
+# For an image loaded onto the node by hand use IMAGE=ledmatrix-api:local PULL_POLICY=Never.
 # Optional token: kubectl create secret generic ledmatrix-api --from-literal=token=... then set the
 # API_TOKEN env below to use it. The device must then send it in the X-Token header.
 apiVersion: apps/v1
@@ -22,8 +24,8 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: ledmatrix-api
-          image: ghcr.io/suvl/ledmatrix-api:latest
-          imagePullPolicy: Always
+          image: ${IMAGE}
+          imagePullPolicy: ${PULL_POLICY}
           ports:
             - {name: http, containerPort: 8080}
           env:
