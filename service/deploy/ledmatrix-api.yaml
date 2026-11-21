@@ -1,0 +1,67 @@
+# ledmatrix-api on the k3s cluster, reachable on the LAN as https://apis.example.com
+# (the wildcard certificate *.example.com is served by the existing Envoy gateway).
+# Optional token: kubectl create secret generic ledmatrix-api --from-literal=token=... then set the
+# API_TOKEN env below to use it. The device must then send it in the X-Token header.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledmatrix-api
+  namespace: default
+  labels: {app: ledmatrix-api}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ledmatrix-api}
+  template:
+    metadata:
+      labels: {app: ledmatrix-api}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ledmatrix-api
+          image: ghcr.io/suvl/ledmatrix-api:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: LISTEN, value: ":8080"}
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 200m, memory: 96Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledmatrix-api
+  namespace: default
+  labels: {app: ledmatrix-api}
+spec:
+  selector: {app: ledmatrix-api}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ledmatrix-api
+  namespace: default
+spec:
+  hostnames: ["apis.example.com"]
+  parentRefs:
+    - {group: gateway.networking.k8s.io, kind: Gateway, name: gateway, namespace: default}
+  rules:
+    - backendRefs:
+        - {name: ledmatrix-api, port: 80}

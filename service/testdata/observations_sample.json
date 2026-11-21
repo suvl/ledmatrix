@@ -1,0 +1,194 @@
+{
+ "2026-11-21T20:00": {
+  "1200535": {
+   "intensidadeVentoKM": 13.3,
+   "temperatura": 15.5,
+   "radiacao": 0.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.7,
+   "humidade": 100.0,
+   "pressao": 1018.2
+  },
+  "1210580": {
+   "intensidadeVentoKM": 19.1,
+   "temperatura": 15.8,
+   "radiacao": -99.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 5.3,
+   "humidade": 87.0,
+   "pressao": -99.0
+  },
+  "7240919": {
+   "intensidadeVentoKM": 9.7,
+   "temperatura": 14.8,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 2.7,
+   "humidade": 100.0,
+   "pressao": -99.0
+  },
+  "6215302": {
+   "intensidadeVentoKM": 15.5,
+   "temperatura": 16.0,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 4.3,
+   "humidade": 91.0,
+   "pressao": 1017.6
+  },
+  "1210762": {
+   "intensidadeVentoKM": 9.7,
+   "temperatura": 16.5,
+   "radiacao": 0.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 2.7,
+   "humidade": 87.0,
+   "pressao": -99.0
+  },
+  "1210766": {
+   "intensidadeVentoKM": 11.5,
+   "temperatura": 17.5,
+   "radiacao": 0.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.2,
+   "humidade": 87.0,
+   "pressao": -99.0
+  },
+  "1240935": null,
+  "1210773": null
+ },
+ "2026-11-21T21:00": {
+  "1200535": {
+   "intensidadeVentoKM": 14.0,
+   "temperatura": 15.0,
+   "radiacao": 0.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.9,
+   "humidade": 100.0,
+   "pressao": 1019.8
+  },
+  "1210580": {
+   "intensidadeVentoKM": 18.0,
+   "temperatura": 15.6,
+   "radiacao": -99.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 5.0,
+   "humidade": 82.0,
+   "pressao": -99.0
+  },
+  "7240919": {
+   "intensidadeVentoKM": 7.6,
+   "temperatura": 14.3,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 2.1,
+   "humidade": 100.0,
+   "pressao": -99.0
+  },
+  "6215302": {
+   "intensidadeVentoKM": 14.8,
+   "temperatura": 15.8,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 4.1,
+   "humidade": 87.0,
+   "pressao": 1019.1
+  },
+  "1210762": {
+   "intensidadeVentoKM": 7.6,
+   "temperatura": 16.1,
+   "radiacao": 0.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 2.1,
+   "humidade": 84.0,
+   "pressao": -99.0
+  },
+  "1210766": {
+   "intensidadeVentoKM": 10.8,
+   "temperatura": 17.3,
+   "radiacao": 0.0,
+   "idDireccVento": 7,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.0,
+   "humidade": 83.0,
+   "pressao": -99.0
+  },
+  "1240935": null,
+  "1210773": null
+ },
+ "2026-11-21T22:00": {
+  "1200535": {
+   "intensidadeVentoKM": 11.5,
+   "temperatura": 14.5,
+   "radiacao": 0.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.2,
+   "humidade": 100.0,
+   "pressao": 1021.0
+  },
+  "1210580": {
+   "intensidadeVentoKM": 18.7,
+   "temperatura": 15.2,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 5.2,
+   "humidade": 76.0,
+   "pressao": -99.0
+  },
+  "7240919": {
+   "intensidadeVentoKM": 6.1,
+   "temperatura": 13.9,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 1.7,
+   "humidade": 100.0,
+   "pressao": -99.0
+  },
+  "6215302": {
+   "intensidadeVentoKM": 9.0,
+   "temperatura": 15.5,
+   "radiacao": -99.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 2.5,
+   "humidade": 83.0,
+   "pressao": 1020.5
+  },
+  "1210762": {
+   "intensidadeVentoKM": 4.7,
+   "temperatura": 15.0,
+   "radiacao": 0.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 1.3,
+   "humidade": 81.0,
+   "pressao": -99.0
+  },
+  "1210766": {
+   "intensidadeVentoKM": 13.3,
+   "temperatura": 17.1,
+   "radiacao": 0.0,
+   "idDireccVento": 8,
+   "precAcumulada": 0.0,
+   "intensidadeVento": 3.7,
+   "humidade": 78.0,
+   "pressao": -99.0
+  },
+  "1240935": null,
+  "1210773": null
+ }
+}
