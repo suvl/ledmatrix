@@ -242,8 +242,8 @@ const flightC = (fb, t, ctx) => {
   T6(fb, ctx, 2, 1, f.air, WHITE, 60);
   T6(fb, ctx, 2, 9, f.route, CYAN, 60);
   TT(fb, ctx, 2, 21, f.type, AMBER, 60);
-  TT(fb, ctx, 2, 27, 'alt ' + f.alt + ' spd ' + f.spd.replace(/mph|kts/, ''), GREY, 60);
-  TT(fb, ctx, 2, 32, 'trk ' + f.trk + ' vr ' + f.vr, GREY, 60);
+  TT(fb, ctx, 2, 27, f.alt + ' ' + f.spd, GREY, 60);
+  TT(fb, ctx, 2, 32, f.trk + ' ' + f.vr, GREY, 60);
 };
 const wxA = (fb, t, ctx) => {
   wxIcon(fb, 1, 2, 'part', 16);
