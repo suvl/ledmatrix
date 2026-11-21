@@ -37,7 +37,11 @@ Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (optional, 
 
 ## Deploy
 
-`deploy/ledmatrix-api.yaml` has the Deployment, Service and HTTPRoute for the k3s cluster, served as
-`https://apis.example.com` through the existing gateway and wildcard certificate. The GitHub Actions
-workflow `.github/workflows/service.yml` tests the code and publishes
+`deploy/ledmatrix-api.yaml` has the Deployment, Service and HTTPRoute for a k3s cluster whose Envoy
+Gateway already serves a wildcard certificate. The hostname is a variable, so the repository never
+holds the real one:
+
+    API_HOST=apis.your-domain.example envsubst '${API_HOST}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
+
+The GitHub Actions workflow `.github/workflows/service.yml` tests the code and publishes
 `ghcr.io/suvl/ledmatrix-api` (linux/amd64).
