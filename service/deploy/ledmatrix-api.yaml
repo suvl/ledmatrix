@@ -21,6 +21,8 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532   # distroless "nonroot"; a number, so the kubelet can verify it is not root
+        runAsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: ledmatrix-api
