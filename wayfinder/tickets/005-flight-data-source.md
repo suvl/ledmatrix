@@ -1,11 +1,15 @@
 ---
 type: research
-status: open
+status: closed
 ---
 
 Findings go in `wayfinder/research/flights-data.md` (research started 21 Nov 2026, together with tickets 017 weather and 018 headlines).
 
 **Research finished 21 Nov 2026**, awaiting the owner's decision: positions from adsb.fi open data (keyless, 1 req/s, non-commercial, no IPv6), fallback adsb.lol (IPv6, but 500 requests/day without a key); route, airline and airport names from adsbdb.com (community data, wrong or missing for charter, cargo, general aviation and military flights); full aircraft type from adsbdb or the `desc` field; logos converted offline to 16×16 for the top 100 to 200 airlines (trademark caveat: keep them private). Everything through the owner's own cloud API, which would shrink each plane to about 60 bytes and answer over an RSA certificate.
+
+## Resolution (21 Nov 2026)
+
+**Positions from adsb.fi open data**, routes and airline names from **adsbdb**, aircraft type from adsb.fi's own `desc` field. Both are fetched by the owner's service (`service/`), never by the board. Coordinates are rounded to two decimals before they go upstream. Route data is community-sourced, so a missing or wrong route is left out. Logos: not done yet; they must be converted offline to 16×16 and kept private (trademarks). Fallback if adsb.fi fails: adsb.lol (needs a free feeder key for a 30 s poll).
 
 ## Question
 
