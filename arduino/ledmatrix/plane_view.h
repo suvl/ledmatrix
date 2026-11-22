@@ -8,6 +8,7 @@
 struct PlaneView {
   SampleFlight f;
   char alt[12], spd[8], vr[12];
+  uint16_t logoPx[256];
 };
 
 inline void planeToView(const LivePlane &p, PlaneView &v) {
@@ -24,5 +25,7 @@ inline void planeToView(const LivePlane &p, PlaneView &v) {
   v.f.spdUnit = "kt";
   v.f.trackDeg = p.trk;
   v.f.vr = v.vr;
-  v.f.logo = (LogoKind)((p.ai[0] + p.ai[1]) % 4);  // placeholder art until real logos exist
+  v.f.logo = LogoKind::Globe;
+  v.f.code = p.ai[0] ? p.ai : "??";
+  v.f.logoPx = liveLogo(p.ai, v.logoPx) ? v.logoPx : nullptr;  // the data task fetched it before queueing the plane
 }

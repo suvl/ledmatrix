@@ -24,6 +24,12 @@ spec:
         runAsUser: 65532   # distroless "nonroot"; a number, so the kubelet can verify it is not root
         runAsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
+      volumes:
+        # Airline logos are trademarks and are not in the image. Build them with tools/make_logos.py, then:
+        #   kubectl create configmap ledmatrix-logos --from-file=logos/ --dry-run=client -o yaml | kubectl apply -f -
+        # (about 80 KB). The service works without it: every logo answer is then 404 and the display draws a badge.
+        - name: logos
+          configMap: {name: ledmatrix-logos, optional: true}
       containers:
         - name: ledmatrix-api
           image: ${IMAGE}
@@ -32,6 +38,9 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: LISTEN, value: ":8080"}
+            - {name: LOGO_DIR, value: /logos}
+          volumeMounts:
+            - {name: logos, mountPath: /logos, readOnly: true}
           resources:
             requests: {cpu: 10m, memory: 24Mi}
             limits: {cpu: 200m, memory: 96Mi}

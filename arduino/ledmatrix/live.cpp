@@ -241,6 +241,60 @@ void newsMarkSeen(uint32_t id) {
 }
 
 // ---- fetchers -----------------------------------------------------------------------------------------------------
+// ---- airline logos: 16x16 RGB565 from the service, kept in a small cache -----------------------------------
+// The data task fetches a logo before the plane that needs it is queued, so the render task never waits.
+// A 404 is remembered for an hour (the owner may add logos later); a network failure is not remembered.
+struct LogoSlot {
+  char code[3] = "";
+  uint8_t state = 0;  // 0 empty, 1 have, 2 missing
+  uint32_t at = 0;
+  uint16_t px[256];
+};
+const int LOGO_SLOTS = 16;
+LogoSlot logos[LOGO_SLOTS];
+const uint32_t LOGO_RETRY_MS = 60UL * 60 * 1000;
+
+LogoSlot *logoFind(const char *code) {  // call with the lock held
+  for (auto &l : logos)
+    if (l.state && strcmp(l.code, code) == 0) return &l;
+  return nullptr;
+}
+
+void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
+  if (!ai || strlen(ai) != 2) return;
+  char code[3] = {(char)toupper(ai[0]), (char)toupper(ai[1]), 0};
+  uint32_t now = millis();
+  lock();
+  LogoSlot *have = logoFind(code);
+  bool skip = have && (have->state == 1 || now - have->at < LOGO_RETRY_MS);
+  unlock();
+  if (skip || budget <= 0) return;
+  budget--;
+  char body[600];
+  Reply r;
+  String path = String("/v1/logo/") + code;
+  int n = httpsGet(cfg.serviceHost, path, body, sizeof(body), r);
+  uint8_t state;
+  if (n == 512) state = 1;
+  else if (n < 0 && r.status == 404) state = 2;
+  else return;  // network trouble or a bad answer: try again next time
+  lock();
+  LogoSlot *slot = logoFind(code);
+  if (!slot) {  // take an empty slot, else the oldest
+    slot = &logos[0];
+    for (auto &l : logos) {
+      if (!l.state) { slot = &l; break; }
+      if (l.at < slot->at) slot = &l;
+    }
+  }
+  strlcpy(slot->code, code, sizeof(slot->code));
+  slot->state = state;
+  slot->at = now ? now : 1;
+  if (state == 1)
+    for (int i = 0; i < 256; i++) slot->px[i] = ((uint16_t)(uint8_t)body[2 * i] << 8) | (uint8_t)body[2 * i + 1];
+  unlock();
+}
+
 bool fetchFlights(const Settings &cfg) {
   char body[4096];
   Reply r;
@@ -251,6 +305,9 @@ bool fetchFlights(const Settings &cfg) {
   if (deserializeJson(doc, body)) { setError("flights", "unexpected answer"); return false; }
   uint32_t now = millis();
   JsonArray ps = doc["planes"];
+  int logoBudget = 3;  // at most three logo downloads per round
+  for (JsonObject p : ps) ensureLogo(cfg, p["ai"] | "", logoBudget);
+  now = millis();
   lock();
   st.planesInRange = ps.size();
   cp(st.family, sizeof(st.family), r.family);
@@ -393,6 +450,17 @@ void dataTask(void *) {
 }
 
 }  // namespace
+
+bool liveLogo(const char *ai, uint16_t *out) {
+  if (!ai || strlen(ai) != 2) return false;
+  char code[3] = {(char)toupper(ai[0]), (char)toupper(ai[1]), 0};
+  lock();
+  LogoSlot *l = logoFind(code);
+  bool ok = l && l->state == 1;
+  if (ok) memcpy(out, l->px, sizeof(l->px));
+  unlock();
+  return ok;
+}
 
 void liveBegin() {
   mu = xSemaphoreCreateMutex();
