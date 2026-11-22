@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -383,5 +384,41 @@ func TestHTTPLayer(t *testing.T) {
 	s.adsbStatus.Store(500)
 	if code, body := get("/v1/flights?lat=10&lon=10&radius_km=15", "secret"); code != 502 || strings.Contains(body, "127.0.0.1") {
 		t.Errorf("upstream failure should be 502 without leaking the upstream: %d %s", code, body)
+	}
+}
+
+func TestLogos(t *testing.T) {
+	s := newStub(t)
+	a := s.app(t, lisbonNoon(t), "secret")
+	dir := t.TempDir()
+	good := make([]byte, logoBytes)
+	good[0], good[511] = 0xF8, 0x1F
+	os.WriteFile(filepath.Join(dir, "TP.bin"), good, 0o644)
+	os.WriteFile(filepath.Join(dir, "XX.bin"), []byte("short"), 0o644)
+	a.logoDir = dir
+	h := a.routes()
+	get := func(path, token string) (int, []byte) {
+		req := httptest.NewRequest("GET", path, nil)
+		if token != "" {
+			req.Header.Set("X-Token", token)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.Bytes()
+	}
+	if code, b := get("/v1/logo/tp", "secret"); code != 200 || len(b) != logoBytes || b[0] != 0xF8 {
+		t.Fatalf("logo: %d, %d bytes", code, len(b))
+	}
+	if code, _ := get("/v1/logo/TP", ""); code != 401 {
+		t.Errorf("missing token: %d", code)
+	}
+	for _, p := range []string{"/v1/logo/ZZ", "/v1/logo/XX", "/v1/logo/..", "/v1/logo/TAP", "/v1/logo/%2e%2e", "/v1/logo/T%2FP"} {
+		if code, b := get(p, "secret"); code == 200 || len(b) == logoBytes { // the mux may redirect a cleaned path; it must never serve one
+			t.Errorf("%s: served a file (%d)", p, code)
+		}
+	}
+	a.logoDir = ""
+	if code, _ := get("/v1/logo/TP", "secret"); code != 404 {
+		t.Errorf("no logo folder: %d", code)
 	}
 }

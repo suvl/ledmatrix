@@ -54,3 +54,4 @@ void liveBegin();                                         // starts the data tas
 LiveView liveView(uint32_t nowMs, const Settings &cfg);   // called every frame by the render task
 String liveStatusJson();                                  // for /api/live
 String liveSelfTestJson(const Settings &cfg);             // /api/selftest: reaches IPv4-only, IPv6-only and dual-stack hosts
+bool liveLogo(const char *airlineIata, uint16_t *out256);  // copies the cached 16x16 logo; false = none (use the badge)

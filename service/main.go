@@ -6,9 +6,10 @@
 //	GET /v1/weather?lat=&lon=
 //	GET /v1/flights?lat=&lon=&radius_km=&alt_min=&alt_max=&n=
 //	GET /v1/headlines?q=&n=&hl=&gl=&ceid=
+//	GET /v1/logo/{iata}   512 bytes, 16x16 RGB565 big-endian; 404 when the airline has none
 //
 // Configuration (environment): LISTEN (default :8080), API_TOKEN (optional; when set, requests
-// must send it in the X-Token header).
+// must send it in the X-Token header), LOGO_DIR (optional folder of <IATA>.bin logo files).
 package main
 
 import (
@@ -40,6 +41,7 @@ type app struct {
 	flights  *Flights
 	headline *Headlines
 	token    string
+	logoDir  string // folder of <IATA>.bin logo files; empty = no logos
 	sem      chan struct{}
 }
 
@@ -176,6 +178,7 @@ func (a *app) routes() http.Handler {
 		}
 		return a.headline.Get(r.Context(), q)
 	}))
+	mux.HandleFunc("GET /v1/logo/{code}", a.logoHandler)
 	return logRequests(mux)
 }
 
@@ -212,6 +215,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	a.logoDir = os.Getenv("LOGO_DIR")
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
 		listen = ":8080"
