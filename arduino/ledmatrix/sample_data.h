@@ -15,7 +15,7 @@ struct SampleFlight {
   const char *vr;      // e.g. "+1ft/s"
   LogoKind logo;
   const uint16_t *logoPx = nullptr;  // a real logo, when there is one
-  const char *code = nullptr;       // airline code for the badge when there is none (live planes only)
+  const char *code = nullptr;       // set for live planes only: no logo then means no logo area
 };
 
 static const SampleFlight SAMPLE_FLIGHTS[] = {

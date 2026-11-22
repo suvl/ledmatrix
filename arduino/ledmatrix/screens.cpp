@@ -104,26 +104,29 @@ void tt(int x, int base, const String &s, uint16_t color, int maxW) {
   useDefaultFont();
 }
 
+// A real logo, or (demo data only) the placeholder art, or nothing: a plane with no logo gets the whole width for text.
+static bool flightHasLogo(const SampleFlight &f) { return f.logoPx || !f.code; }
 static void drawFlightLogo(const SampleFlight &f) {
   if (f.logoPx) drawLogoPixels(1, 0, f.logoPx);
-  else if (f.code) drawLogoBadge(1, 0, f.code);
-  else drawLogo(1, 0, f.logo);
+  else if (!f.code) drawLogo(1, 0, f.logo);
 }
 
 // ---- flight card ------------------------------------------------------------------------------------------
 void flightA(const SampleFlight &f) {
   drawFlightLogo(f);
-  t6(19, 1, f.airline, WHITE, 44);
-  t6(19, 9, f.route, CYAN, 44);
-  t6(1, 17, f.type, AMBER, 62);
-  tt(1, 30, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 62);
+  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60;
+  t6(x, 1, f.airline, WHITE, w);
+  t6(x, 9, f.route, CYAN, w);
+  t6(flightHasLogo(f) ? 1 : 2, 17, f.type, AMBER, 62);
+  tt(flightHasLogo(f) ? 1 : 2, 30, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 62);
 }
 void flightB(const SampleFlight &f) {
   drawFlightLogo(f);
-  t6(19, 1, f.airline, WHITE, 44);
-  t6(19, 9, f.route, CYAN, 44);
-  tt(1, 23, f.type, AMBER, 62);
-  tt(1, 30, String("to ") + f.destName, GREY, 62);
+  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60;
+  t6(x, 1, f.airline, WHITE, w);
+  t6(x, 9, f.route, CYAN, w);
+  tt(flightHasLogo(f) ? 1 : 2, 23, f.type, AMBER, 62);
+  tt(flightHasLogo(f) ? 1 : 2, 30, String("to ") + f.destName, GREY, 62);
 }
 void flightC(const SampleFlight &f) {
   t6(2, 1, f.airline, WHITE, 60);

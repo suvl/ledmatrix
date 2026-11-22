@@ -91,15 +91,3 @@ void drawLogoPixels(int x, int y, const uint16_t *p) {
   for (int j = 0; j < 16; j++)
     for (int i = 0; i < 16; i++) matrix.drawPixel(x + i, y + j, p[j * 16 + i]);
 }
-
-void drawLogoBadge(int x, int y, const char *iata) {
-  uint32_t h = 2166136261u;
-  for (const char *s = iata; *s; s++) h = (h ^ (uint8_t)*s) * 16777619u;
-  uint16_t edge = rgb(60 + (h & 0x7F), 60 + ((h >> 8) & 0x7F), 60 + ((h >> 16) & 0x7F));
-  matrix.drawRect(x, y, 16, 16, edge);
-  matrix.setTextSize(1);
-  matrix.setTextColor(rgb(235, 235, 245));
-  matrix.setCursor(x + 2, y + 4);
-  char two[3] = {iata && iata[0] ? iata[0] : '?', iata && iata[0] && iata[1] ? iata[1] : ' ', 0};
-  matrix.print(two);
-}
