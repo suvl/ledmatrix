@@ -26,6 +26,6 @@ inline void planeToView(const LivePlane &p, PlaneView &v) {
   v.f.trackDeg = p.trk;
   v.f.vr = v.vr;
   v.f.logo = LogoKind::Globe;
-  v.f.code = p.ai[0] ? p.ai : "??";
+  v.f.code = p.ai;  // non-null marks a live plane: with no logo the text uses the whole width
   v.f.logoPx = liveLogo(p.ai, v.logoPx) ? v.logoPx : nullptr;  // the data task fetched it before queueing the plane
 }

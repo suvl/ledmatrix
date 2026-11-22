@@ -53,6 +53,9 @@ static volatile int gPass = 0;       // increments each time the playlist wraps;
 static volatile int gHoldPct = 0;    // 0..100, how far the UP long press has progressed
 static volatile bool gMatrixOk = false;
 
+// Frame timing while online (the boot is exempt from the 1 s budget); shown in /status for the soak test.
+volatile uint32_t gFrames = 0, gFrameMaxMs = 0, gFramesOver1s = 0;
+
 // Protomatter has no brightness control, so the finished frame is scaled before it is sent to the panel.
 // The panel runs at 6 bits per colour so that dimmed pictures keep their shades.
 static void applyBrightness(uint8_t percent) {
@@ -143,6 +146,15 @@ static void renderTask(void *) {
       if (hold > 8) matrix.fillRect(0, 31, PANEL_W * hold / 100, 1, matrix.color565(255, 176, 0));  // long-press progress
       applyBrightness(cfg.brightness);
       matrix.show();
+      static uint32_t lastShow = 0;
+      uint32_t t = millis();
+      if (ni.state == NetState::Online && lastShow) {
+        uint32_t gap = t - lastShow;
+        if (gap > gFrameMaxMs) gFrameMaxMs = gap;
+        if (gap > 1000) gFramesOver1s = gFramesOver1s + 1;
+      }
+      lastShow = ni.state == NetState::Online ? t : 0;
+      gFrames = gFrames + 1;
     }
     vTaskDelay(pdMS_TO_TICKS(33));
   }
