@@ -24,6 +24,7 @@ static void loadAll() {
   cur.idleClock = prefs.getBool("ic", cur.idleClock);
   cur.clock24h = prefs.getBool("c24", cur.clock24h);
   cur.dwellSec = prefs.getUChar("dw", cur.dwellSec);
+  cur.brightness = prefs.getUChar("br", cur.brightness);
   cur.hasLocation = prefs.getBool("hl", cur.hasLocation);
   cur.lat = prefs.getFloat("lat", cur.lat);
   cur.lon = prefs.getFloat("lon", cur.lon);
@@ -51,6 +52,7 @@ static void saveAll(const Settings &s) {
   prefs.putBool("ic", s.idleClock);
   prefs.putBool("c24", s.clock24h);
   prefs.putUChar("dw", s.dwellSec);
+  prefs.putUChar("br", s.brightness);
   prefs.putBool("hl", s.hasLocation);
   prefs.putFloat("lat", s.lat);
   prefs.putFloat("lon", s.lon);
@@ -147,6 +149,12 @@ bool setFromJson(const char *json, size_t len, String &error) {
     n.dwellSec = d;
   }
 
+  if (!doc["brightness"].isNull()) {
+    int b = doc["brightness"] | -1;
+    if (b < 10 || b > 100) { error = "Brightness must be between 10 and 100 percent."; return false; }
+    n.brightness = b;
+  }
+
   JsonObject loc = doc["location"];
   if (!loc.isNull()) {
     bool set = loc["set"] | false;
@@ -211,6 +219,7 @@ String toJson() {
   lay["news"] = s.newsLayout;
   lay["idle"] = s.idleClock ? "clock" : "black";
   doc["dwellSec"] = s.dwellSec;
+  doc["brightness"] = s.brightness;
   doc["clock24h"] = s.clock24h;
   JsonObject loc = doc["location"].to<JsonObject>();
   loc["set"] = s.hasLocation;
