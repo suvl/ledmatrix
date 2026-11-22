@@ -8,6 +8,7 @@ cheap request instead of fetching and parsing large responses from several serve
 | `GET /v1/weather?lat=&lon=` | current temperature, today's high/low and rain chance, an icon for now, +3 h and +6 h (about 155 bytes) | IPMA |
 | `GET /v1/flights?lat=&lon=&radius_km=&alt_min=&alt_max=&n=` | planes nearest first, with airline, route, cities, aircraft and telemetry | adsb.fi (positions), adsbdb (routes) |
 | `GET /v1/headlines?q=&n=&hl=&gl=&ceid=` | newest headlines for a topic, de-duplicated | Google News RSS |
+| `GET /v1/logo/{iata}` | 512 bytes: a 16x16 airline logo, RGB565 big-endian; 404 if none | files in `LOGO_DIR` (not in the image) |
 | `GET /healthz` | `ok` | |
 
 Run locally: `docker build -t ledmatrix-api service && docker run -p 8080:8080 ledmatrix-api`.
@@ -16,6 +17,9 @@ Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (optional, 
 
 ## Behaviour worth knowing
 
+- **Logos are not in the repository or the image.** They are trademarks. `tools/make_logos.py` builds them
+  privately into `logos/` (git-ignored); mount them with a ConfigMap as described in `deploy/ledmatrix-api.yaml`.
+  The service works without them (404, and the display draws a badge with the airline code).
 - **Upstream answers are cached** (flight positions 15 s, routes 12 h, weather 30 min, headlines 15 min)
   and a failing upstream serves the last good answer for a while, so the display does not blank.
 - **Privacy:** coordinates sent upstream are rounded to two decimals (about 1 km), and the access log
