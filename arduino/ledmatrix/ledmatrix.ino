@@ -26,7 +26,7 @@ static uint8_t addrPins[] = {45, 36, 48, 35};
 static const uint8_t clockPin = 2;
 static const uint8_t latchPin = 47;
 static const uint8_t oePin = 14;
-Adafruit_Protomatter matrix(64, 4, 1, rgbPins, 4, addrPins, clockPin, latchPin, oePin, true);
+Adafruit_Protomatter matrix(64, 6, 1, rgbPins, 4, addrPins, clockPin, latchPin, oePin, true);
 
 static const uint8_t BUTTON_UP = 6;    // per the board's Arduino pin definitions
 static const uint8_t BUTTON_DOWN = 7;
@@ -52,6 +52,20 @@ static volatile int gIndex = 0;
 static volatile int gPass = 0;       // increments each time the playlist wraps; picks the example flight
 static volatile int gHoldPct = 0;    // 0..100, how far the UP long press has progressed
 static volatile bool gMatrixOk = false;
+
+// Protomatter has no brightness control, so the finished frame is scaled before it is sent to the panel.
+// The panel runs at 6 bits per colour so that dimmed pictures keep their shades.
+static void applyBrightness(uint8_t percent) {
+  if (percent >= 100) return;
+  uint32_t k = (uint32_t)percent * 256 / 100;  // 8.8 fixed point
+  uint16_t *p = matrix.getBuffer();
+  for (int i = 0; i < PANEL_W * PANEL_H; i++) {
+    uint16_t c = p[i];
+    if (!c) continue;
+    uint32_t r = ((c >> 11) & 31) * k >> 8, g = ((c >> 5) & 63) * k >> 8, b = (c & 31) * k >> 8;
+    p[i] = (r << 11) | (g << 5) | b;
+  }
+}
 
 static void renderTask(void *) {
   ProtomatterStatus st = matrix.begin();
@@ -127,6 +141,7 @@ static void renderTask(void *) {
       if (live && lv.stale && (now / 700) % 2 == 0) matrix.fillRect(60, 1, 3, 3, matrix.color565(255, 120, 20));  // stale-data dot
       int hold = gHoldPct;
       if (hold > 8) matrix.fillRect(0, 31, PANEL_W * hold / 100, 1, matrix.color565(255, 176, 0));  // long-press progress
+      applyBrightness(cfg.brightness);
       matrix.show();
     }
     vTaskDelay(pdMS_TO_TICKS(33));

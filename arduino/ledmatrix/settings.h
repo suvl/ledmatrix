@@ -18,6 +18,7 @@ struct Settings {
   uint8_t newsLayout = 0;     // 0..1 = A..B
   bool idleClock = true;      // false = clean black screen
   bool clock24h = true;
+  uint8_t brightness = 100;   // percent of full panel brightness, 10..100
   uint8_t dwellSec = 10;      // how long a new plane stays on screen
   bool hasLocation = false;
   float lat = 0, lon = 0;

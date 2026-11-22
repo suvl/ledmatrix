@@ -53,6 +53,12 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 </section>
 
 <section>
+<h2>Display</h2>
+<label for="bright">Brightness <b id="brightVal">100</b>%</label>
+<input type="range" id="bright" min="10" max="100" step="5" value="100">
+</section>
+
+<section>
 <h2>Layouts</h2>
 <p class="note">One layout is active for each screen. These are drawn at the panel's real 64×32 pixels with example data.</p>
 <label>Flight card</label><div class="opts" id="lay-flight"></div>
@@ -401,7 +407,7 @@ const nowifi = (fb, t, ctx) => {
   function setStatus(msg, cls) { const s = $('status'); s.textContent = msg; s.className = cls || ''; }
   function apply(c) {
     $('showFlights').checked = c.showFlights; $('showWeather').checked = c.showWeather; $('showNews').checked = c.showNews;
-    $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
+    $('bright').value = c.brightness; $('brightVal').textContent = c.brightness; $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
     sel.flight = c.layouts.flight; sel.weather = c.layouts.weather; sel.news = c.layouts.news; sel.idle = c.layouts.idle;
     $('c24').checked = c.clock24h;
     $('svc').value = (c.service && c.service.host) || '';
@@ -421,13 +427,14 @@ const nowifi = (fb, t, ctx) => {
     return {
       showFlights: $('showFlights').checked, showWeather: $('showWeather').checked, showNews: $('showNews').checked,
       layouts: { flight: sel.flight, weather: sel.weather, news: sel.news, idle: sel.idle },
-      dwellSec: +$('dwell').value, clock24h: $('c24').checked,
+      dwellSec: +$('dwell').value, brightness: +$('bright').value, clock24h: $('c24').checked,
       location: { set: hasLoc && !isNaN(lat) && !isNaN(lon), lat: isNaN(lat) ? 0 : lat, lon: isNaN(lon) ? 0 : lon,
         radiusKm: +$('radius').value, altMinFt: +$('altmin').value, altMaxFt: +$('altmax').value },
       queries: q,
       service: { host: $('svc').value.trim() },
     };
   }
+  $('bright').addEventListener('input', () => { $('brightVal').textContent = $('bright').value; });
   $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
   $('save').addEventListener('click', async () => {
     setStatus('Saving…');
