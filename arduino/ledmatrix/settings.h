@@ -25,6 +25,7 @@ struct Settings {
   int32_t altMinFt = 0;
   int32_t altMaxFt = 45000;
   char queries[5][41] = {};   // headline topics
+  char serviceHost[64] = "";  // host name of the data service (ledmatrix-api); empty = demo screens only
 };
 
 namespace settings {

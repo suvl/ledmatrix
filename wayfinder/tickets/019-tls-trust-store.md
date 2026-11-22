@@ -19,3 +19,7 @@ Plan:
 - Insecure TLS (skipping verification) is never used, unlike the open-source FlightWall firmware.
 
 Open: the firmware update mechanism (OTA from the portal, or from a URL), and whether to allow the owner to upload an extra CA certificate through the portal as an override.
+
+### Done 22 Nov 2026
+The firmware moved to arduino-esp32 3.3.13 (the panel was checked by the owner and renders cleanly) and every HTTPS request uses `useBuiltinCACertBundle()` with certificate verification on. The clock is synchronised by SNTP before the first request. Verified against the owner's service (Let's Encrypt wildcard, RSA) and against `ipify.org` hosts over IPv4 and IPv6. Still open: a firmware update path, and showing the last TLS error in the portal (the last problem is shown, with its reason, in the Data service section).
+

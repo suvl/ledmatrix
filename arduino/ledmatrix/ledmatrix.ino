@@ -1,16 +1,22 @@
 // LedMatrix firmware.
 //   slice 1: every screen and layout on the real panel, with example data
 //   slice 2: Wi-Fi setup flow: saved network, setup access point, mDNS, long-press UP to reset
-//   slice 3: settings portal (this file picks screens from the saved settings; see net.cpp and portal/)
+//   slice 3: settings portal
+//   slice 4: live data from the owner's service (this file decides what to show; see live.cpp)
 //
-//   core 1: render task   ~30 fps, picks the screen from the network state and the saved settings
+//   core 1: render task   ~30 fps, picks the screen from the network state, the settings and the live data
 //   core 0: net task      Wi-Fi, setup access point, DNS, web server and portal API (see net.cpp)
-//   loop(): buttons       UP = next screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network
+//   core 0: data task     time sync, flights every 30 s, weather every 15 min, headlines every 30 min (live.cpp)
+//   loop(): buttons       UP = next demo screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network
+//
+// With no data service address saved, the device cycles the demo screens with example data.
 
 #include <Adafruit_Protomatter.h>
 
 #include "display.h"
+#include "live.h"
 #include "net.h"
+#include "plane_view.h"
 #include "screens.h"
 #include "settings.h"
 
@@ -27,7 +33,7 @@ static const uint8_t BUTTON_DOWN = 7;
 static const uint32_t HOLD_TO_RESET_MS = 5000;
 static const uint32_t CONNECTED_SCREEN_MS = 5000;
 
-// ---- demo playlist: the enabled screens with their chosen layouts, until live data arrives (slice 4) ----
+// ---- demo playlist: the enabled screens with their chosen layouts, with example data -----------------------
 struct Item {
   Screen screen;
   uint8_t layout;
@@ -59,6 +65,7 @@ static void renderTask(void *) {
       uint32_t now = millis();
       NetInfo ni = netInfo();
       Settings cfg = settings::get();
+      LiveView lv = liveView(now, cfg);
       if (ni.state != lastState) {
         lastState = ni.state;
         Serial.printf("NET state %d\n", (int)ni.state);
@@ -69,6 +76,8 @@ static void renderTask(void *) {
       Screen screen;
       uint8_t layout = 0;
       int flightIdx = 0;
+      PlaneView pv;
+      bool live = false;
       if (ni.state == NetState::Online) {
         if (onlineSince == 0) onlineSince = now;
       } else {
@@ -82,17 +91,40 @@ static void renderTask(void *) {
         screen = Screen::NoWifi;
       } else if (now - onlineSince < CONNECTED_SCREEN_MS) {
         screen = Screen::Connected;
-      } else {
-        Item list[4];
+      } else if (!lv.configured) {
+        Item list[4];  // no data service saved: example data
         int n = buildPlaylist(cfg, list);
         const Item &it = list[gIndex % n];
         screen = it.screen;
         layout = it.layout;
         flightIdx = gPass;
+      } else {
+        live = true;
+        if (lv.showPlane) {
+          planeToView(lv.plane, pv);
+          ui.flight = &pv.f;
+          screen = Screen::Flight;
+          layout = cfg.flightLayout;
+        } else if (lv.showNews) {
+          ui.headline = lv.news.title;
+          ui.headlineSource = lv.news.source;
+          ui.headlineAgeMs = lv.newsAgeMs;
+          screen = Screen::News;
+          layout = cfg.newsLayout;
+        } else if (cfg.showWeather && lv.wx.valid) {
+          ui.wx = &lv.wx;
+          screen = Screen::Weather;
+          layout = cfg.weatherLayout;
+        } else {
+          screen = Screen::Idle;
+          layout = cfg.idleClock ? 0 : 1;
+        }
+        if (lv.timeValid) ui.clock = &lv.now;
       }
 
       matrix.fillScreen(0);
       drawScreen(screen, layout, now, flightIdx, ui);
+      if (live && lv.stale && (now / 700) % 2 == 0) matrix.fillRect(60, 1, 3, 3, matrix.color565(255, 120, 20));  // stale-data dot
       int hold = gHoldPct;
       if (hold > 8) matrix.fillRect(0, 31, PANEL_W * hold / 100, 1, matrix.color565(255, 176, 0));  // long-press progress
       matrix.show();
@@ -115,10 +147,11 @@ void setup() {
   pinMode(BUTTON_UP, INPUT_PULLUP);
   pinMode(BUTTON_DOWN, INPUT_PULLUP);
   delay(1500);
-  Serial.println("\nledmatrix: slice 3, settings portal");
+  Serial.println("\nledmatrix: slice 4, live data");
   settings::begin();  // loads the saved settings; must run before the tasks read them
   netBegin();         // must run before the render task asks for the network state
-  xTaskCreatePinnedToCore(renderTask, "render", 8192, nullptr, 2, nullptr, 1);
+  liveBegin();        // must run before the render task asks for the live view
+  xTaskCreatePinnedToCore(renderTask, "render", 10240, nullptr, 2, nullptr, 1);
 }
 
 void loop() {

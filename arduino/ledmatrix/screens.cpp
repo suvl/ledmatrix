@@ -104,13 +104,6 @@ void tt(int x, int base, const String &s, uint16_t color, int maxW) {
   useDefaultFont();
 }
 
-String degreeTemp6(const char *num) {
-  String s(num);
-  s += DEG6;
-  s += 'C';
-  return s;
-}
-
 // ---- flight card ------------------------------------------------------------------------------------------
 void flightA(const SampleFlight &f) {
   drawLogo(1, 0, f.logo);
@@ -135,33 +128,68 @@ void flightC(const SampleFlight &f) {
 }
 
 // ---- weather ------------------------------------------------------------------------------------------------
-void weatherA() {
-  drawWxIcon(1, 2, WxKind::PartCloud, 16);
-  t6(21, 3, "18", WHITE, 26, 2);
+WxKind iconKind(const char *icon) {
+  if (strcmp(icon, "sun") == 0) return WxKind::Sun;
+  if (strcmp(icon, "part") == 0) return WxKind::PartCloud;
+  if (strcmp(icon, "rain") == 0) return WxKind::Rain;
+  return WxKind::Cloud;
+}
+const char *iconText(const char *icon) {
+  if (strcmp(icon, "sun") == 0) return "Clear";
+  if (strcmp(icon, "part") == 0) return "Partly cloudy";
+  if (strcmp(icon, "rain") == 0) return "Rain";
+  return "Cloudy";
+}
+// The example values the screens show when no service is configured.
+LiveWeather demoWeather() {
+  LiveWeather w;
+  w.valid = true;
+  strlcpy(w.loc, "HOME", sizeof(w.loc));
+  w.hasT = w.hasHi = w.hasLo = w.hasPop = w.hasH3 = w.hasH6 = true;
+  w.t = 18; w.hi = 21; w.lo = 12; w.pop = 10; w.h3t = 21; w.h6t = 15;
+  strlcpy(w.icon, "part", sizeof(w.icon));
+  strlcpy(w.h3i, "sun", sizeof(w.h3i));
+  strlcpy(w.h6i, "rain", sizeof(w.h6i));
+  return w;
+}
+String tempText(bool has, int v) { return has ? String(v) : String("--"); }
+
+void weatherA(const LiveWeather &w) {
+  drawWxIcon(1, 2, iconKind(w.icon), 16);
+  String t = tempText(w.hasT, w.t);
+  int x = t.length() == 1 ? 27 : 21;
+  t6(x, 3, t, WHITE, 26, 2);
   t6(45, 3, String(DEG6), WHITE, 6);
   t6(51, 3, "C", WHITE, 6);
-  tt(2, 25, "Partly cloudy", AMBER, 60);
-  tt(2, 31, "H21 L12 rain 10%", GREY, 60);
+  tt(2, 25, iconText(w.icon), AMBER, 60);
+  String line = String("H") + (w.hasHi ? String(w.hi) : String("-")) + " L" + (w.hasLo ? String(w.lo) : String("-"));
+  if (w.hasPop) line += " " + String(w.pop) + "%";
+  tt(2, 31, line, GREY, 60);
 }
-void weatherB() {
-  tt(2, 7, "HOME", AMBER, 60);
-  String t = degreeTemp6("18");
+void weatherB(const LiveWeather &w) {
+  String loc = w.loc[0] ? String(w.loc) : String("WEATHER");
+  loc.toUpperCase();
+  tt(2, 7, loc, AMBER, 60);
+  String t = tempText(w.hasT, w.t);
+  t += DEG6;
+  t += 'C';
   t6(centerX((int)t.length() * 12), 10, t, WHITE, 62, 2);
-  String c = "Partly cloudy";
+  String c = iconText(w.icon);
   tt(centerX(tinyWidth(c)), 31, c, GREY, 62);
 }
-void weatherC() {
+void weatherC(const LiveWeather &w) {
   struct Slot {
     const char *label;
-    WxKind kind;
-    const char *temp;
+    const char *icon;
+    bool has;
+    int temp;
   };
-  static const Slot slots[3] = {{"NOW", WxKind::PartCloud, "18"}, {"+3H", WxKind::Sun, "21"}, {"+6H", WxKind::Rain, "15"}};
+  Slot slots[3] = {{"NOW", w.icon, w.hasT, w.t}, {"+3H", w.h3i, w.hasH3, w.h3t}, {"+6H", w.h6i, w.hasH6, w.h6t}};
   for (int i = 0; i < 3; i++) {
     int x0 = 2 + i * 21;
     tt(x0 + 2, 7, slots[i].label, AMBER, 20);
-    drawWxIcon(x0 + 3, 10, slots[i].kind, 12);
-    String t = String(slots[i].temp) + '^';
+    drawWxIcon(x0 + 3, 10, iconKind(slots[i].icon), 12);
+    String t = (slots[i].has ? String(slots[i].temp) : String("--")) + '^';
     tt(x0 + (19 - ttWidth(t)) / 2, 29, t, WHITE, 20);
   }
 }
@@ -186,36 +214,54 @@ int wrapLines(const String &text, int maxChars, String out[], int maxLines) {
   if (cur.length() && n < maxLines) out[n++] = cur;
   return n;
 }
-void newsA(float t) {
-  String h = SAMPLE_HEADLINES[(int)(t / 14) % SAMPLE_HEADLINE_COUNT];
+void newsA(float t, const UiState &ui) {
+  String h = ui.headline ? String(ui.headline) : String(SAMPLE_HEADLINES[(int)(t / 14) % SAMPLE_HEADLINE_COUNT]);
+  String label = (ui.headlineSource && ui.headlineSource[0]) ? String(ui.headlineSource) : String("NEWS");
   matrix.fillRect(0, 0, PANEL_W, 8, DARKBLUE);
-  tt(2, 6, "NEWS", WHITE, 60);
+  tt(2, 6, label, WHITE, 60);
   float wpx = (float)h.length() * 6;
-  int x = (int)(PANEL_W - (fmodf(t, 14.0f) / 14.0f) * (PANEL_W + wpx));
+  int x = ui.headline ? (int)(PANEL_W - (ui.headlineAgeMs / 1000.0f) * 24.0f)  // live: starts at the right edge, 24 px per second
+                      : (int)(PANEL_W - (fmodf(t, 14.0f) / 14.0f) * (PANEL_W + wpx));
   useDefaultFont();
   matrix.setCursor(x, 16);
   matrix.setTextColor(AMBER);
   matrix.print(h);
 }
-void newsB(float t) {
-  String h = SAMPLE_HEADLINES[(int)(t / 4) % SAMPLE_HEADLINE_COUNT];
-  tt(2, 6, "NEWS", BLUE, 60);
-  String lines[4];
-  int n = wrapLines(h, 15, lines, 4);
-  for (int i = 0; i < n; i++) tt(2, 13 + i * 6, lines[i], WHITE, 62);
+void newsB(float t, const UiState &ui) {
+  String h = ui.headline ? String(ui.headline) : String(SAMPLE_HEADLINES[(int)(t / 4) % SAMPLE_HEADLINE_COUNT]);
+  String label = (ui.headlineSource && ui.headlineSource[0]) ? String(ui.headlineSource) : String("NEWS");
+  tt(2, 6, label, BLUE, 60);
+  String lines[12];
+  int n = wrapLines(h, 15, lines, 12);
+  int pages = (n + 3) / 4;
+  int page = pages > 0 ? (int)(((ui.headline ? ui.headlineAgeMs / 1000.0f : t) / 4)) % pages : 0;
+  for (int i = 0; i < 4 && page * 4 + i < n; i++) tt(2, 13 + i * 6, lines[page * 4 + i], WHITE, 62);
 }
 
 // ---- idle ---------------------------------------------------------------------------------------------------
-void idleClock(float t, uint32_t ms, bool h24) {
-  // Demo clock: starts at 21:47 and advances with uptime. Real time (SNTP, timezone) comes in slice 4.
-  uint32_t minutes = 21 * 60 + 47 + ms / 60000;
-  unsigned hour = (minutes / 60) % 24;
+void idleClock(float t, uint32_t ms, bool h24, const struct tm *tmv) {
+  unsigned hour, minute;
+  String date;
+  if (tmv) {
+    hour = tmv->tm_hour;
+    minute = tmv->tm_min;
+    char buf[20];
+    strftime(buf, sizeof(buf), "%a %d %b", tmv);
+    date = buf;
+    date.toUpperCase();
+  } else {
+    // Demo clock: starts at 21:47 and advances with uptime.
+    uint32_t minutes = 21 * 60 + 47 + ms / 60000;
+    hour = (minutes / 60) % 24;
+    minute = minutes % 60;
+    date = "SAT 21 NOV";
+  }
   bool pm = hour >= 12;
   if (!h24) hour = hour % 12 == 0 ? 12 : hour % 12;
   char buf[8];
-  snprintf(buf, sizeof(buf), "%02u%c%02u", hour, ((int)(t * 2) % 2 == 0) ? ':' : ' ', (unsigned)(minutes % 60));
+  snprintf(buf, sizeof(buf), "%02u%c%02u", hour, ((int)(t * 2) % 2 == 0) ? ':' : ' ', minute);
   t6(2, 4, buf, WHITE, 64, 2);
-  String date = h24 ? "SAT 21 NOV" : (String("SAT 21 NOV ") + (pm ? "PM" : "AM"));
+  if (!h24) date += pm ? " PM" : " AM";
   tt(centerX(tinyWidth(date)), 29, date, GREY, 62);
 }
 
@@ -263,7 +309,10 @@ void noWifiScreen() {
 
 void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiState &ui) {
   float t = ms / 1000.0f;
-  const SampleFlight &f = SAMPLE_FLIGHTS[((flightIdx % SAMPLE_FLIGHT_COUNT) + SAMPLE_FLIGHT_COUNT) % SAMPLE_FLIGHT_COUNT];
+  const SampleFlight &sample = SAMPLE_FLIGHTS[((flightIdx % SAMPLE_FLIGHT_COUNT) + SAMPLE_FLIGHT_COUNT) % SAMPLE_FLIGHT_COUNT];
+  const SampleFlight &f = ui.flight ? *ui.flight : sample;
+  LiveWeather demo = demoWeather();
+  const LiveWeather &w = ui.wx ? *ui.wx : demo;
   switch (s) {
     case Screen::Flight:
       if (layout == 0) flightA(f);
@@ -271,16 +320,16 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
       else flightC(f);
       break;
     case Screen::Weather:
-      if (layout == 0) weatherA();
-      else if (layout == 1) weatherB();
-      else weatherC();
+      if (layout == 0) weatherA(w);
+      else if (layout == 1) weatherB(w);
+      else weatherC(w);
       break;
     case Screen::News:
-      if (layout == 0) newsA(t);
-      else newsB(t);
+      if (layout == 0) newsA(t, ui);
+      else newsB(t, ui);
       break;
     case Screen::Idle:
-      if (layout == 0) idleClock(t, ms, ui.clock24h);  // layout 1 is the clean black screen: draw nothing
+      if (layout == 0) idleClock(t, ms, ui.clock24h, ui.clock);  // layout 1 is the clean black screen: draw nothing
       break;
     case Screen::Setup: setupScreen(ui); break;
     case Screen::Boot: bootScreen(t); break;
