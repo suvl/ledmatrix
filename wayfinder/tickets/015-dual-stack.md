@@ -32,3 +32,9 @@ Still to verify (slice 4, live data):
 - Design rules for the firmware: every remote host is reached by name, never by an IPv4 literal; resolve both families; try IPv6 first when the board has a global address, otherwise IPv4 first; give each attempt a short timeout and fall back to the other family; log which family was used.
 - Test in slice 4: fetch from an IPv6-only host (`api6.ipify.org`), from the IPv4-only service, and from a dual-stack host.
 
+### Verified on the real board, 22 Nov 2026 (firmware slice 4)
+From the board itself, over HTTPS with the standard CA bundle: the IPv4-only service answered over IPv4 in 397 ms; an IPv6-only host (`api6.ipify.org`) answered over IPv6 in 912 ms; a dual-stack host was reached over IPv6 first (899 ms), as designed for a board that holds a global IPv6 address. A host that gains an AAAA record later is therefore picked up with no firmware change. The test is available on the portal ("Test connections") and at `/api/selftest`.
+Not yet exercised: the fallback itself (an AAAA record that does not answer, then IPv4). The code tries the other family after a failed attempt but no host in reach could trigger it.
+
+**A bug this exposed, fixed:** enabling IPv6 (needed so `ledmatrix.local` answers instantly) let the router's IPv6 announcement replace the DHCP-provided DNS server with the router's link-local address `fe80::...`, which lwIP cannot use. Every name lookup then failed after 10 to 14 s. A DNS guard in `net.cpp` now checks every 2 s and, if the first DNS server is not usable, puts back the IPv4 server DHCP gave (a global IPv6 server is left alone). The board's DNS servers are shown in `/api/live`.
+

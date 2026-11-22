@@ -35,6 +35,8 @@ static void loadAll() {
     String v = prefs.getString(key.c_str(), "");
     strlcpy(cur.queries[i], v.c_str(), sizeof(cur.queries[i]));
   }
+  String host = prefs.getString("svc", "");
+  strlcpy(cur.serviceHost, host.c_str(), sizeof(cur.serviceHost));
   prefs.end();
 }
 
@@ -59,6 +61,7 @@ static void saveAll(const Settings &s) {
     String key = "q" + String(i);
     prefs.putString(key.c_str(), s.queries[i]);
   }
+  prefs.putString("svc", s.serviceHost);
   prefs.end();
 }
 
@@ -171,6 +174,24 @@ bool setFromJson(const char *json, size_t len, String &error) {
     }
   }
 
+  JsonObject svc = doc["service"];
+  if (!svc.isNull() && svc["host"].is<const char *>()) {
+    // accept a pasted address: drop the scheme and anything after the host name
+    String h = trimmed(svc["host"]);
+    h.toLowerCase();
+    if (h.startsWith("https://")) h.remove(0, 8);
+    else if (h.startsWith("http://")) h.remove(0, 7);
+    int slash = h.indexOf('/');
+    if (slash >= 0) h.remove(slash);
+    bool ok = h.length() <= 63;
+    for (size_t i = 0; i < h.length() && ok; i++) {
+      char c = h[i];
+      ok = isalnum((unsigned char)c) || c == '.' || c == '-';
+    }
+    if (!ok) { error = "The service address must be a host name such as apis.example.com."; return false; }
+    strlcpy(n.serviceHost, h.c_str(), sizeof(n.serviceHost));
+  }
+
   lock();
   cur = n;
   saveAll(cur);
@@ -200,6 +221,7 @@ String toJson() {
   loc["altMaxFt"] = s.altMaxFt;
   JsonArray qs = doc["queries"].to<JsonArray>();
   for (int i = 0; i < 5; i++) qs.add(s.queries[i]);
+  doc["service"]["host"] = s.serviceHost;
   String out;
   serializeJson(doc, out);
   return out;

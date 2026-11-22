@@ -73,6 +73,16 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 </section>
 
 <section>
+<h2>Data service</h2>
+<p class="note">The address of your ledmatrix-api service, for example <code>apis.example.com</code>. Leave it empty to show example screens. It also needs a location above for flights and weather.</p>
+<label for="svc">Service address</label>
+<input type="text" id="svc" maxlength="63" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="apis.example.com">
+<p style="margin:12px 0 0"><button type="button" class="ghost" id="selftest">Test connections</button></p>
+<pre id="testout" class="note" style="white-space:pre-wrap;margin:8px 0 0"></pre>
+<p id="liveInfo" class="note"></p>
+</section>
+
+<section>
 <h2>Headline topics</h2>
 <p class="note">Up to five searches, one per line. Leave empty for none.</p>
 <div id="queries"></div>
@@ -178,6 +188,7 @@ __RENDERER__
     $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
     sel.flight = c.layouts.flight; sel.weather = c.layouts.weather; sel.news = c.layouts.news; sel.idle = c.layouts.idle;
     $('c24').checked = c.clock24h;
+    $('svc').value = (c.service && c.service.host) || '';
     hasLoc = !!c.location.set;
     if (hasLoc) { $('lat').value = c.location.lat; $('lon').value = c.location.lon; }
     $('radius').value = c.location.radiusKm; $('altmin').value = c.location.altMinFt; $('altmax').value = c.location.altMaxFt;
@@ -198,6 +209,7 @@ __RENDERER__
       location: { set: hasLoc && !isNaN(lat) && !isNaN(lon), lat: isNaN(lat) ? 0 : lat, lon: isNaN(lon) ? 0 : lon,
         radiusKm: +$('radius').value, altMinFt: +$('altmin').value, altMaxFt: +$('altmax').value },
       queries: q,
+      service: { host: $('svc').value.trim() },
     };
   }
   $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
@@ -210,6 +222,32 @@ __RENDERER__
       apply(j); drawMapState(false); setStatus('Saved.', 'ok');
     } catch (e) { setStatus('Could not reach the display.', 'err'); }
   });
+
+  /* ---- data service: live status and the connection test ---- */
+  function age(s) { return s < 90 ? s + ' s ago' : Math.round(s / 60) + ' min ago'; }
+  function showLive() {
+    fetch('/api/live').then(r => r.json()).then(l => {
+      const parts = [];
+      parts.push(l.timeSynced ? 'Clock synchronised.' : 'Clock not synchronised yet.');
+      if (l.flightsAgeS !== undefined) parts.push('Flights ' + age(l.flightsAgeS) + ' (' + l.planesInRange + ' in range).');
+      if (l.weatherAgeS !== undefined) parts.push('Weather ' + age(l.weatherAgeS) + '.');
+      if (l.newsAgeS !== undefined) parts.push('Headlines ' + age(l.newsAgeS) + '.');
+      if (l.family) parts.push('Last connection over IP' + l.family + '.');
+      if (l.lastError) parts.push('Last problem: ' + l.lastError);
+      $('liveInfo').textContent = parts.join(' ');
+    }).catch(() => {});
+  }
+  $('selftest').addEventListener('click', async () => {
+    $('testout').textContent = 'Testing, this takes up to half a minute…';
+    try {
+      const r = await fetch('/api/selftest'); const j = await r.json();
+      const lines = ['This display has a global IPv6 address: ' + (j.boardHasGlobalIPv6 ? 'yes' : 'no')];
+      j.tests.forEach(t => lines.push((t.ok ? 'OK    ' : 'FAIL  ') + t.what + (t.host ? ' (' + t.host + ')' : '') + (t.ok ? ' over IP' + t.family + ' in ' + t.ms + ' ms' : ' - ' + (t.error || t.result))));
+      $('testout').textContent = lines.join('\n');
+    } catch (e) { $('testout').textContent = 'The test could not run.'; }
+    showLive();
+  });
+  showLive(); setInterval(showLive, 15000);
 
   /* ---- start ---- */
   Object.keys(groups).forEach(buildGroup);

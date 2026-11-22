@@ -8,6 +8,7 @@
 
 #include <vector>
 
+#include "live.h"
 #include "portal_page.h"
 #include "settings.h"
 
@@ -176,6 +177,14 @@ void registerStationRoutes() {
     Serial.println("SETTINGS saved");
     server.send(200, "application/json", settings::toJson());
   });
+  server.on("/api/live", HTTP_GET, []() {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", liveStatusJson());
+  });
+  server.on("/api/selftest", HTTP_GET, []() {  // takes up to about 30 s: three real connections
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", liveSelfTestJson(settings::get()));
+  });
   server.on("/status", HTTP_GET, []() {
     char buf[420];
     snprintf(buf, sizeof(buf),
@@ -194,6 +203,30 @@ void registerStationRoutes() {
   });
 }
 
+// ---- DNS guard -------------------------------------------------------------------------------------------------
+// With IPv6 enabled, the router's IPv6 announcement can replace the DHCP-provided DNS server with the
+// router's link-local address (fe80::...). lwIP cannot use a link-local server (it needs to know the
+// interface), so every name lookup then times out. Remember the IPv4 server DHCP gave us and put it
+// back whenever the first server stops being usable. A global IPv6 server is fine and left alone.
+IPAddress dhcpDns((uint32_t)0);
+
+bool dnsUsable(const IPAddress &d) {
+  if (d.type() == IPv4) return (uint32_t)d != 0;
+  String s = d.toString();
+  return !(s.startsWith("fe80") || s == "::");
+}
+
+void ensureDns() {
+  IPAddress d0 = WiFi.dnsIP(0);
+  if (dnsUsable(d0)) {
+    if (d0.type() == IPv4 && (uint32_t)dhcpDns == 0) dhcpDns = d0;
+    return;
+  }
+  IPAddress primary = (uint32_t)dhcpDns != 0 ? dhcpDns : WiFi.gatewayIP();
+  WiFi.setDNS(primary, IPAddress((uint32_t)0));
+  Serial.printf("DNS: first server %s is not usable, using %s\n", d0.toString().c_str(), primary.toString().c_str());
+}
+
 [[noreturn]] void runStation(const WifiCreds &c) {
   setState(NetState::Connecting);
   WiFi.mode(WIFI_STA);
@@ -204,8 +237,13 @@ void registerStationRoutes() {
   WiFi.begin(c.ssid.c_str(), c.pass.c_str());
   uint32_t t0 = millis();
   bool services = false;
+  uint32_t lastDnsCheck = 0;
   for (;;) {
     bool up = WiFi.status() == WL_CONNECTED;
+    if (up && millis() - lastDnsCheck > 2000) {
+      lastDnsCheck = millis();
+      ensureDns();
+    }
     if (up && !services) {
       if (MDNS.begin(HOSTNAME)) MDNS.addService("http", "tcp", 80);
       registerStationRoutes();
