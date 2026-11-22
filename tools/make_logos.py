@@ -23,7 +23,24 @@ ET SA KQ MS AH TU RAM LY EL AI 6E UK SG IX UL BG PK BI MH SQ TR TG VN PR GA CX K
 JL NH KE OZ 7C BR CI AE NZ QF JQ VA DL UA AA WN B6 AS NK F9 HA G4 AC WS TS PD QX AM CM AV LA JJ G3 AR AD
 H2 CU DM XL FX 5X QY PO CV 3V GB NX D0 LD SU S7 FV U6 UT KC HY J2 A9 B2 PW BM LG UM JU 9U WZ BS SW
 """.split()
+CODES += "DS EC RK I2 WA CL A5 LG QS FZ SP WI 5K YU NI 5Y W9 5W DU CJ WK 3S BY LW HF 2L X7 VF XQ JI".split()
 CODES = [c for c in dict.fromkeys(CODES) if len(c) == 2]
+
+# Sister airlines and regional subsidiaries that fly under another code but wear the parent's logo.
+# Used only when the source has no logo of its own for the code.
+ALIAS = {
+    "DS": "U2", "EC": "U2",        # easyJet Switzerland, easyJet Europe
+    "RK": "FR", "FR": "FR",        # Ryanair UK
+    "WA": "KL", "KLM": "KL",       # KLM Cityhopper
+    "A5": "AF",                    # HOP! (Air France)
+    "NI": "TP",                    # Portugalia (TAP Express)
+    "W9": "W6", "5W": "W6",        # Wizz Air UK, Wizz Air Abu Dhabi
+    "CL": "LH",                    # Lufthansa CityLine
+    "CJ": "BA",                    # BA CityFlyer
+    "DU": "DY",                    # Norwegian (Norway)
+    "I2": "IB",                    # Iberia Express
+    "BY": "X3",                    # TUI Airways
+}
 
 def fetch(code):
     p = os.path.join(SRC, code + ".png")
@@ -57,21 +74,26 @@ def rgb565(im):
 def main():
     os.makedirs(SRC, exist_ok=True)
     done = []
+    ims = {}
     for c in CODES:
         p = os.path.join(SRC, c + ".png") if "--from-cache" in sys.argv else fetch(c)
-        if not p or not os.path.exists(p):
-            continue
-        im = convert(p)
+        if p and os.path.exists(p):
+            ims[c] = convert(p)
+    # drop the source's grey "no logo" plane before aliases look for a parent
+    from collections import Counter
+    count = Counter(rgb565(im) for im in ims.values())
+    for c in [c for c, im in ims.items() if count[rgb565(im)] >= 3]:
+        del ims[c]
+    for c, parent in ALIAS.items():
+        if c not in ims and parent in ims:
+            ims[c] = ims[parent]
+    done = []
+    for c, im in ims.items():
         open(os.path.join(ROOT, c + ".bin"), "wb").write(rgb565(im))
         done.append((c, im))
-    # the source answers with one grey plane icon when it has no logo: drop every copy of it
-    from collections import Counter
-    count = Counter(rgb565(im) for _, im in done)
-    generic = [b for b, n in count.items() if n >= 3]
-    for c, im in list(done):
-        if rgb565(im) in generic:
-            os.remove(os.path.join(ROOT, c + ".bin"))
-            done.remove((c, im))
+    for f in os.listdir(ROOT):  # forget files of codes that no longer have a logo
+        if f.endswith(".bin") and f[:-4] not in ims:
+            os.remove(os.path.join(ROOT, f))
     cols = 12
     rows = (len(done) + cols - 1) // cols
     sheet = Image.new("RGB", (cols * 20 * 4, rows * 24 * 4), (0, 0, 0))

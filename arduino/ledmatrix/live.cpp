@@ -243,7 +243,7 @@ void newsMarkSeen(uint32_t id) {
 // ---- fetchers -----------------------------------------------------------------------------------------------------
 // ---- airline logos: 16x16 RGB565 from the service, kept in a small cache -----------------------------------
 // The data task fetches a logo before the plane that needs it is queued, so the render task never waits.
-// A 404 is remembered for an hour (the owner may add logos later); a network failure is not remembered.
+// A 404 is remembered for ten minutes (the owner may add logos later); a network failure is not remembered.
 struct LogoSlot {
   char code[3] = "";
   uint8_t state = 0;  // 0 empty, 1 have, 2 missing
@@ -252,7 +252,7 @@ struct LogoSlot {
 };
 const int LOGO_SLOTS = 16;
 LogoSlot logos[LOGO_SLOTS];
-const uint32_t LOGO_RETRY_MS = 60UL * 60 * 1000;
+const uint32_t LOGO_RETRY_MS = 10UL * 60 * 1000;
 
 LogoSlot *logoFind(const char *code) {  // call with the lock held
   for (auto &l : logos)
