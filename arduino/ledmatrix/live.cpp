@@ -27,6 +27,8 @@ struct Status {
   int planesInRange = 0;
   char family[4] = "";
   char lastError[72] = "";
+  int logoFailures = 0;      // logo downloads that failed (not counting 404)
+  char lastLogoError[40] = "";
 } st;
 
 LivePlane planeQ[QUEUE_MAX];
@@ -260,6 +262,14 @@ LogoSlot *logoFind(const char *code) {  // call with the lock held
   return nullptr;
 }
 
+// True when the logo question is settled for this airline: we have it, or the service has none, or there is no
+// airline. A plane whose logo is still unknown waits for the next round instead of being shown without one.
+bool logoResolved(const char *ai) {  // call with the lock held
+  if (!ai || strlen(ai) != 2) return true;
+  char code[3] = {(char)toupper(ai[0]), (char)toupper(ai[1]), 0};
+  return logoFind(code) != nullptr;
+}
+
 void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
   if (!ai || strlen(ai) != 2) return;
   char code[3] = {(char)toupper(ai[0]), (char)toupper(ai[1]), 0};
@@ -277,7 +287,13 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
   uint8_t state;
   if (n == 512) state = 1;
   else if (n < 0 && r.status == 404) state = 2;
-  else return;  // network trouble or a bad answer: try again next time
+  else {  // network trouble or a bad answer: try again next round
+    lock();
+    st.logoFailures++;
+    snprintf(st.lastLogoError, sizeof(st.lastLogoError), "%s: %s", code, r.error.length() ? r.error.c_str() : "bad answer");
+    unlock();
+    return;
+  }
   lock();
   LogoSlot *slot = logoFind(code);
   if (!slot) {  // take an empty slot, else the oldest
@@ -305,7 +321,7 @@ bool fetchFlights(const Settings &cfg) {
   if (deserializeJson(doc, body)) { setError("flights", "unexpected answer"); return false; }
   uint32_t now = millis();
   JsonArray ps = doc["planes"];
-  int logoBudget = 3;  // at most three logo downloads per round
+  int logoBudget = 4;  // at most four logo downloads per round
   for (JsonObject p : ps) ensureLogo(cfg, p["ai"] | "", logoBudget);
   now = millis();
   lock();
@@ -314,6 +330,7 @@ bool fetchFlights(const Settings &cfg) {
   for (JsonObject p : ps) {
     const char *id = p["id"] | "";
     if (!id[0] || !planeIsNew(id, now) || planeQn >= QUEUE_MAX) continue;
+    if (!logoResolved(p["ai"] | "")) continue;  // logo not downloaded yet: not marked seen, so the next round tries again
     LivePlane &q = planeQ[planeQn++];
     q = LivePlane();
     cp(q.id, sizeof(q.id), id);
@@ -527,6 +544,8 @@ String liveStatusJson() {
   doc["headlinesWaiting"] = newsQn;
   doc["family"] = st.family;
   doc["lastError"] = st.lastError;
+  doc["logoFailures"] = st.logoFailures;
+  if (st.lastLogoError[0]) doc["lastLogoError"] = st.lastLogoError;
   doc["ipv6Global"] = boardHasGlobalV6();
   JsonArray dns = doc["dnsServers"].to<JsonArray>();
   for (int i = 0; i < 3; i++) {
