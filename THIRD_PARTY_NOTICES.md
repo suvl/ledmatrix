@@ -101,3 +101,5 @@ Andreas Merkle (web@blue-andi.de)
 
 IPMA (weather, must be cited as the source), adsb.fi open data (positions, personal non-commercial use),
 adsbdb (routes), Google News (headlines, unofficial feed).
+
+Airline logos are trademarks of their airlines. They are not included in this repository or the published image; the owner converts them privately for personal use.
