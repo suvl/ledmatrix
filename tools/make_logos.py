@@ -55,11 +55,60 @@ def fetch(code):
             return None
     return p
 
+def lum(c):
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+def background(im):
+    """The tile colour: the commonest opaque colour in a ring near the edge (rounded tiles have clear corners)."""
+    from collections import Counter
+    w, h = im.size
+    ring = Counter()
+    for y in range(h):
+        for x in range(w):
+            if min(x, y, w - 1 - x, h - 1 - y) in range(2, 8):
+                r, g, b, a = im.getpixel((x, y))
+                if a > 200:
+                    ring[(r // 8 * 8, g // 8 * 8, b // 8 * 8)] += 1
+    return ring.most_common(1)[0][0] if ring else None
+
 def convert(path):
     im = Image.open(path).convert("RGBA")
-    bg = Image.new("RGBA", im.size, (0, 0, 0, 255))
-    bg.alpha_composite(im)
-    im = bg.convert("RGB").resize((16, 16), Image.LANCZOS)
+    bg = background(im)
+    if bg and min(bg) >= 200 and max(bg) - min(bg) <= 40:
+        # Light tile: on a dark LED panel it is just a glaring white square. Keep only the mark: the
+        # background becomes black, dark lettering is lightened so it shows, and the empty padding is cropped.
+        bg = (255, 255, 255) if min(bg) >= 232 else bg
+        w, h = im.size
+        out = Image.new("RGB", (w, h), (0, 0, 0))
+        mask = Image.new("L", (w, h), 0)
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = im.getpixel((x, y))
+                px = (r, g, b)
+                d = max(abs(px[i] - bg[i]) for i in range(3)) * a / 255
+                k = min(1.0, max(0.0, (d - 28) / 70))        # how much of this pixel is mark, not background
+                if k <= 0:
+                    continue
+                c = [min(255, max(0, bg[i] + (px[i] - bg[i]) / k)) for i in range(3)]  # undo the blend with the tile
+                l = lum(c)
+                if l < 110:                                  # dark ink would vanish on black: lift it, keep the hue
+                    t = (110 - l) / (255 - l)
+                    c = [c[i] + (255 - c[i]) * t for i in range(3)]
+                out.putpixel((x, y), tuple(int(v * k) for v in c))
+                mask.putpixel((x, y), int(255 * k))
+        box = mask.point(lambda v: 255 if v > 80 else 0).getbbox()
+        if box:
+            x0, y0, x1, y1 = box
+            side = max(x1 - x0, y1 - y0) + 4
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            crop = (int(cx - side / 2), int(cy - side / 2), int(cx - side / 2) + side, int(cy - side / 2) + side)
+            out = out.crop(crop)                             # outside the image reads as black
+        im = out
+    else:
+        bgc = Image.new("RGBA", im.size, (0, 0, 0, 255))
+        bgc.alpha_composite(im)
+        im = bgc.convert("RGB")
+    im = im.resize((16, 16), Image.LANCZOS)
     im = ImageEnhance.Color(im).enhance(1.35)       # LEDs wash colours out
     im = ImageEnhance.Contrast(im).enhance(1.15)
     return im

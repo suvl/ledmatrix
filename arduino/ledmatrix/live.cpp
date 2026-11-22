@@ -245,7 +245,7 @@ void newsMarkSeen(uint32_t id) {
 // ---- fetchers -----------------------------------------------------------------------------------------------------
 // ---- airline logos: 16x16 RGB565 from the service, kept in a small cache -----------------------------------
 // The data task fetches a logo before the plane that needs it is queued, so the render task never waits.
-// A 404 is remembered for ten minutes (the owner may add logos later); a network failure is not remembered.
+// A logo is refreshed every 12 hours; a 404 is remembered for ten minutes (the owner may add logos later); a network failure is not remembered.
 struct LogoSlot {
   char code[3] = "";
   uint8_t state = 0;  // 0 empty, 1 have, 2 missing
@@ -255,6 +255,7 @@ struct LogoSlot {
 const int LOGO_SLOTS = 16;
 LogoSlot logos[LOGO_SLOTS];
 const uint32_t LOGO_RETRY_MS = 10UL * 60 * 1000;
+const uint32_t LOGO_REFRESH_MS = 12UL * 60 * 60 * 1000;  // logos we have are fetched again now and then, so updated art arrives
 
 LogoSlot *logoFind(const char *code) {  // call with the lock held
   for (auto &l : logos)
@@ -276,7 +277,7 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
   uint32_t now = millis();
   lock();
   LogoSlot *have = logoFind(code);
-  bool skip = have && (have->state == 1 || now - have->at < LOGO_RETRY_MS);
+  bool skip = have && now - have->at < (have->state == 1 ? LOGO_REFRESH_MS : LOGO_RETRY_MS);
   unlock();
   if (skip || budget <= 0) return;
   budget--;
@@ -545,6 +546,12 @@ String liveStatusJson() {
   doc["family"] = st.family;
   doc["lastError"] = st.lastError;
   doc["logoFailures"] = st.logoFailures;
+  {
+    String c;
+    for (auto &l : logos)
+      if (l.state) { c += l.code; c += l.state == 1 ? "+ " : "- "; }
+    doc["logoCache"] = c;  // + = have it, - = the service has none
+  }
   if (st.lastLogoError[0]) doc["lastLogoError"] = st.lastLogoError;
   doc["ipv6Global"] = boardHasGlobalV6();
   JsonArray dns = doc["dnsServers"].to<JsonArray>();
