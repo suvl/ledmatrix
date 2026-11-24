@@ -24,3 +24,6 @@ Still to decide: who may trigger an update (the portal has no password), whether
 
 ### Decided: who may start an update (owner, 24 Nov 2026)
 Pressing Update on the portal (either path: pull or `.bin` upload) makes the panel show a 6-digit code that must be typed into the portal to continue. It proves someone is in front of the device, like the setup Wi-Fi password. No stored update password. Build notes: the code is random per attempt, expires after a few minutes, allows a few wrong tries, and the panel returns to its normal screen afterwards.
+
+### Decided: image signing (owner, 24 Nov 2026)
+**No signature for now.** The board downloads over HTTPS with the normal certificate checks and verifies a SHA-256 checksum published with the release (and the image must be a valid ESP32 app image for this board). It trusts the owner's GitHub account and repository. Signing (CI key or offline key) can be added later without changing the update flow. The forced `.bin` upload accepts any valid image after the panel code.
