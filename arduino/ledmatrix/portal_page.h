@@ -29,6 +29,7 @@ input[type=range]{width:100%;accent-color:var(--amber)}
 .opt[aria-pressed=true]{border-color:var(--amber);color:var(--amber)}
 #map{height:320px;border-radius:8px;border:1px solid var(--line);margin:10px 0;background:#0b0d10}
 .note{color:var(--muted);font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:500}
 .bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px max(16px,env(safe-area-inset-left,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-right,0px));display:flex;gap:12px;align-items:center;justify-content:center}
 button.primary{background:var(--amber);color:#1a1300;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}
 button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
@@ -41,7 +42,7 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <body>
 <main>
 <h1>ledmatrix</h1>
-<p class="lede">Settings for the display. Changes apply when you press Save.</p>
+<p class="lede">Settings for the display. Changes apply when you press Save, except brightness, which applies as soon as you release the slider.</p>
 
 <section>
 <h2>What to show</h2>
@@ -80,6 +81,12 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <div><label for="altmin">Lowest altitude (ft)</label><input type="number" id="altmin" min="0" max="60000" step="500"></div>
 <div><label for="altmax">Highest altitude (ft)</label><input type="number" id="altmax" min="0" max="60000" step="500"></div>
 </div>
+</section>
+
+<section>
+<h2>Recent planes</h2>
+<p class="note" id="logInfo">Planes the display has seen enter your radar, newest first. The list is kept in memory and starts empty after a restart.</p>
+<div style="overflow-x:auto"><table id="planeLog"><thead><tr><th>Time</th><th>Flight</th><th>Airline</th><th>Route</th><th>Aircraft</th><th>Alt (ft)</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section>
@@ -206,10 +213,10 @@ function wxIcon(fb, x, y, kind, s) {
 
 /* ---------- example data ---------- */
 const FLIGHTS = [
-  { chip: 'Korean · LAX-ICN', air: 'Korean', route: 'LAX-ICN', type: '747-8', from: 'Los Angeles Intl', to: 'Seoul Incheon', alt: '34.0kft', spd: '540mph', trk: '294°', vr: '+0ft/s', logo: 'roundel' },
-  { chip: 'American · DCA-ORD', air: 'American', route: 'DCA-ORD', type: 'E75L', from: 'Washington Reagan', to: "Chicago O'Hare", alt: '9.9kft', spd: '330kts', trk: '305°', vr: '+1ft/s', logo: 'stripes' },
-  { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9.8kft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
-  { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12.2kft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
+  { chip: 'Korean · LAX-ICN', air: 'Korean', route: 'LAX-ICN', type: '747-8', from: 'Los Angeles Intl', to: 'Seoul Incheon', alt: '34012ft', spd: '540mph', trk: '294°', vr: '+0ft/s', logo: 'roundel' },
+  { chip: 'American · DCA-ORD', air: 'American', route: 'DCA-ORD', type: 'E75L', from: 'Washington Reagan', to: "Chicago O'Hare", alt: '9870ft', spd: '330kts', trk: '305°', vr: '+1ft/s', logo: 'stripes' },
+  { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9812ft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
+  { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12240ft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
 ];
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
@@ -435,6 +442,14 @@ const nowifi = (fb, t, ctx) => {
     };
   }
   $('bright').addEventListener('input', () => { $('brightVal').textContent = $('bright').value; });
+  $('bright').addEventListener('change', async () => {  // brightness applies and is saved as soon as the slider is released
+    try {
+      const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brightness: +$('bright').value }) });
+      const j = await r.json();
+      if (!r.ok) { setStatus(j.error || 'Could not save the brightness.', 'err'); return; }
+      setStatus('Brightness saved.', 'ok');
+    } catch (e) { setStatus('Could not reach the display.', 'err'); }
+  });
   $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
   $('save').addEventListener('click', async () => {
     setStatus('Saving…');
@@ -471,6 +486,21 @@ const nowifi = (fb, t, ctx) => {
     showLive();
   });
   showLive(); setInterval(showLive, 15000);
+
+  /* ---- recent planes ---- */
+  function showPlanes() {
+    fetch('/api/planes').then(r => r.json()).then(d => {
+      const tb = document.querySelector('#planeLog tbody'); tb.textContent = '';
+      d.planes.forEach(p => {
+        const tr = document.createElement('tr');
+        const when = p.t ? new Date(p.t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '–';
+        [when, p.cs, p.air || '', p.rt || '', p.ty || '', p.alt].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.append(td); });
+        tb.append(tr);
+      });
+      $('logInfo').textContent = d.planes.length ? 'The last ' + d.planes.length + ' planes that entered your radar (it keeps up to ' + d.max + '), newest first. Kept in memory: it starts empty after a restart.' : 'No planes seen yet. They appear here as they enter your radar.';
+    }).catch(() => {});
+  }
+  showPlanes(); setInterval(showPlanes, 30000);
 
   /* ---- start ---- */
   Object.keys(groups).forEach(buildGroup);

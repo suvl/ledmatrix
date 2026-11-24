@@ -17,6 +17,7 @@ struct LivePlane {
   char type[20] = "";
   int alt = 0, spd = 0, trk = 0, vr = 0;
   float dst = 0;
+  uint32_t at = 0;  // millis() when the position was received: the altitude is carried forward from here
 };
 
 struct LiveWeather {
@@ -52,6 +53,7 @@ struct LiveView {
 
 void liveBegin();                                         // starts the data task (core 0)
 LiveView liveView(uint32_t nowMs, const Settings &cfg);   // called every frame by the render task
+String livePlanesJson();                                  // /api/planes: the last planes seen, newest first
 String liveStatusJson();                                  // for /api/live
 String liveSelfTestJson(const Settings &cfg);             // /api/selftest: reaches IPv4-only, IPv6-only and dual-stack hosts
 bool liveLogo(const char *airlineIata, uint16_t *out256);  // copies the cached 16x16 logo; false = none (use the badge)

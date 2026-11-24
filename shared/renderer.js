@@ -96,10 +96,10 @@ function wxIcon(fb, x, y, kind, s) {
 
 /* ---------- example data ---------- */
 const FLIGHTS = [
-  { chip: 'Korean · LAX-ICN', air: 'Korean', route: 'LAX-ICN', type: '747-8', from: 'Los Angeles Intl', to: 'Seoul Incheon', alt: '34.0kft', spd: '540mph', trk: '294°', vr: '+0ft/s', logo: 'roundel' },
-  { chip: 'American · DCA-ORD', air: 'American', route: 'DCA-ORD', type: 'E75L', from: 'Washington Reagan', to: "Chicago O'Hare", alt: '9.9kft', spd: '330kts', trk: '305°', vr: '+1ft/s', logo: 'stripes' },
-  { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9.8kft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
-  { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12.2kft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
+  { chip: 'Korean · LAX-ICN', air: 'Korean', route: 'LAX-ICN', type: '747-8', from: 'Los Angeles Intl', to: 'Seoul Incheon', alt: '34012ft', spd: '540mph', trk: '294°', vr: '+0ft/s', logo: 'roundel' },
+  { chip: 'American · DCA-ORD', air: 'American', route: 'DCA-ORD', type: 'E75L', from: 'Washington Reagan', to: "Chicago O'Hare", alt: '9870ft', spd: '330kts', trk: '305°', vr: '+1ft/s', logo: 'stripes' },
+  { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9812ft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
+  { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12240ft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
 ];
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };

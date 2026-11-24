@@ -118,7 +118,7 @@ static void renderTask(void *) {
       } else {
         live = true;
         if (lv.showPlane) {
-          planeToView(lv.plane, pv);
+          planeToView(lv.plane, pv, now);
           ui.flight = &pv.f;
           screen = Screen::Flight;
           layout = cfg.flightLayout;

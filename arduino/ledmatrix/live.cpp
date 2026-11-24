@@ -16,6 +16,7 @@ const uint32_t NEWS_EVERY_MS = 30UL * 60 * 1000;
 const uint32_t RETRY_WEATHER_MS = 60UL * 1000;
 const uint32_t RETRY_NEWS_MS = 5UL * 60 * 1000;
 const int QUEUE_MAX = 3;
+const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
 
@@ -42,6 +43,25 @@ int newsQn = 0;
 bool newsActive = false;
 LiveNews newsCur;
 uint32_t newsStart = 0, newsUntil = 0;
+
+struct LogEntry {
+  uint32_t t = 0;  // unix time, 0 = clock not yet synchronised
+  char cs[10], air[26], ai[4], route[8], type[20];
+  int alt;
+};
+LogEntry planeLog[PLANE_LOG_MAX];
+int planeLogN = 0, planeLogHead = 0;  // head = next slot to write
+
+void logPlane(const LivePlane &q) {  // call with the lock held
+  time_t t = time(nullptr);
+  LogEntry &e = planeLog[planeLogHead];
+  e.t = t > 1700000000 ? (uint32_t)t : 0;
+  strlcpy(e.cs, q.cs, sizeof(e.cs)); strlcpy(e.air, q.air, sizeof(e.air)); strlcpy(e.ai, q.ai, sizeof(e.ai));
+  strlcpy(e.route, q.route, sizeof(e.route)); strlcpy(e.type, q.type, sizeof(e.type));
+  e.alt = q.alt;
+  planeLogHead = (planeLogHead + 1) % PLANE_LOG_MAX;
+  if (planeLogN < PLANE_LOG_MAX) planeLogN++;
+}
 
 struct SeenPlane { char id[8]; uint32_t at; };
 SeenPlane seenPlanes[32];
@@ -342,8 +362,10 @@ bool fetchFlights(const Settings &cfg) {
     cp(q.from, sizeof(q.from), p["fr"]);
     cp(q.to, sizeof(q.to), p["to"]);
     cp(q.type, sizeof(q.type), p["ty"]);
+    q.at = now;
     q.alt = p["alt"] | 0; q.spd = p["spd"] | 0; q.trk = p["trk"] | 0; q.vr = p["vr"] | 0; q.dst = p["dst"] | 0.0f;
     planeMarkSeen(id, now);
+    logPlane(q);
   }
   st.flightsOkAt = now ? now : 1;
   unlock();
@@ -530,6 +552,22 @@ LiveView liveView(uint32_t now, const Settings &cfg) {
   v.stale = flightsStale || weatherStale;
   unlock();
   return v;
+}
+
+String livePlanesJson() {
+  JsonDocument doc;
+  JsonArray a = doc["planes"].to<JsonArray>();
+  lock();
+  for (int i = 0; i < planeLogN; i++) {  // newest first
+    const LogEntry &e = planeLog[(planeLogHead - 1 - i + 2 * PLANE_LOG_MAX) % PLANE_LOG_MAX];
+    JsonObject o = a.add<JsonObject>();
+    o["t"] = e.t; o["cs"] = e.cs; o["air"] = e.air; o["ai"] = e.ai; o["rt"] = e.route; o["ty"] = e.type; o["alt"] = e.alt;
+  }
+  unlock();
+  doc["max"] = PLANE_LOG_MAX;
+  String out;
+  serializeJson(doc, out);
+  return out;
 }
 
 String liveStatusJson() {

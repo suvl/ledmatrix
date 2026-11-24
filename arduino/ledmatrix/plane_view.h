@@ -11,8 +11,13 @@ struct PlaneView {
   uint16_t logoPx[256];
 };
 
-inline void planeToView(const LivePlane &p, PlaneView &v) {
-  snprintf(v.alt, sizeof(v.alt), "%.1fkft", p.alt / 1000.0);
+// The altitude is carried forward from the moment the position arrived using the vertical speed, one step per second.
+inline void planeToView(const LivePlane &p, PlaneView &v, uint32_t nowMs) {
+  uint32_t secs = (nowMs - p.at) / 1000;
+  if (secs > 300) secs = 300;  // never carry a position further than five minutes
+  long alt = p.alt + (long)p.vr * (long)secs;
+  if (alt < 0) alt = 0;
+  snprintf(v.alt, sizeof(v.alt), "%ldft", alt);
   snprintf(v.spd, sizeof(v.spd), "%d", p.spd);
   snprintf(v.vr, sizeof(v.vr), "%+dft/s", p.vr);
   v.f.airline = p.air[0] ? p.air : p.cs;
