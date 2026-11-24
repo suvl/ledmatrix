@@ -183,6 +183,10 @@ void registerStationRoutes() {
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "application/json", liveStatusJson());
   });
+  server.on("/api/planes", HTTP_GET, []() {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", livePlanesJson());
+  });
   server.on("/api/selftest", HTTP_GET, []() {  // takes up to about 30 s: three real connections
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "application/json", liveSelfTestJson(settings::get()));
