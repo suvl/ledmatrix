@@ -29,3 +29,6 @@ Markdown in the repository: a short `README.md` as the front door and a `docs/` 
 **A beginner.** Every step is explained, including installing the tools and what each term means (a glossary page is added to the list). Consequences accepted for the writing: the pages are longer; each command says what it does and what a good result looks like; a "if something goes wrong" note follows each risky step; terms are defined once in the glossary and linked.
 
 Known hard part for a beginner, to be settled: the board needs the data service reachable over HTTPS with a certificate from a normal certificate authority, which means a domain name and a certificate, not just a running container. The install page needs a simple, honest path for that.
+
+### Decided: operating systems (owner, 24 Nov 2026)
+**macOS and Linux.** The commands are tested on macOS; Linux notes are marked "not tested here" until someone runs them. Windows is not covered for now (it can be added later after someone has run it there). Tested and untested sections are clearly labelled; nothing is presented as tested that was not.
