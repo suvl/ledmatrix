@@ -24,3 +24,8 @@ Markdown in the repository: a short `README.md` as the front door and a `docs/` 
 - `docs/security.md`: what must be kept up to date and how often (arduino-esp32 and its certificate bundle and TLS library, the other Arduino libraries, the Go toolchain, the container base image, the GitHub Actions versions, the browser libraries the portal loads, the cluster components, the router and Wi-Fi), the portal's no-password LAN-only model, the update code, what is private.
 - `docs/operations.md`: day-0 (first install and setup), day-1 (settings, checks, what normal looks like), day-2 (updates, rollback, logs and problems, backups of settings, replacing the board, when things go wrong).
 - `docs/decisions.md` or a pointer to the wayfinder tickets for the why.
+
+### Decided: audience (owner, 24 Nov 2026)
+**A beginner.** Every step is explained, including installing the tools and what each term means (a glossary page is added to the list). Consequences accepted for the writing: the pages are longer; each command says what it does and what a good result looks like; a "if something goes wrong" note follows each risky step; terms are defined once in the glossary and linked.
+
+Known hard part for a beginner, to be settled: the board needs the data service reachable over HTTPS with a certificate from a normal certificate authority, which means a domain name and a certificate, not just a running container. The install page needs a simple, honest path for that.
