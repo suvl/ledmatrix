@@ -1,6 +1,6 @@
 ---
 type: grilling
-status: open
+status: closed
 ---
 
 ## Question
@@ -32,3 +32,15 @@ Pressing Update on the portal (either path: pull or `.bin` upload) makes the pan
 **Through the owner's service.** The service watches a GitHub repository's latest release (the repository is a service setting, so others point it at their own) and gives the board a tiny answer: version, download address, SHA-256 and size. The board talks only to the one host it already trusts. The download is proxied or redirected by the service. If the service is down the notice does not appear; the forced `.bin` upload still works.
 
 Defaults chosen without asking, owner may object: the board checks once a day (plus a "Check now" button on the portal); the version is a semantic version number set at build time and shown on the portal and in `/status`; only a newer version is offered; the highlighted notice shows the version and the release notes' first lines.
+
+### Decided: failure handling (owner, 24 Nov 2026)
+**Automatic rollback with a health check.** After an update the new image runs on probation; it marks itself good only after it has joined Wi-Fi, served the portal, drawn screens and completed one data fetch, within about 3 minutes. A crash, hang or timeout restarts the board into the previous image, and the portal reports that the update failed and why.
+
+## Resolution (owner, 24 Nov 2026)
+
+- **Two paths:** the board pulls updates (a highlighted notice on the portal, a "Check now" button, a daily check) and a forced upload of a `.bin` from the portal as the escape route.
+- **Authorisation:** a random 6-digit code shown on the panel, typed into the portal, for both paths. No stored password.
+- **Integrity:** HTTPS with the normal certificate store plus a SHA-256 checksum from the release; no signature for now; the image must be a valid app image for this board.
+- **Source:** the owner's service watches a GitHub repository's latest release and answers with a tiny manifest; the repository is a service setting.
+- **Rollback:** automatic, with the health check above.
+- Build notes: (1) verify at the start of the build that the board's precompiled bootloader supports app rollback; if not, tell the owner before building anything; (2) the build already has two 2 MB application slots (firmware is 1.35 MB, so about 650 KB of room); (3) a CI workflow must compile the firmware and attach the `.bin` and its SHA-256 to a GitHub release; (4) the version number comes from the build and shows on the portal and in `/status`; (5) the portal's update notice must stay legible on a phone; (6) the panel shows the code on a dedicated screen and returns to normal after.
