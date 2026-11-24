@@ -12,3 +12,15 @@ What documentation does the project need, where does it live, and what must it c
 A good README and good documents covering: the architecture; build instructions; install instructions; which components must be kept up to date for security; day-0, day-1 and day-2 operations.
 
 Constraints already known: the repository is public and must contain no private information (no real host names, addresses, names or emails; use placeholders such as `apis.example.com`); the airline logos are trademarks and stay out of the repository; the documents should match the finished first feature set, so they are written after the features in tickets 021 to 026 are built.
+
+### Decided: form (owner, 24 Nov 2026)
+Markdown in the repository: a short `README.md` as the front door and a `docs/` folder with one page per subject. Diagrams are written as text (Mermaid) and drawn by GitHub. No documentation site. Documents change in the same commits as the code.
+
+### Proposed page list, owner may object
+- `README.md`: what it is, a photo or preview, the parts list, a five-line quick start, links.
+- `docs/architecture.md`: the components (board firmware and its tasks, the portal, the service, the data sources, the cluster), data flow, the display's 1 second budget, IPv4/IPv6, trust and privacy decisions, with diagrams.
+- `docs/build.md`: tools and versions, building the firmware, the portal build step, running the service tests, the release build.
+- `docs/install.md`: wiring and hardware, first flash, setup access point and Wi-Fi, deploying the service (plain Docker and Kubernetes), the logo set, first settings.
+- `docs/security.md`: what must be kept up to date and how often (arduino-esp32 and its certificate bundle and TLS library, the other Arduino libraries, the Go toolchain, the container base image, the GitHub Actions versions, the browser libraries the portal loads, the cluster components, the router and Wi-Fi), the portal's no-password LAN-only model, the update code, what is private.
+- `docs/operations.md`: day-0 (first install and setup), day-1 (settings, checks, what normal looks like), day-2 (updates, rollback, logs and problems, backups of settings, replacing the board, when things go wrong).
+- `docs/decisions.md` or a pointer to the wayfinder tickets for the why.
