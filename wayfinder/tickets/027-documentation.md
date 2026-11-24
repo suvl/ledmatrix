@@ -32,3 +32,9 @@ Known hard part for a beginner, to be settled: the board needs the data service 
 
 ### Decided: operating systems (owner, 24 Nov 2026)
 **macOS and Linux.** The commands are tested on macOS; Linux notes are marked "not tested here" until someone runs them. Windows is not covered for now (it can be added later after someone has run it there). Tested and untested sections are clearly labelled; nothing is presented as tested that was not.
+
+### Decided: hosting paths for the install page (owner, 24 Nov 2026)
+- **Main path: a home server on the LAN** with Docker Compose, Caddy (automatic certificate through the DNS provider) and the owner's own domain name. One Compose file.
+- **References, to be tried the same way:** a small rented server (public, token protected), Kubernetes as an advanced appendix (the owner's setup with placeholder names), and **free hosted options**. Facts gathered for the free options (24 Nov 2026, to be re-checked when writing):
+  - Google Cloud Run: runs the existing Go container unchanged; permanent free tier of about 2 million requests a month; HTTPS address automatic; needs a billing account; public.
+  - Cloudflare Workers: would need a TypeScript port (see ticket 028). Free plan: 10 ms CPU per request, 50 outside calls, 1,000 KV writes a day; certificate chain Google Trust Services WE1 / GTS Root R4 / GlobalSign Root CA with an ECDSA leaf (not yet tested on the board); has IPv6 addresses.
