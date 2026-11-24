@@ -21,3 +21,6 @@ Decisions pending: upload a `.bin` through the portal vs. pull from a URL (for e
 - **Escape route: forced update from a `.bin` file** uploaded through the portal, for when the normal path is broken (bad release, no internet, a bad certificate store). Both paths get built.
 
 Still to decide: who may trigger an update (the portal has no password), whether images are signed and verified, where the board looks for releases and how often, what a failed update does (rollback), and how the version is named and shown.
+
+### Decided: who may start an update (owner, 24 Nov 2026)
+Pressing Update on the portal (either path: pull or `.bin` upload) makes the panel show a 6-digit code that must be typed into the portal to continue. It proves someone is in front of the device, like the setup Wi-Fi password. No stored update password. Build notes: the code is random per attempt, expires after a few minutes, allows a few wrong tries, and the panel returns to its normal screen afterwards.
