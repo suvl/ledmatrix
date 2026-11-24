@@ -1,6 +1,6 @@
 ---
 type: grilling
-status: open
+status: closed
 ---
 
 ## Question
@@ -35,3 +35,13 @@ Still to decide: whether a new plane or a button press wakes the panel from the 
 - Dimming and waking fade over about one second, not a jump.
 - Pixel drift on by default; dim on by default; night blanking on by default; rotation off by default.
 - Blanking compares against local time, so it follows the time zone ticket (022); until then it uses the Lisbon default.
+
+## Resolution (owner, 24 Nov 2026)
+
+Four measures, all configurable on the portal:
+- **Pixel drift** on static screens (clock, weather, idle), on by default.
+- **Rotation limit:** swap between clock and weather every N minutes; default 15, off by default.
+- **Dim after stillness:** after N minutes with no plane or headline shown; default 2 minutes; default level 10 percent **of full brightness** (the same scale as the brightness slider), and never brighter than the owner's chosen level when that is already lower. On by default.
+- **Night blanking:** dark between two local times; default 00:00 to 06:00; on by default. Uses the time zone from ticket 022.
+- **Waking:** a new plane or headline restores the owner's brightness for its turn when dimmed; nothing but a button press (UP or DOWN, 30 seconds) wakes a blanked panel; a button press also wakes a dimmed one. Fades take about one second.
+- Build notes: screens need a one pixel margin so drift never clips text; the settings are four new groups in NVS and the portal; this ticket's build depends on 022 only for the correct local night hours.
