@@ -27,3 +27,8 @@ Pressing Update on the portal (either path: pull or `.bin` upload) makes the pan
 
 ### Decided: image signing (owner, 24 Nov 2026)
 **No signature for now.** The board downloads over HTTPS with the normal certificate checks and verifies a SHA-256 checksum published with the release (and the image must be a valid ESP32 app image for this board). It trusts the owner's GitHub account and repository. Signing (CI key or offline key) can be added later without changing the update flow. The forced `.bin` upload accepts any valid image after the panel code.
+
+### Decided: where releases are found (owner, 24 Nov 2026)
+**Through the owner's service.** The service watches a GitHub repository's latest release (the repository is a service setting, so others point it at their own) and gives the board a tiny answer: version, download address, SHA-256 and size. The board talks only to the one host it already trusts. The download is proxied or redirected by the service. If the service is down the notice does not appear; the forced `.bin` upload still works.
+
+Defaults chosen without asking, owner may object: the board checks once a day (plus a "Check now" button on the portal); the version is a semantic version number set at build time and shown on the portal and in `/status`; only a newer version is offered; the highlighted notice shows the version and the release notes' first lines.
