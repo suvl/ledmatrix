@@ -15,3 +15,9 @@ Facts gathered:
 - The portal has no password (LAN only). An unauthenticated upload page would let anyone on the LAN replace the firmware, so the design must answer that first.
 
 Decisions pending: upload a `.bin` through the portal vs. pull from a URL (for example a GitHub release); how a flash is authorised (portal password, a device-specific update key, or signed images); whether a failed boot rolls back automatically; how the version is shown on the portal.
+
+### Decided so far (owner, 24 Nov 2026)
+- **Main path: the board pulls the update from a URL.** The portal shows "new firmware available" in a highlighted place, with the version, and an Update button.
+- **Escape route: forced update from a `.bin` file** uploaded through the portal, for when the normal path is broken (bad release, no internet, a bad certificate store). Both paths get built.
+
+Still to decide: who may trigger an update (the portal has no password), whether images are signed and verified, where the board looks for releases and how often, what a failed update does (rollback), and how the version is named and shown.
