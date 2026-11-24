@@ -141,10 +141,10 @@ const wxB = (fb, t, ctx) => {
   TT(fb, ctx, centerX(wTT('Partly cloudy')), 31, 'Partly cloudy', GREY, 62);
 };
 const wxC = (fb, t, ctx) => {
-  const cols = [['NOW', 'part', '18'], ['+3H', 'sun', '21'], ['+6H', 'rain', '15']];
+  const cols = [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']];
   cols.forEach(([lab, ic, tmp], i) => {
     const x0 = 2 + i * 21;
-    TT(fb, ctx, x0 + 2, 7, lab, AMBER, 20);
+    TT(fb, ctx, x0 + Math.floor((20 - wTT(lab)) / 2), 7, lab, AMBER, 20);  // wTT counts the last gap, the panel's ttWidth does not
     wxIcon(fb, x0 + 3, 10, ic, 12);
     TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 20);
   });

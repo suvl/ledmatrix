@@ -186,17 +186,20 @@ void weatherB(const LiveWeather &w) {
   String c = iconText(w.icon);
   tt(centerX(tinyWidth(c)), 31, c, GREY, 62);
 }
-void weatherC(const LiveWeather &w) {
+// The three columns are labelled with the clock hour (24 h, board local time) each one refers to: now, +3 h, +6 h.
+// Capital N, M and W cannot be told apart in the 3 px font, digits and "h" can. No clock yet: "--h".
+void weatherC(const LiveWeather &w, const struct tm *clock) {
   struct Slot {
-    const char *label;
     const char *icon;
     bool has;
     int temp;
   };
-  Slot slots[3] = {{"NOW", w.icon, w.hasT, w.t}, {"+3H", w.h3i, w.hasH3, w.h3t}, {"+6H", w.h6i, w.hasH6, w.h6t}};
+  Slot slots[3] = {{w.icon, w.hasT, w.t}, {w.h3i, w.hasH3, w.h3t}, {w.h6i, w.hasH6, w.h6t}};
   for (int i = 0; i < 3; i++) {
     int x0 = 2 + i * 21;
-    tt(x0 + 2, 7, slots[i].label, AMBER, 20);
+    char label[4] = "--h";
+    if (clock) snprintf(label, sizeof(label), "%02dh", (clock->tm_hour + 3 * i) % 24);
+    tt(x0 + (19 - ttWidth(label)) / 2, 7, label, AMBER, 20);
     drawWxIcon(x0 + 3, 10, iconKind(slots[i].icon), 12);
     String t = (slots[i].has ? String(slots[i].temp) : String("--")) + '^';
     tt(x0 + (19 - ttWidth(t)) / 2, 29, t, WHITE, 20);
@@ -322,6 +325,10 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
   const SampleFlight &f = ui.flight ? *ui.flight : sample;
   LiveWeather demo = demoWeather();
   const LiveWeather &w = ui.wx ? *ui.wx : demo;
+  // Demo weather shows the same example hours as the preview (21h, 00h, 03h, like the 21:47 demo clock); live weather uses the board clock.
+  struct tm demoClock = {};
+  demoClock.tm_hour = 21;
+  const struct tm *wxClock = ui.wx ? ui.clock : &demoClock;
   switch (s) {
     case Screen::Flight:
       if (layout == 0) flightA(f);
@@ -331,7 +338,7 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Weather:
       if (layout == 0) weatherA(w);
       else if (layout == 1) weatherB(w);
-      else weatherC(w);
+      else weatherC(w, wxClock);
       break;
     case Screen::News:
       if (layout == 0) newsA(t, ui);
