@@ -95,7 +95,14 @@ Andreas Merkle (web@blue-andi.de)
 
 - Adafruit Protomatter (BSD), ArduinoJson (MIT), arduino-esp32 (LGPL 2.1): fetched by `arduino-cli` when the firmware is built.
 - Leaflet 1.9.4 (BSD-2-Clause): loaded by the settings page from unpkg in the visitor's browser, pinned with an integrity hash.
+- @photostructure/tz-lookup 11.8.0 (CC0-1.0, https://github.com/photostructure/tz-lookup): turns the coordinates of the pin on the map into a time zone name, offline in the visitor's browser. Loaded by the settings page from jsDelivr (`https://cdn.jsdelivr.net/npm/@photostructure/tz-lookup@11.8.0/tz.js`), pinned with an integrity hash, not bundled. Its boundary data comes from timezone-boundary-builder (ODbL, built on OpenStreetMap data).
 - Map tiles and place search: (c) OpenStreetMap contributors, loaded by the visitor's browser.
+
+## Time zone data
+
+`shared/tz_zones.json` holds the POSIX rule string of each time zone name, read from the tz database
+(IANA time zone database, public domain; the version is in `shared/tz_zones.version.txt`) by
+`tools/make_tz.py`. The data is also embedded in the generated file `arduino/ledmatrix/portal_page.h`.
 
 ## Data sources (see also the README)
 

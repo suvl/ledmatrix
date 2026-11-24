@@ -7,8 +7,6 @@
 
 namespace {
 
-// Lisbon time with daylight saving. A per-location zone from the service comes later.
-const char *const TZ_POSIX = "WET0WEST,M3.5.0/1,M10.5.0/2";
 const uint32_t PLANE_COOLDOWN_MS = 30UL * 60 * 1000;   // a plane is shown once, then not again for this long
 const uint32_t FLIGHTS_EVERY_MS = 30UL * 1000;
 const uint32_t WEATHER_EVERY_MS = 15UL * 60 * 1000;
@@ -19,6 +17,7 @@ const int QUEUE_MAX = 3;
 const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
+volatile bool netBusy = false;  // one HTTPS request at a time, see NetTurn (a flag, not a FreeRTOS mutex: a mutex held across a request reset the board)
 
 // ---- shared state (guarded by mu) --------------------------------------------------------------------
 LiveWeather wx;
@@ -29,7 +28,7 @@ struct Status {
   char family[4] = "";
   char lastError[72] = "";
   int logoFailures = 0;      // logo downloads that failed (not counting 404)
-  char lastLogoError[40] = "";
+  char lastLogoError[56] = "";
 } st;
 
 LivePlane planeQ[QUEUE_MAX];
@@ -84,6 +83,12 @@ void setError(const char *what, const String &why) {
   lock();
   snprintf(st.lastError, sizeof(st.lastError), "%s: %s", what, why.c_str());
   unlock();
+}
+
+// The source works again: drop its old problem message so the portal stops showing a fixed problem. Lock held.
+void dropError(const char *what) {
+  size_t n = strlen(what);
+  if (strncmp(st.lastError, what, n) == 0 && st.lastError[n] == ':') st.lastError[0] = 0;
 }
 
 // ---- HTTPS with IPv6/IPv4 fallback -----------------------------------------------------------------------
@@ -200,13 +205,34 @@ struct Reply {
   uint32_t ms = 0;
 };
 
+// One HTTPS request at a time. The data task refreshes everything right after a settings save, and the portal's
+// connection test may run at that moment: two TLS sessions together left under 25 KB of free heap and made name
+// lookups time out. Taking turns costs nothing the display can see (all of this is off the render task).
+struct NetTurn {
+  bool ok = false;
+  NetTurn() {
+    for (uint32_t t0 = millis(); millis() - t0 < 60000; vTaskDelay(pdMS_TO_TICKS(50)))
+      if (__sync_bool_compare_and_swap(&netBusy, false, true)) { ok = true; return; }
+  }
+  ~NetTurn() { if (ok) netBusy = false; }
+};
+
 // GET https://host/path. The body is written to body[] (NUL-terminated); returns its length, or -1.
-int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply &r) {
+// token (optional) is sent as the X-Token header; only the owner's service may be given one. This is raw HTTPS on
+// a socket that follows no redirects (a 3xx is just a failed status), so the token can never travel to another
+// host. Keep it that way: do not add redirect handling without dropping the header on a host change.
+int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply &r, const char *token = "") {
+  NetTurn turn;
+  if (!turn.ok) { r.error = "busy with another request"; return -1; }
   uint32_t t0 = millis();
   NetworkClientSecure c;
   c.setTimeout(5000);
   if (!connectDual(c, host, r.family, r.error)) { r.ms = millis() - t0; return -1; }
-  c.printf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: ledmatrix\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", path.c_str(), host);
+  // one write, so the request leaves as one TLS record as before; with no token the bytes are unchanged
+  String req = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: ledmatrix\r\nAccept: application/json\r\nAccept-Encoding: identity\r\n";
+  if (token && token[0]) { req += "X-Token: "; req += token; req += "\r\n"; }
+  req += "Connection: close\r\n\r\n";
+  c.print(req);
   String statusLine = c.readStringUntil('\n');
   int sp = statusLine.indexOf(' ');
   r.status = sp > 0 ? statusLine.substring(sp + 1).toInt() : 0;
@@ -226,6 +252,15 @@ int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply
     return -1;
   }
   return (int)n;
+}
+
+// The only way the fetchers reach the service: adds the saved access token and words a 401 plainly
+// (the message ends up in /api/live and the portal's problem list, so it must not be a bare "HTTP 401").
+int serviceGet(const Settings &cfg, const String &path, char *body, size_t cap, Reply &r) {
+  int n = httpsGet(cfg.serviceHost, path, body, cap, r, cfg.serviceToken);
+  if (n < 0 && r.status == 401)
+    r.error = cfg.serviceToken[0] ? "access token refused (HTTP 401)" : "service needs an access token (HTTP 401)";
+  return n;
 }
 
 String urlEncode(const char *s) {
@@ -304,7 +339,7 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
   char body[600];
   Reply r;
   String path = String("/v1/logo/") + code;
-  int n = httpsGet(cfg.serviceHost, path, body, sizeof(body), r);
+  int n = serviceGet(cfg, path, body, sizeof(body), r);
   uint8_t state;
   if (n == 512) state = 1;
   else if (n < 0 && r.status == 404) state = 2;
@@ -337,7 +372,7 @@ bool fetchFlights(const Settings &cfg) {
   Reply r;
   String path = "/v1/flights?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4) + "&radius_km=" + String(cfg.radiusKm) +
                 "&alt_min=" + String(cfg.altMinFt) + "&alt_max=" + String(cfg.altMaxFt) + "&n=5";
-  if (httpsGet(cfg.serviceHost, path, body, sizeof(body), r) < 0) { setError("flights", r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("flights", r.error); return false; }
   JsonDocument doc;
   if (deserializeJson(doc, body)) { setError("flights", "unexpected answer"); return false; }
   uint32_t now = millis();
@@ -368,6 +403,7 @@ bool fetchFlights(const Settings &cfg) {
     logPlane(q);
   }
   st.flightsOkAt = now ? now : 1;
+  dropError("flights");
   unlock();
   return true;
 }
@@ -376,7 +412,7 @@ bool fetchWeather(const Settings &cfg) {
   char body[1024];
   Reply r;
   String path = "/v1/weather?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4);
-  if (httpsGet(cfg.serviceHost, path, body, sizeof(body), r) < 0) { setError("weather", r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("weather", r.error); return false; }
   JsonDocument doc;
   if (deserializeJson(doc, body)) { setError("weather", "unexpected answer"); return false; }
   LiveWeather w;
@@ -393,21 +429,22 @@ bool fetchWeather(const Settings &cfg) {
   wx = w;
   st.weatherOkAt = millis() ? millis() : 1;
   cp(st.family, sizeof(st.family), r.family);
+  dropError("weather");
   unlock();
   return true;
 }
 
 bool fetchNews(const Settings &cfg) {
-  bool anyOk = false;
+  bool anyOk = false, anyFail = false;
   static bool firstPass[5] = {true, true, true, true, true};
   for (int i = 0; i < 5; i++) {
     if (!cfg.queries[i][0]) continue;
     char body[2048];
     Reply r;
     String path = "/v1/headlines?n=3&q=" + urlEncode(cfg.queries[i]);
-    if (httpsGet(cfg.serviceHost, path, body, sizeof(body), r) < 0) { setError("headlines", r.error); continue; }
+    if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("headlines", r.error); anyFail = true; continue; }
     JsonDocument doc;
-    if (deserializeJson(doc, body)) { setError("headlines", "unexpected answer"); continue; }
+    if (deserializeJson(doc, body)) { setError("headlines", "unexpected answer"); anyFail = true; continue; }
     anyOk = true;
     lock();
     int shown = 0;
@@ -432,7 +469,7 @@ bool fetchNews(const Settings &cfg) {
     unlock();
     vTaskDelay(pdMS_TO_TICKS(1500));
   }
-  if (anyOk) { lock(); st.newsOkAt = millis() ? millis() : 1; unlock(); }
+  if (anyOk) { lock(); st.newsOkAt = millis() ? millis() : 1; if (!anyFail) dropError("headlines"); unlock(); }
   return anyOk;
 }
 
@@ -441,12 +478,27 @@ uint32_t settingsKey(const Settings &c) {
   snprintf(buf, sizeof(buf), "%s|%d%d%d|%.4f|%.4f|%u|%d|%d", c.serviceHost, c.showFlights, c.showWeather, c.showNews, c.lat, c.lon, c.radiusKm, (int)c.altMinFt, (int)c.altMaxFt);
   uint32_t h = fnv(buf);
   for (int i = 0; i < 5; i++) h ^= fnv(c.queries[i]) + i;
+  h ^= fnv(c.serviceToken) * 2654435761u;  // a changed token refreshes straight away; hashed, never formatted into buf or a log
   return h;
+}
+
+// Local time in the board's zone as YYYY-MM-DD HH:MM:SS, and its offset from UTC in minutes (worked out from the two
+// broken-down times, so it needs no libc extension). The offset is at most a day apart in either direction.
+void localTimeText(time_t t, char *out, size_t cap, int &offsetMin) {
+  struct tm lt, ut;
+  localtime_r(&t, &lt);
+  gmtime_r(&t, &ut);
+  strftime(out, cap, "%Y-%m-%d %H:%M:%S", &lt);
+  int dayDiff = lt.tm_year != ut.tm_year ? (lt.tm_year > ut.tm_year ? 1 : -1) : lt.tm_yday - ut.tm_yday;
+  offsetMin = dayDiff * 1440 + (lt.tm_hour - ut.tm_hour) * 60 + (lt.tm_min - ut.tm_min);
 }
 
 void dataTask(void *) {
   while (WiFi.status() != WL_CONNECTED) vTaskDelay(pdMS_TO_TICKS(500));
-  configTzTime(TZ_POSIX, "pool.ntp.org", "time.cloudflare.com");  // certificates have dates; the clock screen needs the time
+  Settings first = settings::get();
+  configTzTime(first.tzPosix, "pool.ntp.org", "time.cloudflare.com");  // certificates have dates; the clock screen needs the time
+  char tzApplied[sizeof(first.tzPosix)];
+  strlcpy(tzApplied, first.tzPosix, sizeof(tzApplied));
   uint32_t nextF = 0, nextW = 0, nextN = 0, lastKey = 0;
   bool announcedTime = false;
   for (;;) {
@@ -459,6 +511,15 @@ void dataTask(void *) {
     lock(); st.timeSynced = synced; unlock();
 
     Settings cfg = settings::get();
+    if (strcmp(cfg.tzPosix, tzApplied) != 0) {
+      // The owner picked another zone: switch the rule now, without a restart and without touching SNTP. The render task
+      // calls localtime_r on the other core; newlib takes its own time-zone lock in tzset() and localtime_r(), so this is
+      // safe, it is a few microseconds, and the live data lock is not held here.
+      setenv("TZ", cfg.tzPosix, 1);
+      tzset();
+      strlcpy(tzApplied, cfg.tzPosix, sizeof(tzApplied));
+      Serial.printf("LIVE time zone now %s\n", cfg.tzName);
+    }
     uint32_t key = settingsKey(cfg);
     if (key != lastKey) { lastKey = key; nextF = nextW = nextN = now; }  // settings changed: refresh straight away
 
@@ -485,6 +546,8 @@ void dataTask(void *) {
         }
       }
     }
+    static uint32_t lastStackLog = 0;
+    if (now - lastStackLog > 60000) { lastStackLog = now; Serial.printf("LIVE data task stack free %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr)); }
     vTaskDelay(pdMS_TO_TICKS(500));
   }
 }
@@ -510,10 +573,10 @@ void liveBegin() {
 LiveView liveView(uint32_t now, const Settings &cfg) {
   LiveView v;
   v.configured = cfg.serviceHost[0] != 0;
-  lock();
-  time_t t = time(nullptr);
+  time_t t = time(nullptr);  // before the lock: localtime_r takes newlib's own time-zone lock, never hold both
   v.timeValid = t > 1700000000;
   if (v.timeValid) localtime_r(&t, &v.now);
+  lock();
 
   if (planeActive && (int32_t)(now - planeUntil) >= 0) planeActive = false;
   if (!planeActive && planeQn > 0 && cfg.showFlights) {
@@ -604,6 +667,17 @@ String liveStatusJson() {
     doc["weather"]["icon"] = wx.icon;
   }
   unlock();
+  // The zone the owner saved and the time it produces, so a wrong zone is obvious in the portal. Outside the live lock.
+  Settings cfg = settings::get();
+  doc["timeZone"] = cfg.tzName;
+  time_t t = time(nullptr);
+  if (t > 1700000000) {
+    char lt[24];
+    int offMin;
+    localTimeText(t, lt, sizeof(lt), offMin);
+    doc["localTime"] = lt;
+    doc["utcOffsetMin"] = offMin;
+  }
   String out;
   serializeJson(doc, out);
   return out;
@@ -612,11 +686,13 @@ String liveStatusJson() {
 // Reaches three kinds of host to prove the connection code needs no firmware change when IPv6 arrives:
 // an IPv6-only host, an IPv4-only host (the service), and a dual-stack host.
 String liveSelfTestJson(const Settings &cfg) {
-  struct Target { const char *label; String host; String path; };
+  struct Target { const char *label; String host; String path; bool service; };
+  // /healthz is not token-protected, so it could not show a wrong token. /v1/logo/ZZ checks the token first and then
+  // answers 404 (no logo) without an upstream call, so 200 or 404 means reachable and the token (if any) is accepted.
   Target targets[] = {
-    {"service (IPv4 only today)", cfg.serviceHost, "/healthz"},
-    {"IPv6-only host", "api6.ipify.org", "/"},
-    {"dual-stack host", "api64.ipify.org", "/"},
+    {"service (IPv4 only today)", cfg.serviceHost, "/v1/logo/ZZ", true},
+    {"IPv6-only host", "api6.ipify.org", "/", false},
+    {"dual-stack host", "api64.ipify.org", "/", false},
   };
   JsonDocument doc;
   doc["boardHasGlobalIPv6"] = boardHasGlobalV6();
@@ -627,11 +703,21 @@ String liveSelfTestJson(const Settings &cfg) {
     if (t.host.length() == 0) { o["result"] = "skipped: no service address saved"; continue; }
     char body[160];
     Reply r;
-    int n = httpsGet(t.host.c_str(), t.path, body, sizeof(body), r);
+    // The access token goes to the owner's service only; the third-party hosts get a request without it.
+    int n = httpsGet(t.host.c_str(), t.path, body, sizeof(body), r, t.service ? cfg.serviceToken : "");
     o["host"] = t.host;
-    o["ok"] = n >= 0 || r.status == 200;
     o["family"] = r.family;
     o["ms"] = r.ms;
+    if (t.service) {
+      bool ok = r.status == 200 || r.status == 404;
+      o["ok"] = ok;
+      if (r.status == 401)
+        o["error"] = cfg.serviceToken[0] ? "The service refused the access token. Check the token in the Data service section."
+                                         : "The service needs an access token. Enter it in the Data service section.";
+      else if (!ok) o["error"] = r.error;
+      continue;
+    }
+    o["ok"] = n >= 0 || r.status == 200;
     if (!(n >= 0)) o["error"] = r.error;
   }
   String out;
