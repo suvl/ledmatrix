@@ -3,8 +3,11 @@
 #   API_HOST=apis.your-domain.example IMAGE=ghcr.io/suvl/ledmatrix-api:latest PULL_POLICY=Always \
 #     envsubst '${API_HOST} ${IMAGE} ${PULL_POLICY}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
 # For an image loaded onto the node by hand use IMAGE=ledmatrix-api:local PULL_POLICY=Never.
-# Optional token: kubectl create secret generic ledmatrix-api --from-literal=token=... then set the
-# API_TOKEN env below to use it. The device must then send it in the X-Token header.
+# Access token (create it BEFORE deploying; anything reachable from the internet must have one):
+#   openssl rand -hex 24 | tr -d '\n' | kubectl create secret generic ledmatrix-api --from-file=token=/dev/stdin
+# The pod does not start without that secret, so the API is never left open by accident. For a service that
+# only your own network can reach you may delete the API_TOKEN block below. The display sends the token in
+# the X-Token header: type the same value into the portal's "Service access token" field.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,6 +42,9 @@ spec:
           env:
             - {name: LISTEN, value: ":8080"}
             - {name: LOGO_DIR, value: /logos}
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: ledmatrix-api, key: token}
           volumeMounts:
             - {name: logos, mountPath: /logos, readOnly: true}
           resources:
