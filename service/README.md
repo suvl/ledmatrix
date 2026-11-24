@@ -13,7 +13,7 @@ cheap request instead of fetching and parsing large responses from several serve
 
 Run locally: `docker build -t ledmatrix-api service && docker run -p 8080:8080 ledmatrix-api`.
 Test: `docker run --rm -v "$PWD/service":/src -w /src golang:1.25 go test ./...`.
-Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (optional, sent as `X-Token`). When it is set, every `/v1/` endpoint, logos included, answers
+Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (sent as `X-Token`; leave it unset only on a network nobody else can reach: a service on the internet must have one). When it is set, every `/v1/` endpoint, logos included, answers
 401 without it, and `/healthz` stays open. Enter the same value in the portal's "Service access token" field;
 the display sends it to the service host only.
 
