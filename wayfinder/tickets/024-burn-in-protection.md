@@ -24,3 +24,14 @@ All four measures, each configurable on the portal:
 4. **Night blanking:** panel dark between two clock times; default 00:00 to 06:00. Depends on the time zone ticket (022) for the right local time.
 
 Still to decide: whether a new plane or a button press wakes the panel from the dim and from the blanking; whether "dim to 10 percent" means 10 percent of full brightness or 10 percent of the owner's chosen level; which of these are on by default (the owner gave defaults for all; rotation is explicitly off); how the dim and the wake fade; what counts as "stillness" (no plane and no headline shown).
+
+### Decided: what wakes the panel (owner, 24 Nov 2026)
+- **Dimmed (not blanked):** a new plane or headline restores the owner's normal brightness for its turn, then the panel dims again after the stillness time.
+- **Blanked at night:** planes and headlines do NOT wake it. A short press of UP or DOWN wakes it for 30 seconds.
+- A button press also wakes it from the dim.
+
+### Proposed defaults, owner may object
+- Stillness means: no plane and no headline has been shown for the configured time (the weather and clock do not count as activity).
+- Dimming and waking fade over about one second, not a jump.
+- Pixel drift on by default; dim on by default; night blanking on by default; rotation off by default.
+- Blanking compares against local time, so it follows the time zone ticket (022); until then it uses the Lisbon default.
