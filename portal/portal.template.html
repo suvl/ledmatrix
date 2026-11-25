@@ -33,6 +33,9 @@ button.primary{background:var(--amber);color:#1a1300;border:0;border-radius:8px;
 button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
 button.search{margin-top:8px}
 #status{font-size:14px;color:var(--muted)}#status.ok{color:var(--ok)}#status.err{color:var(--warn)}
+#probLog td{white-space:nowrap;overflow-wrap:anywhere;vertical-align:top}#probLog td:nth-child(3){white-space:normal}#probLog td:nth-child(2)::first-letter{text-transform:uppercase}
+.sub{display:block;color:var(--muted);font-size:12px}#probNow{color:var(--warn)}.note.ok{color:var(--ok)}
+@media(max-width:640px){#probLog,#probLog tbody{display:block}#probLog thead{display:none}#probLog tr{display:grid;grid-template-columns:auto 1fr;gap:0 12px;padding:8px 0;border-bottom:1px solid var(--line)}#probLog td{border:0;padding:1px 0;white-space:normal}#probLog td:nth-child(n+3){grid-column:1/-1}#probLog td:first-child,#probLog td:nth-child(4){color:var(--muted)}#probLog td:nth-child(2){font-weight:600}}
 code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 </style>
@@ -139,6 +142,15 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <p style="margin:12px 0 0"><button type="button" class="ghost" id="selftest">Test connections</button></p>
 <pre id="testout" class="note" style="white-space:pre-wrap;margin:8px 0 0"></pre>
 <p id="liveInfo" class="note"></p>
+</section>
+
+<section>
+<h2>Problems</h2>
+<p class="note">The display keeps the last <span id="probMax">10</span> problems it ran into, newest first. They are kept in memory: the list is empty after a restart.</p>
+<p class="note" id="probNow" hidden></p>
+<p class="note" id="probMsg" hidden></p>
+<p class="note" id="probNone">Loading…</p>
+<div style="overflow-x:auto"><table id="probLog" hidden><thead><tr><th>When</th><th>What</th><th>What happened</th><th>Times</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section>
@@ -435,24 +447,52 @@ __RENDERER__
   });
   showLive(); setInterval(showLive, 15000);
 
+  /* ---- times as the owner's zone and the 12/24 h box show them (plane log and problem list) ---- */
+  function fmtTime(t) {
+    const o = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: !$('c24').checked };
+    try { return new Date(t * 1000).toLocaleString([], Object.assign({ timeZone: tz.name }, o)); } catch (e) { return new Date(t * 1000).toLocaleString([], o); }
+  }
+  function dur(s) {  // seconds as "40 s", "5 min", "1 h 12 min", "2 d 3 h"
+    const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    return d ? d + ' d ' + h % 24 + ' h' : h ? h + ' h ' + m % 60 + ' min' : m ? m + ' min' : (s | 0) + ' s';
+  }
+
   /* ---- recent planes ---- */
   function showPlanes() {
     fetch('/api/planes').then(r => r.json()).then(d => {
       const tb = document.querySelector('#planeLog tbody'); tb.textContent = '';
       d.planes.forEach(p => {
         const tr = document.createElement('tr');
-        let when = '–';
-        if (p.t) {
-          const o = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: !$('c24').checked };
-          try { when = new Date(p.t * 1000).toLocaleString([], Object.assign({ timeZone: tz.name }, o)); } catch (e) { when = new Date(p.t * 1000).toLocaleString([], o); }
-        }
-        [when, p.cs, p.air || '', p.rt || '', p.ty || '', p.alt].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.append(td); });
+        [p.t ? fmtTime(p.t) : '–', p.cs, p.air || '', p.rt || '', p.ty || '', p.alt].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.append(td); });
         tb.append(tr);
       });
       $('logInfo').textContent = d.planes.length ? 'The last ' + d.planes.length + ' planes that entered your radar (it keeps up to ' + d.max + '), newest first. Kept in memory: it starts empty after a restart.' : 'No planes seen yet. They appear here as they enter your radar.';
     }).catch(() => {});
   }
   showPlanes(); setInterval(showPlanes, 30000);
+
+  /* ---- problems: every value comes from the device and goes in as text, never as HTML ---- */
+  let probSeen = false;
+  function showProblems() {
+    fetch('/api/problems').then(r => r.json()).then(d => {
+      const tb = document.querySelector('#probLog tbody'), fl = d.failing || [], n = d.problems.length;
+      const at = (t, up) => t ? fmtTime(t) : dur(up || 0) + ' after start';  // no clock yet: time since the display started
+      const sub = t => { const e = document.createElement('span'); e.className = 'sub'; e.textContent = t; return e; };
+      const put = (id, s) => { $(id).textContent = s; $(id).hidden = !s; };
+      tb.textContent = '';
+      d.problems.forEach(p => {
+        const tr = document.createElement('tr'), td = (...c) => { const e = document.createElement('td'); e.append(...c); tr.append(e); };
+        td(at(p.t, p.up)); td(p.what); td(p.why, p.detail ? sub(p.detail) : '');
+        td(p.n > 1 ? p.n + ' times' : 'once', p.n > 1 ? sub('since ' + at(p.first, p.firstUp)) : '');
+        tb.append(tr);
+      });
+      probSeen = true; $('probMax').textContent = d.max || 10; $('probLog').hidden = !n;
+      put('probNone', n ? '' : 'No problems since the last restart.'); $('probNone').className = 'note ok';
+      put('probNow', fl.length ? 'Failing now: ' + fl.map(f => f.what + ' for ' + dur(f.forS)).join(', ') + '.' : '');
+      put('probMsg', !fl.length ? '' : (d.message || fl.some(f => f.long)) ? 'The panel is showing a short message that points to this page: 5 seconds once a minute, never over a plane and never while it is dark at night. It stops by itself when the problem clears.' : 'If a problem lasts an hour, the panel starts showing a short message that points to this page.');
+    }).catch(() => { if (!probSeen) { $('probNone').textContent = 'Could not read the problem list.'; $('probNone').className = 'note'; $('probNone').hidden = false; } });
+  }
+  showProblems(); setInterval(showProblems, 15000);
 
   /* ---- start ---- */
   Object.keys(groups).forEach(buildGroup);

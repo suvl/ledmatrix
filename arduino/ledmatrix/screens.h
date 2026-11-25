@@ -6,7 +6,8 @@
 #include "live.h"
 #include "sample_data.h"
 
-enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, Stale, NoWifi };
+// Problem is last: ledmatrix.ino indexes a name table with these values.
+enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, Stale, NoWifi, Problem };
 
 // Live strings some screens show (setup network details, the station address).
 struct UiState {

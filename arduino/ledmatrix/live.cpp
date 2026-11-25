@@ -6,6 +6,7 @@
 #include <lwip/netdb.h>
 
 #include "cycle.h"
+#include "problems.h"
 #include "protect.h"
 
 namespace {
@@ -18,6 +19,8 @@ const uint32_t RETRY_WEATHER_MS = 60UL * 1000;
 const uint32_t RETRY_NEWS_MS = 5UL * 60 * 1000;
 const int QUEUE_MAX = 3;
 const uint32_t CYCLE_LIST_MAX_AGE_MS = 2UL * 60 * 1000;  // cycle mode: with no successful fetch for this long the list is dropped (a fetch is due every 30 s)
+const uint32_t CLOCK_GRACE_MS = 60UL * 1000;  // Wi-Fi up this long with no time from the servers: that is a problem
+const uint32_t CLOCK_NOTE_EVERY_MS = 60UL * 1000;
 const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
@@ -34,6 +37,9 @@ struct Status {
   int logoFailures = 0;      // logo downloads that failed (not counting 404)
   char lastLogoError[56] = "";
 } st;
+
+ProblemLog plog;     // the last 10 problems for the portal, newest first (problems.h)
+ProblemWatch pwatch;  // how long each kind of data has been failing in a row: decides the panel message
 
 LivePlane planeQ[QUEUE_MAX];  // one-shot mode: planes waiting for their turn
 int planeQn = 0;
@@ -81,10 +87,32 @@ uint32_t fnv(const char *s) {
   return h;
 }
 
-void setError(const char *what, const String &why) {
+// A problem happened: the portal's list, the one-hour rule behind the panel message, and one Serial line. Takes the lock
+// itself, so call it with the lock free. The words are worked out before the lock and the printing after it.
+void noteProblem(ProblemKind kind, const char *raw) {
+  char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+  problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+  uint32_t now = millis();
+  time_t t = time(nullptr);
   lock();
-  snprintf(st.lastError, sizeof(st.lastError), "%s: %s", what, why.c_str());
+  plog.record(kind, why, detail, t > 1700000000 ? (uint32_t)t : 0, now / 1000);
+  pwatch.failed(kind, now);
   unlock();
+  Serial.printf("PROBLEM %s: %s\n", problemKindName(kind), why);
+}
+
+// This kind of data works again (the service answered): its hour of failure starts over. Lock free, like noteProblem.
+void noteWorking(ProblemKind kind) {
+  lock();
+  pwatch.ok(kind);
+  unlock();
+}
+
+void setError(ProblemKind kind, const String &why) {
+  lock();
+  snprintf(st.lastError, sizeof(st.lastError), "%s: %s", problemKindName(kind), why.c_str());
+  unlock();
+  noteProblem(kind, why.c_str());
 }
 
 // The source works again: drop its old problem message so the portal stops showing a fixed problem. Lock held.
@@ -138,14 +166,14 @@ bool connectDual(NetworkClientSecure &c, const char *host, const char *&family, 
     IPAddress any;
     int core = WiFi.hostByName(host, any);
     Serial.printf("LIVE core resolver for %s returned %d (%s)\n", host, core, core == 1 ? any.toString().c_str() : "-");
-    err = "no address found for the host name";
+    err = PROBLEM_RAW_NO_ADDRESS;
     return false;
   }
   for (int i = 0; i < n; i++) {
     c.stop();
     c.useBuiltinCACertBundle();  // the standard CA store that ships with the core
     c.setConnectionTimeout(5000);
-    c.setHandshakeTimeout(8000);
+    c.setHandshakeTimeout(10);  // SECONDS (the core multiplies by 1000; 8000 here meant over two hours of waiting in a handshake)
     if (c.connect(order[i].ip, 443, host, nullptr, nullptr, nullptr)) {
       family = order[i].fam;
       return true;
@@ -225,7 +253,7 @@ struct NetTurn {
 // host. Keep it that way: do not add redirect handling without dropping the header on a host change.
 int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply &r, const char *token = "") {
   NetTurn turn;
-  if (!turn.ok) { r.error = "busy with another request"; return -1; }
+  if (!turn.ok) { r.error = PROBLEM_RAW_BUSY; return -1; }
   uint32_t t0 = millis();
   NetworkClientSecure c;
   c.setTimeout(5000);
@@ -250,7 +278,8 @@ int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply
   c.stop();
   r.ms = millis() - t0;
   if (r.status != 200) {
-    r.error = "HTTP " + String(r.status);
+    // status 0: no status line came (the server hung up, or nothing arrived in 5 s); "HTTP 0" would tell the owner nothing
+    r.error = r.status ? "HTTP " + String(r.status) : String(PROBLEM_RAW_NO_ANSWER);
     return -1;
   }
   return (int)n;
@@ -350,8 +379,10 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
     st.logoFailures++;
     snprintf(st.lastLogoError, sizeof(st.lastLogoError), "%s: %s", code, r.error.length() ? r.error.c_str() : "bad answer");
     unlock();
+    noteProblem(ProblemKind::Logo, r.error.length() ? r.error.c_str() : PROBLEM_RAW_UNEXPECTED);
     return;
   }
+  noteWorking(ProblemKind::Logo);  // the service answered; a 404 only means it has no logo for this airline, which is not a problem
   lock();
   LogoSlot *slot = logoFind(code);
   if (!slot) {  // take an empty slot, else the oldest
@@ -376,9 +407,9 @@ bool fetchFlights(const Settings &cfg) {
   Reply r;
   String path = "/v1/flights?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4) + "&radius_km=" + String(cfg.radiusKm) +
                 "&alt_min=" + String(cfg.altMinFt) + "&alt_max=" + String(cfg.altMaxFt) + "&n=" + String(cfg.cyclePlanes ? CYCLE_MAX : 5);
-  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("flights", r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Flights, r.error); return false; }
   JsonDocument doc;
-  if (deserializeJson(doc, body)) { setError("flights", "unexpected answer"); return false; }
+  if (deserializeJson(doc, body)) { setError(ProblemKind::Flights, PROBLEM_RAW_UNEXPECTED); return false; }
   uint32_t now = millis();
   JsonArray ps = doc["planes"];
   int logoBudget = 4;  // at most four logo downloads per round
@@ -420,6 +451,7 @@ bool fetchFlights(const Settings &cfg) {
   st.flightsOkAt = now ? now : 1;
   dropError("flights");
   unlock();
+  noteWorking(ProblemKind::Flights);
   return true;
 }
 
@@ -427,9 +459,9 @@ bool fetchWeather(const Settings &cfg) {
   char body[1024];
   Reply r;
   String path = "/v1/weather?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4);
-  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("weather", r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Weather, r.error); return false; }
   JsonDocument doc;
-  if (deserializeJson(doc, body)) { setError("weather", "unexpected answer"); return false; }
+  if (deserializeJson(doc, body)) { setError(ProblemKind::Weather, PROBLEM_RAW_UNEXPECTED); return false; }
   LiveWeather w;
   w.valid = true;
   cp(w.loc, sizeof(w.loc), doc["loc"]);
@@ -446,6 +478,7 @@ bool fetchWeather(const Settings &cfg) {
   cp(st.family, sizeof(st.family), r.family);
   dropError("weather");
   unlock();
+  noteWorking(ProblemKind::Weather);
   return true;
 }
 
@@ -457,9 +490,9 @@ bool fetchNews(const Settings &cfg) {
     char body[2048];
     Reply r;
     String path = "/v1/headlines?n=3&q=" + urlEncode(cfg.queries[i]);
-    if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("headlines", r.error); anyFail = true; continue; }
+    if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Headlines, r.error); anyFail = true; continue; }
     JsonDocument doc;
-    if (deserializeJson(doc, body)) { setError("headlines", "unexpected answer"); anyFail = true; continue; }
+    if (deserializeJson(doc, body)) { setError(ProblemKind::Headlines, PROBLEM_RAW_UNEXPECTED); anyFail = true; continue; }
     anyOk = true;
     lock();
     int shown = 0;
@@ -485,7 +518,10 @@ bool fetchNews(const Settings &cfg) {
     vTaskDelay(pdMS_TO_TICKS(1500));
   }
   if (anyOk) { lock(); st.newsOkAt = millis() ? millis() : 1; if (!anyFail) dropError("headlines"); unlock(); }
-  return anyOk;
+  if (!anyFail) noteWorking(ProblemKind::Headlines);  // working only when no topic failed
+  // One broken topic counts as a failure for the schedule too: the next try is in 5 minutes, not 30. Otherwise the failures would
+  // be more than 10 minutes apart, every one would start a new run (problems.h), and the panel message could never appear.
+  return anyOk && !anyFail;
 }
 
 uint32_t settingsKey(const Settings &c) {
@@ -517,12 +553,23 @@ void dataTask(void *) {
   uint32_t nextF = 0, nextW = 0, nextN = 0, lastKey = 0;
   bool lastCycle = first.cyclePlanes;
   bool announcedTime = false;
+  uint32_t wifiUpSince = 0, nextClockNote = 0;  // when the Wi-Fi was last seen coming up (0 = down), and when the clock may be noted again
   for (;;) {
     uint32_t now = millis();
     bool synced = time(nullptr) > 1700000000;
+    bool wifiUp = WiFi.status() == WL_CONNECTED;
+    if (!wifiUp) wifiUpSince = 0;
+    else if (!wifiUpSince) wifiUpSince = now ? now : 1;
     if (synced && !announcedTime) {
       announcedTime = true;
       Serial.println("LIVE clock synchronised");
+      noteWorking(ProblemKind::Clock);
+    }
+    // No time from the servers although the Wi-Fi has been up for a minute: nothing secure can work without it, so say so in
+    // the problem list, about once a minute. Nothing is noted while the Wi-Fi is down (the panel shows that itself).
+    if (!synced && wifiUp && now - wifiUpSince > CLOCK_GRACE_MS && (int32_t)(now - nextClockNote) >= 0) {
+      nextClockNote = now + CLOCK_NOTE_EVERY_MS;
+      noteProblem(ProblemKind::Clock, "The clock is not set: the time servers did not answer. Secure connections need the right time.");
     }
     lock(); st.timeSynced = synced; unlock();
 
@@ -537,7 +584,11 @@ void dataTask(void *) {
       Serial.printf("LIVE time zone now %s\n", cfg.tzName);
     }
     uint32_t key = settingsKey(cfg);
-    if (key != lastKey) { lastKey = key; nextF = nextW = nextN = now; }  // settings changed: refresh straight away
+    if (key != lastKey) {  // settings changed: refresh straight away, and a fresh try gets a fresh hour before the panel message
+      lastKey = key;
+      nextF = nextW = nextN = now;
+      lock(); pwatch.clear(); unlock();
+    }
     // The cycle toggle changes how many planes are asked for (5 or 10): fetch flights again now, but not weather or headlines.
     if (cfg.cyclePlanes != lastCycle) { lastCycle = cfg.cyclePlanes; nextF = now; }
 
@@ -632,6 +683,7 @@ LiveView liveView(uint32_t now, const Settings &cfg) {
   bool flightsStale = cfg.showFlights && cfg.hasLocation && cfg.serviceHost[0] && ((st.flightsOkAt && now - st.flightsOkAt > 5UL * 60 * 1000) || (!st.flightsOkAt && now > 3UL * 60 * 1000));
   bool weatherStale = cfg.showWeather && cfg.hasLocation && cfg.serviceHost[0] && ((st.weatherOkAt && now - st.weatherOkAt > 2UL * 3600 * 1000) || (!st.weatherOkAt && now > 5UL * 60 * 1000));
   v.stale = flightsStale || weatherStale;
+  v.problemMessage = pwatch.longFailure(millis());  // read under the lock: a failure noted before we got it is never "in the future"
   unlock();
   return v;
 }
@@ -639,16 +691,56 @@ LiveView liveView(uint32_t now, const Settings &cfg) {
 String livePlanesJson() {
   JsonDocument doc;
   JsonArray a = doc["planes"].to<JsonArray>();
+  doc["max"] = PLANE_LOG_MAX;
+  String out;
   lock();
   for (int i = 0; i < planeLogN; i++) {  // newest first
     const LogEntry &e = planeLog[(planeLogHead - 1 - i + 2 * PLANE_LOG_MAX) % PLANE_LOG_MAX];
     JsonObject o = a.add<JsonObject>();
     o["t"] = e.t; o["cs"] = e.cs; o["air"] = e.air; o["ai"] = e.ai; o["rt"] = e.route; o["ty"] = e.type; o["alt"] = e.alt;
   }
-  unlock();
-  doc["max"] = PLANE_LOG_MAX;
-  String out;
+  // Serialized before the unlock: ArduinoJson keeps a const char array (what e.cs is here) by pointer, not as a copy, so the
+  // text must be written out while the data task cannot change the log. It is a millisecond at most, and the data task
+  // never waits on the render task.
   serializeJson(doc, out);
+  unlock();
+  return out;
+}
+
+// /api/problems: the list the portal shows (problems.h), newest first, and which kinds of data are failing right now.
+// Serialized under the lock for the reason given in livePlanesJson (the entries' strings are stored by pointer).
+String liveProblemsJson() {
+  JsonDocument doc;
+  JsonArray list = doc["problems"].to<JsonArray>();
+  JsonArray failing = doc["failing"].to<JsonArray>();
+  doc["max"] = int(ProblemLog::MAX);
+  String out;
+  lock();
+  uint32_t now = millis();  // after the lock: every time noted before it is not later than this
+  for (int i = 0; i < plog.n; i++) {
+    const ProblemEntry &e = plog.e[i];
+    JsonObject o = list.add<JsonObject>();
+    o["what"] = problemKindName(e.kind);
+    o["why"] = e.why;
+    o["detail"] = e.detail;
+    o["n"] = e.count;
+    o["t"] = e.lastUnix;       // 0 = the clock was not set yet
+    o["first"] = e.firstUnix;
+    o["up"] = e.lastUpS;       // seconds since the board started: always known, lets the portal date a problem from the uptime
+    o["firstUp"] = e.firstUpS;
+  }
+  for (int i = 0; i < PROBLEM_KINDS; i++) {
+    ProblemKind k = (ProblemKind)i;
+    // failing now: a run of failures with the latest one recent (a kind that is no longer asked for would otherwise stay listed)
+    if (!pwatch.failing[i] || (uint32_t)(now - pwatch.last[i]) > PROBLEM_FRESH_MS) continue;
+    JsonObject o = failing.add<JsonObject>();
+    o["what"] = problemKindName(k);
+    o["forS"] = pwatch.failingForMs(k, now) / 1000;
+    o["long"] = pwatch.kindIsLong(k, now);
+  }
+  doc["message"] = pwatch.longFailure(now);
+  serializeJson(doc, out);
+  unlock();
   return out;
 }
 

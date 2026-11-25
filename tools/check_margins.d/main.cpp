@@ -133,6 +133,11 @@ static void idle(const UiState &ui) {
         }
 }
 
+// The problem message is fixed text that replaces weather or the clock, so it drifts like them. Twice, for two animation times.
+static void problem(const UiState &ui) {
+  for (int phase = 0; phase < 2; phase++) run("Problem msg", "problem message", Screen::Problem, 0, ui, 0, phase ? 500 : 0);
+}
+
 int main(int argc, char **argv) {
   matrix.cp437(true);  // like ledmatrix.ino: raw CP437 codes
   UiState ui;
@@ -148,12 +153,14 @@ int main(int argc, char **argv) {
       for (int l = 0; l < 3; l++) { matrix.clear(); drawScreen(Screen::Flight, l, 0, fi, ui); dump(std::string("flight") + LAYOUT[l] + std::to_string(fi)); }
     for (int l = 0; l < 3; l++) { matrix.clear(); drawScreen(Screen::Weather, l, 0, 0, ui); dump(std::string("weather") + LAYOUT[l]); }
     matrix.clear(); drawScreen(Screen::Idle, 0, 0, 0, ui); dump("idleA");
+    matrix.clear(); drawScreen(Screen::Problem, 0, 0, 0, ui); dump("problem");
     return 0;
   }
 
   flights(ui);
   weather(ui);
   idle(ui);
+  problem(ui);
   int failures = 0;
   for (auto &kv : stats) {
     const Stat &s = kv.second;

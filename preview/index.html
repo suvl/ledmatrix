@@ -106,7 +106,7 @@ figcaption strong { display: block; color: var(--text); font-weight: 500; font-s
   </section>
 
   <section id="status">
-    <header><h2>Status screens</h2><p>Boot, connected, stale data and no Wi-Fi.</p></header>
+    <header><h2>Status screens</h2><p>Boot, connected, stale data, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
     <div class="grid" id="status-grid"></div>
   </section>
 
@@ -326,6 +326,14 @@ const stale = (fb, t, ctx) => {
   if (Math.floor(t * 1.5) % 2 === 0) fb.fill(60, 1, 3, 3, [255, 120, 20]);
   TT(fb, ctx, 2, 30, 'stale data dot', GREY, 62);
 };
+// The message that points to the portal after an hour of failure (screens.cpp problemScreen). Named problemMsg because the
+// portal page shares this scope and lists problems of its own.
+const problemMsg = (fb, t, ctx) => {
+  T6(fb, ctx, 2, 1, 'PROBLEM', AMBER, 62);
+  TT(fb, ctx, 2, 15, 'Data is failing', WHITE, 60);
+  TT(fb, ctx, 2, 22, 'See the portal:', GREY, 60);
+  TT(fb, ctx, 2, 29, 'ledmatrix.local', CYAN, 60);
+};
 const nowifi = (fb, t, ctx) => {
   for (let i = 0; i < 12; i++) { fb.px(3 + i, 9 + i, RED); fb.px(14 - i, 9 + i, RED); fb.px(4 + i, 9 + i, RED); fb.px(13 - i, 9 + i, RED); }
   TT(fb, ctx, 20, 10, 'NO WIFI', RED, 44); TT(fb, ctx, 20, 17, 'hold UP 5s', WHITE, 44); TT(fb, ctx, 20, 24, 'to set up', GREY, 44);
@@ -394,6 +402,7 @@ addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
 addPanel('status-grid', 'Stale data indicator', FB6, stale, true);
 addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
+addPanel('status-grid', 'Problem message', FB6, problemMsg);
 
 /* ---------- controls ---------- */
 const chips = document.getElementById('flight-chips');

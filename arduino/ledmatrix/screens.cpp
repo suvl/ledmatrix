@@ -320,6 +320,15 @@ void noWifiScreen() {
   tt(20, 24, "to set up", GREY, 44);
 }
 
+// The message that points the owner to the portal, after something has failed for an hour (ticket 23). Drawn instead of
+// weather or the clock for 5 s once a minute, so like them it must keep column 63 and row 31 black for the pixel drift.
+void problemScreen() {
+  t6(2, 1, "PROBLEM", AMBER, 62);
+  tt(2, 15, "Data is failing", WHITE, 60);
+  tt(2, 22, "See the portal:", GREY, 60);
+  tt(2, 29, "ledmatrix.local", CYAN, 60);
+}
+
 }  // namespace
 
 void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiState &ui) {
@@ -355,5 +364,6 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Connected: connectedScreen(ui); break;
     case Screen::Stale: staleScreen(t); break;
     case Screen::NoWifi: noWifiScreen(); break;
+    case Screen::Problem: problemScreen(); break;
   }
 }

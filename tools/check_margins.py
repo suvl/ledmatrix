@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pixel drift moves the finished picture one pixel right and/or down, so on every screen it applies to
-(flight layouts A-C, weather layouts A-C, the idle clock) column 63 and row 31 must stay black, whatever the data.
-This draws those screens with worst-case data and exits 1 if any picture lights column 63 or row 31.
+(flight layouts A-C, weather layouts A-C, the idle clock, the problem message) column 63 and row 31 must stay black,
+whatever the data. This draws those screens with worst-case data and exits 1 if any picture lights column 63 or row 31.
 
   1. shared/renderer.js (preview page and portal thumbnails) in headless Chrome.
   2. arduino/ledmatrix/screens.cpp (the real board code and the real Adafruit GFX library, built for the
@@ -77,6 +77,9 @@ for (let day = 0; day < 366; day++) for (const hh of [0, 9, 12, 23]) for (const 
 }
 fakeNow = new RealDate(2026, 10, 21, 21, 47, 0);
 
+// the problem message: fixed text, but it replaces weather and the clock, which drift
+for (const t of [0, 0.5]) draw('Problem msg', 'problem message', problemMsg, t);
+
 // the example screens against the board's pixels
 const q = c => ((c[0] & 0xF8) << 8) | ((c[1] & 0xFC) << 3) | (c[2] >> 3);
 const same = [];
@@ -90,6 +93,7 @@ SAMPLES.forEach((f, i) => { FLIGHTS.length = 0; FLIGHTS.push(f); state.flight = 
 FLIGHTS.length = 0; SAMPLES.forEach(f => FLIGHTS.push(f));
 for (const l of 'ABC') compare('weather' + l, L[l][1]);
 compare('idleA', idleA);
+compare('problem', problemMsg);
 document.getElementById('o').textContent = JSON.stringify({ stats, same });
 '''
 
