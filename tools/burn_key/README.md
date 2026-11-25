@@ -110,10 +110,14 @@ The write is one eFuse batch (key, purpose and protections together), a fraction
 
 The record is never changed by this sketch, so the board is never left without a way to sign.
 
-## What is not verified here
+## What the first real burn showed
 
-The sketch compiles in both modes and its logic is checked on the laptop, but no burn has been run on a real chip. Two facts about the HMAC unit are not verified either, and either can make the first comparison fail (that is what step 3b is for):
+The first (and, for this project, only so far) burn was run on the owner's board on 25 Nov 2026. It worked the first time:
 
-- **Byte order of the key.** The unit takes the 32 key bytes that `esp_efuse_write_key` wrote, in whatever order the eFuse layout gives it. `espefuse` reverses the bytes only for XTS keys; whether an HMAC key needs the same, or any, byte reversal has not been checked on this chip. If it does, the chip's answers will differ from the saved key's, and the comparison catches it (`mismatch`).
-- **Right after the burn, without a reset.** The sketch asks the unit for answers immediately after writing. Whether the unit already sees the new key at that moment, or only after a reset, is unverified. A difference at that point does not mean the burn is wrong: reset and let the firmware compare again (step 3b).
-- **Which protections the write sets.** The installed header says "This API also enables the read protection efuse bit for certain key blocks like XTS-AES, HMAC, ECDSA etc." It does not mention write protection; the compiled library does call the write-protection and purpose-protection functions (found by disassembling it, not stated in the header). So the sketch does not rely on either: it reads the three protection bits back after the write, adds any that are missing, and refuses to say `BURN verified` unless the block reads back as an HMAC key with all three set and the chip's answers equal the saved key's. The firmware checks the same three protections at every boot before it will use the chip's key.
+- All twelve checks passed, the confirmation was typed, and the sketch printed `BURN verified`: the block read back as an HMAC_UP key with read protection, write protection and purpose write protection all set. The sketch did not need to add any missing protection (it printed no "adding the missing" line), so `esp_efuse_write_key` in this core sets all three itself.
+- **Byte order:** the chip's answers equalled the saved key's for all 11 test lengths (0 to 200 bytes) straight away, so the key bytes need no reversal for the HMAC unit.
+- **Right after the burn, without a reset:** the comparison already passed in the sketch, so the unit sees the key immediately.
+- After flashing the normal firmware, `/status` said `signer: hardware`, `signer_check: match`, the owner's real service accepted the chip-signed requests, and after `provision.py --burned` the board kept signing with the chip alone (`signer: hardware`, `signer_check: not_run`).
+
+What stays unverified is only what a second board or a power cut could show: the state after a power loss in the middle of the write (see above), and `BLOCK_KEY5` on any other board (each board is checked by its own dry run first).
+
