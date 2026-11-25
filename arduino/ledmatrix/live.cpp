@@ -23,6 +23,7 @@ const int QUEUE_MAX = 3;
 const uint32_t CYCLE_LIST_MAX_AGE_MS = 2UL * 60 * 1000;  // cycle mode: with no successful fetch for this long the list is dropped (a fetch is due every 30 s)
 const uint32_t CLOCK_GRACE_MS = 60UL * 1000;  // Wi-Fi up this long with no time from the servers: that is a problem
 const uint32_t CLOCK_NOTE_EVERY_MS = 60UL * 1000;
+const uint32_t IDENTITY_NOTE_EVERY_MS = 30UL * 60 * 1000;  // a standing notice (identity::notice) is put in the problem list again now and then, so it is not pushed out
 const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
@@ -603,6 +604,7 @@ void dataTask(void *) {
   bool lastCycle = first.cyclePlanes;
   bool announcedTime = false;
   uint32_t wifiUpSince = 0, nextClockNote = 0;  // when the Wi-Fi was last seen coming up (0 = down), and when the clock may be noted again
+  uint32_t nextIdentityNote = 0;                // when the identity notice (if there is one) may be noted again
   for (;;) {
     uint32_t now = millis();
     bool synced = time(nullptr) > 1700000000;
@@ -622,6 +624,11 @@ void dataTask(void *) {
       noteProblem(ProblemKind::Clock, "The clock is not set: the time servers did not answer. Secure connections need the right time.");
     }
     lock(); st.timeSynced = synced; unlock();
+    // The board signs, but the chip's key and the saved key disagree (identity.cpp): say so in the problem list. Needs no network.
+    if (identity::notice()[0] && (int32_t)(now - nextIdentityNote) >= 0) {
+      nextIdentityNote = now + IDENTITY_NOTE_EVERY_MS;
+      noteProblem(ProblemKind::Identity, identity::notice());
+    }
 
     Settings cfg = settings::get();
     if (strcmp(cfg.tzPosix, tzApplied) != 0) {

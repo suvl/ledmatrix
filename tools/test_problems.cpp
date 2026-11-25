@@ -35,11 +35,11 @@ template <size_t N> struct Guard {
 };
 
 // ---- problemWords: which sentence did a raw text become? ----------------------------------------------------------------
-enum Tag { PASS, IDMISSING, IDINVALID, IDOTHER, IDHARDWARE, SIGNFAIL, AUTHMISSING, AUTHMALFORMED, AUTHBAD, AUTHREVOKED, AUTHCLOCK,
+enum Tag { PASS, IDMISSING, IDINVALID, IDOTHER, IDHARDWARE, IDHARDWAREUNPROT, SIGNERMISMATCH, SIGNERUNPROT, SIGNFAIL, AUTHMISSING, AUTHMALFORMED, AUTHBAD, AUTHREVOKED, AUTHCLOCK,
            HTTPAUTH, NOTSVC, LIMIT, DOWN, ODDSTATUS, NOANSWER, DNS, CERT, HSTIMEOUT,
            TIMEOUT, REFUSED, CLOSED, NOCONN, UNREADABLE, BUSY };
 static const char *tagName(Tag t) {
-  static const char *n[] = {"PASS", "IDMISSING", "IDINVALID", "IDOTHER", "IDHARDWARE", "SIGNFAIL", "AUTHMISSING", "AUTHMALFORMED",
+  static const char *n[] = {"PASS", "IDMISSING", "IDINVALID", "IDOTHER", "IDHARDWARE", "IDHARDWAREUNPROT", "SIGNERMISMATCH", "SIGNERUNPROT", "SIGNFAIL", "AUTHMISSING", "AUTHMALFORMED",
                             "AUTHBAD", "AUTHREVOKED", "AUTHCLOCK", "HTTPAUTH", "NOTSVC", "LIMIT", "DOWN", "ODDSTATUS", "NOANSWER", "DNS",
                             "CERT", "HSTIMEOUT", "TIMEOUT", "REFUSED", "CLOSED", "NOCONN", "UNREADABLE", "BUSY"};
   return n[t];
@@ -49,7 +49,8 @@ static Tag classify(const char *why) {
   struct M { const char *marker; Tag tag; };
   static const M m[] = {
       {"has no identity record", IDMISSING},   {"identity record is not valid", IDINVALID}, {"identity record is for another board", IDOTHER},
-      {"cannot use it", IDHARDWARE},           {"could not sign the request", SIGNFAIL},
+      {"the chip has no key", IDHARDWARE},     {"the burned key is not fully protected", IDHARDWAREUNPROT},
+      {"give different answers", SIGNERMISMATCH}, {"The key in the chip is not fully protected", SIGNERUNPROT}, {"could not sign the request", SIGNFAIL},
       {"did not receive a signature", AUTHMISSING}, {"could not read the signature", AUTHMALFORMED},
       {"does not accept this board's key", AUTHBAD}, {"has revoked this board", AUTHREVOKED}, {"clock is too far off", AUTHCLOCK},
       {"refused the request", HTTPAUTH},
@@ -123,13 +124,14 @@ static void testProblemHas() {
 
 static void testKindNames() {
   SECTION("problemKindName");
-  CHECK(PROBLEM_KINDS == 6);
+  CHECK(PROBLEM_KINDS == 7);
   CHECK(strcmp(problemKindName(ProblemKind::Flights), "flights") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Weather), "weather") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Headlines), "headlines") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Logo), "logo") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Clock), "clock") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Update), "update check") == 0);
+  CHECK(strcmp(problemKindName(ProblemKind::Identity), "identity") == 0);
   CHECK(strcmp(problemKindName(ProblemKind::Count), "?") == 0);
   CHECK(strcmp(problemKindName((ProblemKind)200), "?") == 0);
   for (int a = 0; a < PROBLEM_KINDS; a++)
@@ -156,6 +158,9 @@ static void testWordsBranches() {
   EXPECT(PROBLEM_RAW_ID_INVALID, IDINVALID);
   EXPECT(PROBLEM_RAW_ID_OTHER_BOARD, IDOTHER);
   EXPECT(PROBLEM_RAW_ID_HARDWARE_KEY, IDHARDWARE);
+  EXPECT(PROBLEM_RAW_SIGNER_MISMATCH, SIGNERMISMATCH);
+  EXPECT(PROBLEM_RAW_ID_HARDWARE_UNPROTECTED, IDHARDWAREUNPROT);
+  EXPECT(PROBLEM_RAW_SIGNER_UNPROTECTED, SIGNERUNPROT);
   EXPECT(PROBLEM_RAW_SIGN_FAILED, SIGNFAIL);
   EXPECT("REFUSED: BAD SIGNATURE (HTTP 401)", AUTHBAD);  // any case
   EXPECT("No Identity Record", IDMISSING);
@@ -354,7 +359,13 @@ static void testWordsSentences() {
   r = words(PROBLEM_RAW_ID_OTHER_BOARD);
   CHECK(problemHas(r.why.c_str(), "another board") && problemHas(r.why.c_str(), "USB"));
   r = words(PROBLEM_RAW_ID_HARDWARE_KEY);
-  CHECK(problemHas(r.why.c_str(), "firmware"));
+  CHECK(problemHas(r.why.c_str(), "the chip has no key") && problemHas(r.why.c_str(), "USB"));
+  r = words(PROBLEM_RAW_SIGNER_MISMATCH);
+  CHECK(problemHas(r.why.c_str(), "saved key") && problemHas(r.why.c_str(), "keeps signing"));
+  r = words(PROBLEM_RAW_ID_HARDWARE_UNPROTECTED);
+  CHECK(problemHas(r.why.c_str(), "not fully protected") && problemHas(r.why.c_str(), "USB"));
+  r = words(PROBLEM_RAW_SIGNER_UNPROTECTED);
+  CHECK(problemHas(r.why.c_str(), "not fully protected") && problemHas(r.why.c_str(), "saved key"));
   r = words(PROBLEM_RAW_AUTH_BAD_SIGNATURE);
   CHECK(problemHas(r.why.c_str(), "The service does not accept this board's key."));
   CHECK(problemHas(r.why.c_str(), "USB"));
@@ -388,7 +399,10 @@ static void testWordsDeviceAuth() {
       {PROBLEM_RAW_ID_MISSING, "This board has no identity record. It must be provisioned over USB."},
       {PROBLEM_RAW_ID_INVALID, "This board's identity record is not valid. It must be provisioned again over USB."},
       {PROBLEM_RAW_ID_OTHER_BOARD, "This board's identity record is for another board. It must be provisioned again over USB."},
-      {PROBLEM_RAW_ID_HARDWARE_KEY, "This board's key is burned into the chip but this firmware cannot use it. Update the firmware."},
+      {PROBLEM_RAW_ID_HARDWARE_KEY, "This board's record says the key is burned into the chip but the chip has no key. It must be provisioned again over USB."},
+      {PROBLEM_RAW_ID_HARDWARE_UNPROTECTED, "This board's record says the key is burned into the chip but the burned key is not fully protected, so it is not used. It must be provisioned again over USB."},
+      {PROBLEM_RAW_SIGNER_MISMATCH, "The chip's key and the saved key give different answers, so the board keeps signing with the saved key. The burn may have used the wrong key."},
+      {PROBLEM_RAW_SIGNER_UNPROTECTED, "The key in the chip is not fully protected (was a burn interrupted?), so the board does not use it and keeps signing with the saved key."},
       {PROBLEM_RAW_SIGN_FAILED, "The board could not sign the request. Restart it; if this keeps happening the firmware needs an update."},
       {PROBLEM_RAW_AUTH_MISSING, "The service did not receive a signature on the request. Something between the board and the service may be removing it."},
       {PROBLEM_RAW_AUTH_MALFORMED, "The service could not read the signature on the request. The board and the service may run versions that do not match."},
@@ -407,7 +421,7 @@ static void testWordsDeviceAuth() {
     // fed back in, a sentence stays itself (the portal and the connection test may pass one on)
     CHECK(words(r.why.c_str()).why == r.why);
   }
-  // ten raw texts, ten different sentences
+  // every raw text has its own sentence
   for (size_t a = 0; a < sizeof cases / sizeof cases[0]; a++)
     for (size_t b = a + 1; b < sizeof cases / sizeof cases[0]; b++) CHECK(strcmp(cases[a].sentence, cases[b].sentence) != 0);
   // a refusal the board cannot read stays a plain refused request (an older service, or a proxy in front of it)
@@ -423,10 +437,11 @@ static void testWordsDeviceAuth() {
     problemWords(raw, why, sizeof(why), detail, sizeof(detail));
     l.record(ProblemKind::Flights, why, detail, unixNow, upS);
   };
-  for (const Case &c : cases) note(c.raw, 1000, 10);
+  const size_t N = sizeof cases / sizeof cases[0];
+  for (size_t i = N - 10; i < N; i++) note(cases[i].raw, 1000, 10);  // the list holds ten
   CHECK(l.n == 10);
   note(PROBLEM_RAW_AUTH_BAD_SIGNATURE, 1015, 25);
-  CHECK(l.n == 10 && l.e[0].count == 2 && strcmp(l.e[0].why, cases[7].sentence) == 0);
+  CHECK(l.n == 10 && l.e[0].count == 2 && words(PROBLEM_RAW_AUTH_BAD_SIGNATURE).why == l.e[0].why);
 }
 
 static void testWordsDetail() {
@@ -689,7 +704,7 @@ static void testLogIdentity() {
   c.record(FL, "Abc", "", 1, 1);
   c.record(FL, "abc", "", 2, 2);
   CHECK(c.n == 2);
-  // all kinds, same words: six entries
+  // all kinds, same words: one entry per kind
   ProblemLog k;
   for (int i = 0; i < PROBLEM_KINDS; i++) k.record((ProblemKind)i, "x", "", i, i);
   CHECK(k.n == PROBLEM_KINDS);

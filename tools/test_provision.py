@@ -41,6 +41,11 @@ KEY_HEX = V["device_key_hex"]
 KEY = bytes.fromhex(KEY_HEX)
 
 
+def read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def expected_sector(device_id, key, flags=0):
     """The record as shared/device-auth.md lays it out, written out independently of provision.py."""
     payload = device_id.encode() + bytes([flags]) + b"\x00\x00\x00" + key
@@ -393,7 +398,7 @@ class Cli(TempDirCase):
         rc, out, err = self.run_main("--check", self.out)
         self.assertEqual(rc, 0, err)
         with open(self.out, "rb") as f:
-            self.assertEqual(out, "device=%s crc32=%08x\n" % (DEVICE_ID, zlib.crc32(f.read())))
+            self.assertEqual(out, "device=%s crc32=%08x burned=no\n" % (DEVICE_ID, zlib.crc32(f.read())))
         # a damaged image
         with open(self.out, "r+b") as f:
             f.seek(30)
@@ -404,6 +409,159 @@ class Cli(TempDirCase):
         self.assertNotIn(KEY_HEX, err)
         rc, _, _ = self.run_main("--check", self.path("nothing-here"))
         self.assertEqual(rc, 2)
+
+
+class Burned(TempDirCase):
+    """--burned: the record of a board whose key is in the chip: flag bit 0 set, key all zero, no master secret involved."""
+
+    ZERO = b"\x00" * 32
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.path("ident.bin")
+
+    def run_main(self, *argv, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        old = dict(os.environ)
+        try:
+            if env is not None:
+                os.environ.pop(prov.SECRET_FILE_ENV, None)
+                os.environ.update(env)
+            with redirect_stdout(out), redirect_stderr(err):
+                try:
+                    rc = prov.main(list(argv))
+                except SystemExit as e:
+                    rc = e.code
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_image_bytes(self):
+        img = prov.build_image(DEVICE_ID, self.ZERO, flags=prov.FLAG_BURNED)
+        self.assertEqual(img, expected_sector(DEVICE_ID, self.ZERO, flags=1) * 2)
+        self.assertEqual(img[24], 1)
+        self.assertEqual(img[28:60], self.ZERO)
+        self.assertEqual(prov.image_info(img), (DEVICE_ID, True))
+        self.assertEqual(prov.image_info(prov.build_image(DEVICE_ID, KEY)), (DEVICE_ID, False))
+        self.assertEqual(prov.check_image(img), DEVICE_ID)
+
+    def test_no_secret_is_needed_and_none_is_read(self):
+        rc, out, err = self.run_main("--burned", "--device-id", DEVICE_ID, "--out", self.out, env={})
+        self.assertEqual(rc, 0, err)
+        with open(self.out, "rb") as f:
+            img = f.read()
+        self.assertEqual(img, expected_sector(DEVICE_ID, self.ZERO, flags=1) * 2)
+        self.assertNotIn(KEY, img)  # the key is not in the image
+        self.assertEqual(out, "device=%s crc32=%08x burned=yes\n" % (DEVICE_ID, zlib.crc32(img)))
+        self.assertEqual(err, "")
+        self.assertEqual(stat.S_IMODE(os.stat(self.out).st_mode), 0o600)
+        # a master secret file in the environment is ignored: it does not even have to exist
+        rc, _, err = self.run_main("--burned", "--device-id", DEVICE_ID, "--out", self.out, env={prov.SECRET_FILE_ENV: self.path("nothing-here")})
+        self.assertEqual(rc, 0, err)
+
+    def test_check_says_burned(self):
+        self.assertEqual(self.run_main("--burned", "--device-id", DEVICE_ID, "--out", self.out, env={})[0], 0)
+        rc, out, err = self.run_main("--check", self.out)
+        self.assertEqual(rc, 0, err)
+        with open(self.out, "rb") as f:
+            self.assertEqual(out, "device=%s crc32=%08x burned=yes\n" % (DEVICE_ID, zlib.crc32(f.read())))
+
+    def test_a_secret_file_is_refused(self):
+        secret = self.write("master", MASTER)
+        rc, out, err = self.run_main("--burned", "--device-id", DEVICE_ID, "--secret-file", secret, "--out", self.out)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, "")
+        self.assertIn("needs no master secret", err)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_same_safety_rules_as_before(self):
+        for bad in V["bad_device_ids"]:
+            rc, out, _ = self.run_main("--burned", "--device-id", bad, "--out", self.out, env={})
+            self.assertNotEqual(rc, 0, bad)
+            self.assertEqual(out, "")
+            self.assertFalse(os.path.exists(self.out))
+        inside = os.path.join(prov.REPO, "ident-test-must-not-exist.bin")
+        rc, _, err = self.run_main("--burned", "--device-id", DEVICE_ID, "--out", inside, env={})
+        self.assertEqual(rc, 2)
+        self.assertFalse(os.path.exists(inside))
+        rc, _, _ = self.run_main("--burned", "--out", self.out, env={})  # no ID at all
+        self.assertEqual(rc, 2)
+        rc, _, _ = self.run_main("--burned", "--device-id", DEVICE_ID, env={})  # no --out
+        self.assertEqual(rc, 2)
+
+    def test_flash_then_delete_like_the_other_record(self):
+        seen = []
+        with mock.patch.object(prov, "flash", lambda port, d, image: seen.append(os.path.getsize(image))):
+            rc, out, err = self.run_main("--burned", "--device-id", DEVICE_ID, "--out", self.out, "--flash", "--port", "/dev/cu.example",
+                                         "--input-dir", "/example/build", env={})
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen, [8192])
+        self.assertFalse(os.path.exists(self.out))
+        self.assertIn("deleted the image file", out)
+
+
+class BurnedFromBoard(TempDirCase):
+    """--burned --from-board asks the board first: only a board that already signs with the chip's key gets a keyless record."""
+
+    def setUp(self):
+        super().setUp()
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), StatusHandler)
+        self.addCleanup(self.srv.server_close)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.shutdown)
+        self.host = "127.0.0.1:%d" % self.srv.server_address[1]
+        self.out = self.path("ident.bin")
+
+    def burn(self, status):
+        StatusHandler.reply = (200, json.dumps(status).encode())
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = prov.main(["--burned", "--from-board", self.host, "--out", self.out])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_board_that_signs_with_the_chip(self):
+        rc, out, err = self.burn({"device": DEVICE_ID, "identity": "ok", "signer": "hardware", "signer_check": "match"})
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("device=aabbccddeeff crc32="))
+        self.assertTrue(out.rstrip().endswith("burned=yes"))
+        self.assertEqual(prov.image_info(read_bytes(self.out)), (DEVICE_ID, True))
+
+    def test_a_board_that_does_not(self):
+        for status in [{"device": DEVICE_ID, "signer": "software", "signer_check": "not_run"},
+                       {"device": DEVICE_ID, "signer": "software", "signer_check": "mismatch"},
+                       {"device": DEVICE_ID, "signer": "none"},
+                       {"device": DEVICE_ID, "identity": "ok"},  # a firmware from before the hardware signer
+                       {"device": DEVICE_ID, "signer": 5},
+                       {"device": DEVICE_ID, "signer": "Hardware"}]:
+            rc, out, err = self.burn(status)
+            self.assertEqual(rc, 2, status)
+            self.assertEqual(out, "")
+            self.assertIn("does not sign with the chip's key yet", err)
+            self.assertFalse(os.path.exists(self.out), status)  # nothing is written
+
+    def test_what_the_board_says_is_not_echoed_blindly(self):
+        rc, _, err = self.burn({"device": DEVICE_ID, "signer": "\x1b[31m" + "x" * 200})
+        self.assertEqual(rc, 2)
+        self.assertNotIn("\x1b", err)
+        self.assertIn("not reported", err)
+        rc, _, err = self.burn({"device": DEVICE_ID, "signer": "software"})
+        self.assertIn("signer: software", err)
+
+    def test_device_id_skips_the_board_check(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = prov.main(["--burned", "--device-id", DEVICE_ID, "--out", self.out])
+        self.assertEqual(rc, 0, err.getvalue())
+
+    def test_the_normal_record_does_not_ask_for_the_signer(self):
+        StatusHandler.reply = (200, b'{"device":"aabbccddeeff","signer":"software"}')
+        secret = self.write("master", MASTER_PADDED)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = prov.main(["--from-board", self.host, "--secret-file", secret, "--out", self.out])
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertEqual(prov.image_info(read_bytes(self.out)), (DEVICE_ID, False))
 
 
 class NoSecretInTheOutput(TempDirCase):
@@ -434,10 +592,10 @@ class NoSecretInTheOutput(TempDirCase):
         self.assertEqual(stat.S_IMODE(os.stat(out_path).st_mode), 0o600)
         with open(out_path, "rb") as f:
             self.assertEqual(f.read(), expected_sector(DEVICE_ID, KEY) * 2)
-        # and --check says the same
+        # and --check says the same, and whether the record is burned
         rc, out2, err2 = self.run_script("--check", out_path)
         self.assertEqual((rc, err2), (0, ""))
-        self.assertEqual(out2, out)
+        self.assertEqual(out2, out.rstrip("\n") + " burned=no\n")
 
     def test_failures_say_nothing_secret(self):
         secret = self.write("master", MASTER_PADDED)

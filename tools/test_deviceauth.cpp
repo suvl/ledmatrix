@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -403,6 +404,7 @@ static void testLoadIdentity() {
   CHECK(strcmp(devauth::identityName(Identity::Invalid), "invalid") == 0);
   CHECK(strcmp(devauth::identityName(Identity::OtherBoard), "other_board") == 0);
   CHECK(strcmp(devauth::identityName(Identity::HardwareKey), "hardware_key") == 0);
+  CHECK(strcmp(devauth::identityName(Identity::HardwareKeyUnprotected), "hardware_unprotected") == 0);
 }
 
 static void testHostTargetRules() {
@@ -690,6 +692,142 @@ static void testClockOffset() {
   CHECK(c.apply(2010, 510) == 7010);
 }
 
+// A signer that gives the wrong answer for one message length (to prove that every length in the verification is compared).
+struct WrongAtLength : devauth::Signer {
+  devauth::Signer &inner;
+  size_t badLen;
+  WrongAtLength(devauth::Signer &s, size_t l) : inner(s), badLen(l) {}
+  bool sign(const uint8_t *msg, size_t len, uint8_t out[devauth::SIG_LEN]) override {
+    bool ok = inner.sign(msg, len, out);
+    if (len == badLen) out[31] ^= 1;
+    return ok;
+  }
+};
+struct FailsAtLength : devauth::Signer {  // reports failure for one length
+  devauth::Signer &inner;
+  size_t badLen;
+  FailsAtLength(devauth::Signer &s, size_t l) : inner(s), badLen(l) {}
+  bool sign(const uint8_t *msg, size_t len, uint8_t out[devauth::SIG_LEN]) override { return len != badLen && inner.sign(msg, len, out); }
+};
+struct SucceedsWithoutWriting : devauth::Signer {  // claims success and leaves the output alone
+  bool sign(const uint8_t *, size_t, uint8_t[devauth::SIG_LEN]) override { return true; }
+};
+
+static void testSignerChoice() {
+  SECTION("signer choice: software, hardware, or none; and the check between the two");
+  using devauth::Identity;
+  using devauth::SignerCheck;
+  using devauth::SignerKind;
+  // The truth table, written out by hand: every combination of (record burned, key in the chip, key fully protected, answers equal).
+  // `protected` and `matches` only count when they can: protected only with a key; matches only when the comparison is run.
+  struct Row { bool burned, key, prot, match; SignerKind kind; SignerCheck check; Identity problem; };
+  static const Row rows[] = {
+      // flag clear: today's software signer unless a complete, matching key is in the chip
+      {false, false, false, false, SignerKind::Software, SignerCheck::NotRun, Identity::Ok},
+      {false, false, false, true, SignerKind::Software, SignerCheck::NotRun, Identity::Ok},
+      {false, false, true, false, SignerKind::Software, SignerCheck::NotRun, Identity::Ok},  // protection without a key means nothing
+      {false, false, true, true, SignerKind::Software, SignerCheck::NotRun, Identity::Ok},
+      {false, true, false, false, SignerKind::Software, SignerCheck::Unprotected, Identity::Ok},  // a key that is not fully protected is never used
+      {false, true, false, true, SignerKind::Software, SignerCheck::Unprotected, Identity::Ok},   // not even when its answers match
+      {false, true, true, false, SignerKind::Software, SignerCheck::Mismatch, Identity::Ok},
+      {false, true, true, true, SignerKind::Hardware, SignerCheck::Match, Identity::Ok},
+      // flag set: the chip's key, fully protected, or nothing (there is no software key to fall back on)
+      {true, false, false, false, SignerKind::None, SignerCheck::NotRun, Identity::HardwareKey},
+      {true, false, false, true, SignerKind::None, SignerCheck::NotRun, Identity::HardwareKey},
+      {true, false, true, false, SignerKind::None, SignerCheck::NotRun, Identity::HardwareKey},
+      {true, false, true, true, SignerKind::None, SignerCheck::NotRun, Identity::HardwareKey},
+      {true, true, false, false, SignerKind::None, SignerCheck::Unprotected, Identity::HardwareKeyUnprotected},
+      {true, true, false, true, SignerKind::None, SignerCheck::Unprotected, Identity::HardwareKeyUnprotected},
+      {true, true, true, false, SignerKind::Hardware, SignerCheck::NotRun, Identity::Ok},  // the comparison is not asked for: the software key is gone
+      {true, true, true, true, SignerKind::Hardware, SignerCheck::NotRun, Identity::Ok},
+  };
+  CHECK(sizeof rows / sizeof rows[0] == 16);  // all of them
+  int hardware = 0;
+  for (const Row &r : rows) {
+    devauth::SignerPlan p = devauth::chooseSigner(r.burned, r.key, r.prot, r.match);
+    bool same = p.kind == r.kind && p.check == r.check && p.problem == r.problem;
+    checks++;
+    if (!same) { fails++; printf("    FAIL: burned %d key %d protected %d matches %d -> kind %d check %d problem %d\n", r.burned, r.key, r.prot, r.match, (int)p.kind, (int)p.check, (int)p.problem); }
+    if (p.kind == SignerKind::Hardware) hardware++;
+    // the hardware is used only with a key that is there and fully protected, and after a mismatch or an unprotected key never
+    if (p.kind == SignerKind::Hardware) CHECK(r.key && r.prot);
+    if (p.check == SignerCheck::Mismatch || p.check == SignerCheck::Unprotected) CHECK(p.kind != SignerKind::Hardware);
+    // a problem exists exactly when there is no signer
+    CHECK((p.kind == SignerKind::None) == (p.problem != Identity::Ok));
+  }
+  CHECK(hardware == 3);
+  // the comparison is run only when both keys could be used: no burned flag, a key, and all its protection
+  for (int b = 0; b < 2; b++)
+    for (int k = 0; k < 2; k++)
+      for (int pr = 0; pr < 2; pr++) CHECK(devauth::needsSignerCheck(b, k, pr) == (!b && k && pr));
+  CHECK(devauth::needsSignerCheck(false, true, true));
+  // names for /status
+  CHECK(strcmp(devauth::signerKindName(SignerKind::Software), "software") == 0);
+  CHECK(strcmp(devauth::signerKindName(SignerKind::Hardware), "hardware") == 0);
+  CHECK(strcmp(devauth::signerKindName(SignerKind::None), "none") == 0);
+  CHECK(strcmp(devauth::signerCheckName(SignerCheck::NotRun), "not_run") == 0);
+  CHECK(strcmp(devauth::signerCheckName(SignerCheck::Match), "match") == 0);
+  CHECK(strcmp(devauth::signerCheckName(SignerCheck::Mismatch), "mismatch") == 0);
+  CHECK(strcmp(devauth::signerCheckName(SignerCheck::Unprotected), "unprotected") == 0);
+  CHECK(strcmp(devauth::identityName(Identity::HardwareKeyUnprotected), "hardware_unprotected") == 0);
+}
+
+static void testSignersAgree() {
+  SECTION("signers agree: the same HMAC for every length of the length table");
+  std::vector<uint8_t> key = unhex(vec["device_key_hex"].as<const char *>());
+  // the lengths the board checks are exactly the vectors' length table, in order
+  std::vector<size_t> table;
+  for (JsonVariantConst row : vec["length_table"]["rows"].as<JsonArrayConst>()) table.push_back(row["length"].as<size_t>());
+  CHECK(table.size() == devauth::VERIFY_COUNT);
+  for (size_t i = 0; i < table.size() && i < devauth::VERIFY_COUNT; i++) CHECK(devauth::VERIFY_LENGTHS[i] == table[i]);
+  CHECK(devauth::VERIFY_MAX == 200 && devauth::VERIFY_MAX == *std::max_element(table.begin(), table.end()));
+  // the verification message is the table's message: signing it under the vector key gives the vector's answers
+  HostSigner host(key);
+  size_t row = 0;
+  for (JsonVariantConst r : vec["length_table"]["rows"].as<JsonArrayConst>()) {
+    uint8_t msg[devauth::VERIFY_MAX], out[32];
+    devauth::verifyMessage(msg, devauth::VERIFY_LENGTHS[row]);
+    CHECK(host.sign(msg, devauth::VERIFY_LENGTHS[row], out) && hex(out, 32) == r["hmac"].as<const char *>());
+    row++;
+  }
+  // two signers with the same key agree; every call is made for every length, on both
+  HostSigner a(key), b(key);
+  CountingSigner ca(a), cb(b);
+  CHECK(devauth::signersAgree(ca, cb));
+  CHECK(ca.calls == (int)devauth::VERIFY_COUNT && cb.calls == (int)devauth::VERIFY_COUNT);
+  // another key: they do not
+  std::vector<uint8_t> other = key;
+  other[0] ^= 1;
+  HostSigner c(other);
+  CHECK(!devauth::signersAgree(a, c));
+  CHECK(!devauth::signersAgree(c, a));
+  // one wrong answer, at any one length, is enough (either signer)
+  for (size_t len : table) {
+    WrongAtLength w(b, len);
+    CHECK(!devauth::signersAgree(a, w));
+    CHECK(!devauth::signersAgree(w, a));
+    FailsAtLength f(b, len);
+    CHECK(!devauth::signersAgree(a, f));
+    CHECK(!devauth::signersAgree(f, a));
+  }
+  // a length outside the table is not compared
+  WrongAtLength notChecked(b, 7);
+  CHECK(devauth::signersAgree(a, notChecked));
+  // a signer that fails outright, and two that claim success without writing anything
+  FailingSigner fail;
+  CHECK(!devauth::signersAgree(a, fail) && !devauth::signersAgree(fail, a) && !devauth::signersAgree(fail, fail));
+  SucceedsWithoutWriting n1, n2;
+  CHECK(!devauth::signersAgree(n1, n2));
+  CHECK(!devauth::signersAgree(a, n1) && !devauth::signersAgree(n1, a));
+  // the chooser fed with the result: the whole decision for a board with the burn done
+  CHECK(devauth::chooseSigner(false, true, true, devauth::signersAgree(a, b)).kind == devauth::SignerKind::Hardware);
+  CHECK(devauth::chooseSigner(false, true, true, devauth::signersAgree(a, c)).kind == devauth::SignerKind::Software);
+  CHECK(devauth::chooseSigner(false, true, true, devauth::signersAgree(a, c)).check == devauth::SignerCheck::Mismatch);
+  // an unprotected key is not even compared: the caller never runs signersAgree (needsSignerCheck is false), and the answer is software
+  CHECK(!devauth::needsSignerCheck(false, true, false));
+  CHECK(devauth::chooseSigner(false, true, false, devauth::signersAgree(a, b)).kind == devauth::SignerKind::Software);
+}
+
 static void testRetryDelay() {
   SECTION("retry delay: a refused board waits longer, never less than the normal retry");
   const uint32_t MIN = 60UL * 1000;
@@ -848,6 +986,8 @@ int main(int argc, char **argv) {
   testCapacity();
   testInvalidInputs();
   testClockOffset();
+  testSignerChoice();
+  testSignersAgree();
   testRetryDelay();
   testRefusal();
   testNoSecretsLeft();

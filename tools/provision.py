@@ -17,9 +17,16 @@ Examples (placeholders):
   python3 -I tools/provision.py --from-board ledmatrix.local --secret-file ~/secrets/ledmatrix-master --out ~/secrets/ident.bin \\
       --flash --port /dev/cu.usbmodem1234 --input-dir <build dir of the sketch>
   python3 -I tools/provision.py --check ~/secrets/ident.bin
+  python3 -I tools/provision.py --burned --from-board ledmatrix.local --out ~/secrets/ident.bin --flash --port /dev/cu.usbmodem1234 \\
+      --input-dir <build dir of the sketch>      (after the key is burned into the chip, see tools/burn_key/README.md)
 
-What it prints: the line `device=<id> crc32=<hex>` (the CRC-32 of the whole image), and with --flash one more line about the image
-file. Never the secret, never a key.
+--burned writes the record of a board whose key is burned into the chip's eFuse (tools/burn_key): flag bit 0 set and the key all
+zero, so the software key is gone from flash. It needs no master secret. With --from-board it first asks the board's /status and
+refuses unless the board already signs with the chip's key ("signer":"hardware"), because a burned record on a board whose chip has
+no key would leave it unable to sign. With --device-id there is no such check: use it only when you know the burn worked.
+
+What it prints: the line `device=<id> crc32=<hex>` (the CRC-32 of the whole image; `burned=yes` is added for a --burned image, and
+--check always says `burned=yes` or `burned=no`), and with --flash one more line about the image file. Never the secret, never a key.
 The image file holds the device key, so it is created with mode 0600 and must be written outside the repository. After a successful
 --flash the file is deleted (--keep keeps it); after a failed one it is kept, so the flash can be tried again.
 The board is flashed only with arduino-cli (never esptool by hand): --flash runs `arduino-cli upload` with the image added to the
@@ -147,6 +154,11 @@ def parse_sector(sector):
 
 def check_image(image):
     """Validates a whole image (both copies valid and identical) and returns its device ID."""
+    return image_info(image)[0]
+
+
+def image_info(image):
+    """Validates a whole image like check_image and returns (device ID, whether the record says the key is burned)."""
     if len(image) != IMAGE_SIZE:
         raise ProvisionError("an identity image is exactly %d bytes" % IMAGE_SIZE)
     ids = []
@@ -157,7 +169,7 @@ def check_image(image):
             raise ProvisionError("sector %d: %s" % (i, e))
     if image[:SECTOR] != image[SECTOR:]:
         raise ProvisionError("the two copies are not identical")
-    return ids[0]
+    return ids[0], bool(image[24] & FLAG_BURNED)
 
 
 def inside_repo(path):
@@ -183,8 +195,8 @@ def write_private(path, data):
             os.close(fd)
 
 
-def device_id_from_board(host):
-    """Asks the board (GET http://<host>/status, 5 s) for its device ID."""
+def board_status(host):
+    """Asks the board (GET http://<host>/status, 5 s) and returns the JSON object it answers."""
     if not re.fullmatch(r"[A-Za-z0-9.\-]+(:[0-9]{1,5})?|\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?", host or ""):
         raise ProvisionError("the board address must be a host name or an IP address")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a board on the LAN is never reached through a proxy
@@ -192,14 +204,35 @@ def device_id_from_board(host):
         with opener.open("http://%s/status" % host, timeout=BOARD_TIMEOUT_S) as resp:
             body = resp.read(1 << 14)
         status = json.loads(body.decode("utf-8"))
-        device_id = status.get("device") if isinstance(status, dict) else None
     except (OSError, ValueError) as e:  # URLError, timeouts and HTTP errors are OSErrors; bad JSON and bad text are ValueErrors
         if hasattr(e, "close"):
             e.close()  # an HTTPError holds the connection
         raise ProvisionError("could not read the device ID from the board (is it on, and is the firmware up to date?)")
+    if not isinstance(status, dict):
+        raise ProvisionError("the board's /status is not what this tool expects")
+    return status
+
+
+def device_id_from_status(status):
+    device_id = status.get("device")
     if not valid_device_id(device_id):
         raise ProvisionError("the board did not report a valid device ID")
     return device_id
+
+
+def device_id_from_board(host):
+    """Asks the board (GET http://<host>/status, 5 s) for its device ID."""
+    return device_id_from_status(board_status(host))
+
+
+def require_hardware_signer(status):
+    """A burned record (no software key) is only safe for a board that already signs with the chip's key: its /status says so."""
+    signer = status.get("signer")
+    if signer == "hardware":
+        return
+    shown = signer if isinstance(signer, str) and re.fullmatch(r"[a-z_]{1,16}", signer) else "not reported"
+    raise ProvisionError("the board does not sign with the chip's key yet (its /status says signer: %s). Flash the normal firmware after the "
+                         "burn and check /status first (tools/burn_key/README.md), or use --device-id if you are sure the burn worked" % shown)
 
 
 def current_extra_flags():
@@ -241,8 +274,8 @@ def run(args):
                 image = f.read(IMAGE_SIZE + 1)
         except OSError as e:
             raise ProvisionError("cannot read the image (%s)" % (e.strerror or type(e).__name__))
-        device_id = check_image(image)
-        print("device=%s crc32=%08x" % (device_id, image_crc(image)))
+        device_id, burned = image_info(image)
+        print("device=%s crc32=%08x burned=%s" % (device_id, image_crc(image), "yes" if burned else "no"))
         return 0
 
     if bool(args.device_id) == bool(args.from_board):
@@ -251,22 +284,37 @@ def run(args):
         raise ProvisionError("--out is needed (where to write the 8 KB image)")
     if args.flash and not (args.port and args.input_dir):
         raise ProvisionError("--flash needs --port and --input-dir")
-    secret_path = args.secret_file or os.environ.get(SECRET_FILE_ENV)
-    if not secret_path:
-        raise ProvisionError("give the master secret file with --secret-file or the %s variable (a path, not the secret itself)" % SECRET_FILE_ENV)
+    if args.burned:
+        if args.secret_file:
+            raise ProvisionError("--burned writes no key, so it needs no master secret: leave --secret-file out")
+        secret_path = None
+    else:
+        secret_path = args.secret_file or os.environ.get(SECRET_FILE_ENV)
+        if not secret_path:
+            raise ProvisionError("give the master secret file with --secret-file or the %s variable (a path, not the secret itself)" % SECRET_FILE_ENV)
+        if inside_repo(secret_path):
+            raise ProvisionError("the master secret must be kept outside the repository")
     if inside_repo(args.out):
         raise ProvisionError("the image holds the device key: write it outside the repository")
-    if inside_repo(secret_path):
-        raise ProvisionError("the master secret must be kept outside the repository")
 
-    device_id = args.device_id if args.device_id else device_id_from_board(args.from_board)
+    status = None
+    if args.device_id:
+        device_id = args.device_id
+    else:
+        status = board_status(args.from_board)
+        device_id = device_id_from_status(status)
     if not valid_device_id(device_id):
         raise ProvisionError("the device ID must be 12 lowercase hexadecimal characters")
-    secret = read_secret(secret_path)
-    key = derive_key(secret, device_id)
-    image = build_image(device_id, key)
+    if args.burned:
+        if status is not None:
+            require_hardware_signer(status)
+        image = build_image(device_id, b"\x00" * 32, flags=FLAG_BURNED)
+    else:
+        secret = read_secret(secret_path)
+        key = derive_key(secret, device_id)
+        image = build_image(device_id, key)
     write_private(args.out, image)
-    print("device=%s crc32=%08x" % (device_id, image_crc(image)))
+    print("device=%s crc32=%08x%s" % (device_id, image_crc(image), " burned=yes" if args.burned else ""))
     sys.stdout.flush()
     if args.flash:
         try:
@@ -296,6 +344,8 @@ def main(argv=None):
     ap.add_argument("--flash", action="store_true", help="also write the image to the board with arduino-cli upload")
     ap.add_argument("--port", metavar="PORT", help="serial port of the board, for --flash")
     ap.add_argument("--input-dir", metavar="DIR", help="build directory with the compiled firmware, for --flash")
+    ap.add_argument("--burned", action="store_true",
+                    help="write the record of a board whose key is burned into the chip: flag set, key all zero, no secret needed")
     ap.add_argument("--keep", action="store_true", help="with --flash: keep the image file after a successful flash (it is deleted by default)")
     ap.add_argument("--check", metavar="FILE", help="validate an identity image and print its device ID")
     args, extra = ap.parse_known_args(argv)
