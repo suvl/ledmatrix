@@ -43,6 +43,56 @@ static bool validTzPosix(const char *s) {
   return digit;
 }
 
+// ---- panel protection (slice 7): ranges shared by the portal input and by what NVS gives back ----
+static bool validDimAfter(int v) { return v >= 1 && v <= 120; }    // minutes of stillness before dimming
+static bool validDimLevel(int v) { return v >= 5 && v <= 100; }    // percent of full brightness
+static bool validClockMin(int v) { return v >= 0 && v <= 1439; }   // minutes after local midnight
+static bool validRotateMin(int v) { return v >= 1 && v <= 240; }   // minutes between clock and weather swaps
+
+// "HH:MM", 24 hour clock, exactly two digits each side, 00:00 to 23:59. `out` is untouched when this returns false.
+static bool parseClock(const char *s, uint16_t &out) {
+  if (strlen(s) != 5 || s[2] != ':') return false;
+  for (int i : {0, 1, 3, 4})
+    if (s[i] < '0' || s[i] > '9') return false;
+  int h = (s[0] - '0') * 10 + (s[1] - '0'), m = (s[3] - '0') * 10 + (s[4] - '0');
+  if (h > 23 || m > 59) return false;
+  out = h * 60 + m;
+  return true;
+}
+
+// Zero-padded "HH:MM" into a buffer of at least 6 bytes. A value past 1439 cannot happen (it is checked on every way in) but never overruns.
+static void formatClock(uint16_t minutes, char *out) {
+  if (minutes > 1439) minutes = 0;
+  snprintf(out, 6, "%02u:%02u", (unsigned)(minutes / 60), (unsigned)(minutes % 60));
+}
+
+// ---- optional JSON fields: missing or null keeps `out`; the wrong JSON type returns false, so a typo is an error and never silently ignored ----
+static bool readOptBool(JsonVariantConst v, bool &out) {
+  if (v.isNull()) return true;
+  if (!v.is<bool>()) return false;
+  out = v.as<bool>();
+  return true;
+}
+
+// A whole number that fits an int. A string, a fraction or a number too big for an int returns false.
+static bool readOptInt(JsonVariantConst v, int &out) {
+  if (v.isNull()) return true;
+  if (!v.is<int>()) return false;
+  out = v.as<int>();
+  return true;
+}
+
+static bool readOptClock(JsonVariantConst v, uint16_t &out) {
+  if (v.isNull()) return true;
+  if (!v.is<JsonString>()) return false;
+  JsonString s = v.as<JsonString>();
+  if (s.size() != 5) return false;  // also rejects a string with an embedded NUL
+  return parseClock(s.c_str(), out);
+}
+
+// A group such as "protection" or "dim": absent or null is fine, anything but an object is a mistake.
+static bool isOptGroup(JsonVariantConst v) { return v.isNull() || v.is<JsonObjectConst>(); }
+
 static void loadAll() {
   if (!prefs.begin(NS, true)) return;  // namespace does not exist yet: keep the defaults
   cur.showFlights = prefs.getBool("sf", cur.showFlights);
@@ -75,6 +125,22 @@ static void loadAll() {
     strlcpy(cur.tzName, tzn.c_str(), sizeof(cur.tzName));
     strlcpy(cur.tzPosix, tzp.c_str(), sizeof(cur.tzPosix));
   }
+  // Panel protection: a stored value outside its range is ignored (the default stays), so a damaged flash never gives a bad range.
+  cur.drift = prefs.getBool("drift", cur.drift);
+  cur.dimOn = prefs.getBool("dimon", cur.dimOn);
+  int v = prefs.getUChar("dimmin", cur.dimAfterMin);
+  if (validDimAfter(v)) cur.dimAfterMin = v;
+  v = prefs.getUChar("dimlvl", cur.dimLevel);
+  if (validDimLevel(v)) cur.dimLevel = v;
+  cur.nightOn = prefs.getBool("nighton", cur.nightOn);
+  v = prefs.getUShort("nightst", cur.nightStartMin);
+  if (validClockMin(v)) cur.nightStartMin = v;
+  v = prefs.getUShort("nightend", cur.nightEndMin);
+  if (validClockMin(v)) cur.nightEndMin = v;
+  cur.rotateOn = prefs.getBool("roton", cur.rotateOn);
+  v = prefs.getUChar("rotmin", cur.rotateMin);
+  if (validRotateMin(v)) cur.rotateMin = v;
+  cur.cyclePlanes = prefs.getBool("cycle", cur.cyclePlanes);
   prefs.end();
 }
 
@@ -104,6 +170,16 @@ static void saveAll(const Settings &s) {
   prefs.putString("tok", s.serviceToken);
   prefs.putString("tzn", s.tzName);
   prefs.putString("tzp", s.tzPosix);
+  prefs.putBool("drift", s.drift);
+  prefs.putBool("dimon", s.dimOn);
+  prefs.putUChar("dimmin", s.dimAfterMin);
+  prefs.putUChar("dimlvl", s.dimLevel);
+  prefs.putBool("nighton", s.nightOn);
+  prefs.putUShort("nightst", s.nightStartMin);
+  prefs.putUShort("nightend", s.nightEndMin);
+  prefs.putBool("roton", s.rotateOn);
+  prefs.putUChar("rotmin", s.rotateMin);
+  prefs.putBool("cycle", s.cyclePlanes);
   prefs.end();
 }
 
@@ -193,6 +269,39 @@ bool setFromJson(const char *json, size_t len, String &error) {
     int b = doc["brightness"] | -1;
     if (b < 10 || b > 100) { error = "Brightness must be between 10 and 100 percent."; return false; }
     n.brightness = b;
+  }
+
+  if (!readOptBool(doc["cyclePlanes"], n.cyclePlanes)) { error = "Cycling through the planes must be on or off."; return false; }
+
+  // Panel protection. Every group and every field is optional; a missing one keeps its value, a wrong type or range refuses the whole save.
+  JsonVariantConst prot = doc["protection"];
+  if (!isOptGroup(prot)) { error = "The panel protection settings must be a group of fields."; return false; }
+  if (!prot.isNull()) {
+    if (!readOptBool(prot["drift"], n.drift)) { error = "Pixel drift must be on or off."; return false; }
+
+    JsonVariantConst dim = prot["dim"];
+    if (!isOptGroup(dim)) { error = "The dim settings must be a group of fields."; return false; }
+    int after = n.dimAfterMin, level = n.dimLevel;
+    if (!readOptBool(dim["on"], n.dimOn)) { error = "Dimming must be on or off."; return false; }
+    if (!readOptInt(dim["afterMin"], after) || !validDimAfter(after)) { error = "Dim after must be between 1 and 120 minutes."; return false; }
+    if (!readOptInt(dim["level"], level) || !validDimLevel(level)) { error = "The dim level must be between 5 and 100 percent."; return false; }
+    n.dimAfterMin = after;
+    n.dimLevel = level;
+
+    JsonVariantConst night = prot["night"];
+    if (!isOptGroup(night)) { error = "The night settings must be a group of fields."; return false; }
+    if (!readOptBool(night["on"], n.nightOn)) { error = "Night blanking must be on or off."; return false; }
+    if (!readOptClock(night["start"], n.nightStartMin) || !readOptClock(night["end"], n.nightEndMin)) {
+      error = "Night times must look like 23:30 (00:00 to 23:59).";
+      return false;
+    }
+
+    JsonVariantConst rot = prot["rotate"];
+    if (!isOptGroup(rot)) { error = "The rotation settings must be a group of fields."; return false; }
+    int every = n.rotateMin;
+    if (!readOptBool(rot["on"], n.rotateOn)) { error = "Rotation must be on or off."; return false; }
+    if (!readOptInt(rot["everyMin"], every) || !validRotateMin(every)) { error = "Rotation must be every 1 to 240 minutes."; return false; }
+    n.rotateMin = every;
   }
 
   JsonObject loc = doc["location"];
@@ -286,6 +395,23 @@ String toJson() {
   doc["dwellSec"] = s.dwellSec;
   doc["brightness"] = s.brightness;
   doc["clock24h"] = s.clock24h;
+  doc["cyclePlanes"] = s.cyclePlanes;
+  JsonObject prot = doc["protection"].to<JsonObject>();
+  prot["drift"] = s.drift;
+  JsonObject dim = prot["dim"].to<JsonObject>();
+  dim["on"] = s.dimOn;
+  dim["afterMin"] = s.dimAfterMin;
+  dim["level"] = s.dimLevel;
+  char hhmm[6];
+  JsonObject night = prot["night"].to<JsonObject>();
+  night["on"] = s.nightOn;
+  formatClock(s.nightStartMin, hhmm);
+  night["start"] = hhmm;  // a char array is copied into the document, so the buffer can be reused
+  formatClock(s.nightEndMin, hhmm);
+  night["end"] = hhmm;
+  JsonObject rot = prot["rotate"].to<JsonObject>();
+  rot["on"] = s.rotateOn;
+  rot["everyMin"] = s.rotateMin;
   JsonObject loc = doc["location"].to<JsonObject>();
   loc["set"] = s.hasLocation;
   loc["lat"] = s.lat;

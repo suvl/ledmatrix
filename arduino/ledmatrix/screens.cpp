@@ -112,28 +112,31 @@ static void drawFlightLogo(const SampleFlight &f) {
 }
 
 // ---- flight card ------------------------------------------------------------------------------------------
+// Pixel drift shifts the finished picture one pixel right and down, so column 63 and row 31 must stay black. Text that
+// starts at column tx gets 63 - tx pixels (it ends at column 62 at the latest). In the 4x6 font the descenders g j p q y
+// reach the baseline row itself, so a line that can hold them has its baseline at row 30 at most.
 void flightA(const SampleFlight &f) {
   drawFlightLogo(f);
-  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60;
+  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60, tx = flightHasLogo(f) ? 1 : 2;
   t6(x, 1, f.airline, WHITE, w);
   t6(x, 9, f.route, CYAN, w);
-  t6(flightHasLogo(f) ? 1 : 2, 17, f.type, AMBER, 62);
-  tt(flightHasLogo(f) ? 1 : 2, 30, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 62);
+  t6(tx, 17, f.type, AMBER, 62);
+  tt(tx, 30, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 63 - tx);
 }
 void flightB(const SampleFlight &f) {
   drawFlightLogo(f);
-  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60;
+  int x = flightHasLogo(f) ? 19 : 2, w = flightHasLogo(f) ? 44 : 60, tx = flightHasLogo(f) ? 1 : 2;
   t6(x, 1, f.airline, WHITE, w);
   t6(x, 9, f.route, CYAN, w);
-  tt(flightHasLogo(f) ? 1 : 2, 23, f.type, AMBER, 62);
-  tt(flightHasLogo(f) ? 1 : 2, 30, String("to ") + f.destName, GREY, 62);
+  tt(tx, 23, f.type, AMBER, 63 - tx);
+  tt(tx, 30, String("to ") + f.destName, GREY, 63 - tx);
 }
 void flightC(const SampleFlight &f) {
-  t6(2, 1, f.airline, WHITE, 60);
-  t6(2, 9, f.route, CYAN, 60);
-  tt(2, 21, f.type, AMBER, 60);
-  tt(2, 27, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 60);
-  tt(2, 32, String(f.trackDeg) + '^' + " " + f.vr, GREY, 60);
+  t6(2, 0, f.airline, WHITE, 60);
+  t6(2, 8, f.route, CYAN, 60);
+  tt(2, 20, f.type, AMBER, 60);
+  tt(2, 26, String(f.alt) + " " + f.spdVal + f.spdUnit, GREY, 60);
+  tt(2, 31, String(f.trackDeg) + '^' + " " + f.vr, GREY, 60);  // digits and f, t, s, /: nothing descends below baseline 31
 }
 
 // ---- weather ------------------------------------------------------------------------------------------------
@@ -184,7 +187,7 @@ void weatherB(const LiveWeather &w) {
   t += 'C';
   t6(centerX((int)t.length() * 12), 10, t, WHITE, 62, 2);
   String c = iconText(w.icon);
-  tt(centerX(tinyWidth(c)), 31, c, GREY, 62);
+  tt(centerX(tinyWidth(c)), 30, c, GREY, 62);  // baseline 30: the y of "Cloudy" descends to the baseline row, row 31 stays black
 }
 // The three columns are labelled with the clock hour (24 h, board local time) each one refers to: now, +3 h, +6 h.
 // Capital N, M and W cannot be told apart in the 3 px font, digits and "h" can. No clock yet: "--h".
@@ -199,10 +202,10 @@ void weatherC(const LiveWeather &w, const struct tm *clock) {
     int x0 = 2 + i * 21;
     char label[4] = "--h";
     if (clock) snprintf(label, sizeof(label), "%02dh", (clock->tm_hour + 3 * i) % 24);
-    tt(x0 + (19 - ttWidth(label)) / 2, 7, label, AMBER, 20);
+    tt(x0 + (19 - ttWidth(label)) / 2, 7, label, AMBER, 19);  // columns are 19 px wide: the last one ends at column 62
     drawWxIcon(x0 + 3, 10, iconKind(slots[i].icon), 12);
     String t = (slots[i].has ? String(slots[i].temp) : String("--")) + '^';
-    tt(x0 + (19 - ttWidth(t)) / 2, 29, t, WHITE, 20);
+    tt(x0 + (19 - ttWidth(t)) / 2, 29, t, WHITE, 19);
   }
 }
 

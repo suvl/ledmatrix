@@ -3,11 +3,14 @@
 //   slice 2: Wi-Fi setup flow: saved network, setup access point, mDNS, long-press UP to reset
 //   slice 3: settings portal
 //   slice 4: live data from the owner's service (this file decides what to show; see live.cpp)
+//   slice 7: panel protection (protect.cpp): pixel drift, dim after stillness, night blanking, clock/weather rotation;
+//            a short press of UP or DOWN wakes the panel
 //
 //   core 1: render task   ~30 fps, picks the screen from the network state, the settings and the live data
 //   core 0: net task      Wi-Fi, setup access point, DNS, web server and portal API (see net.cpp)
 //   core 0: data task     time sync, flights every 30 s, weather every 15 min, headlines every 30 min (live.cpp)
-//   loop(): buttons       UP = next demo screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network
+//   loop(): buttons       UP = next demo screen, DOWN = previous; hold UP for 5 s to forget the Wi-Fi network;
+//                         any press also wakes the panel from the dim and from night blanking (30 s)
 //
 // With no data service address saved, the device cycles the demo screens with example data.
 
@@ -17,6 +20,7 @@
 #include "live.h"
 #include "net.h"
 #include "plane_view.h"
+#include "protect.h"
 #include "screens.h"
 #include "settings.h"
 
@@ -60,6 +64,10 @@ volatile uint32_t gFrames = 0, gFrameMaxMs = 0, gFramesOver1s = 0;
 // The panel runs at 6 bits per colour so that dimmed pictures keep their shades.
 static void applyBrightness(uint8_t percent) {
   if (percent >= 100) return;
+  if (percent == 0) {  // night blanking
+    matrix.fillScreen(0);
+    return;
+  }
   uint32_t k = (uint32_t)percent * 256 / 100;  // 8.8 fixed point
   uint16_t *p = matrix.getBuffer();
   for (int i = 0; i < PANEL_W * PANEL_H; i++) {
@@ -68,6 +76,91 @@ static void applyBrightness(uint8_t percent) {
     uint32_t r = ((c >> 11) & 31) * k >> 8, g = ((c >> 5) & 63) * k >> 8, b = (c & 31) * k >> 8;
     p[i] = (r << 11) | (g << 5) | b;
   }
+}
+
+// Pixel drift: moves the finished picture right and down by dx, dy (each 0 or 1; the screens keep column 63 and
+// row 31 blank, so nothing visible falls off). Walks from the bottom right so it never reads a pixel it already wrote.
+static void shiftPicture(int dx, int dy) {
+  if (dx <= 0 && dy <= 0) return;
+  uint16_t *p = matrix.getBuffer();
+  for (int y = PANEL_H - 1; y >= 0; y--) {
+    for (int x = PANEL_W - 1; x >= 0; x--) {
+      int sx = x - dx, sy = y - dy;
+      p[y * PANEL_W + x] = (sx >= 0 && sy >= 0) ? p[sy * PANEL_W + sx] : 0;
+    }
+  }
+}
+
+static ProtectConfig protectConfigOf(const Settings &s) {
+  ProtectConfig p;
+  p.brightness = s.brightness;
+  p.drift = s.drift;
+  p.dim = s.dimOn;
+  p.dimAfterMin = s.dimAfterMin;
+  p.dimLevel = s.dimLevel;
+  p.night = s.nightOn;
+  p.nightStartMin = s.nightStartMin;
+  p.nightEndMin = s.nightEndMin;
+  p.rotate = s.rotateOn;
+  p.rotateMin = s.rotateMin;
+  return p;
+}
+
+// What protection treats each screen as: planes are activity and never dimmed, headlines get the owner's brightness
+// for their turn, weather and clock dim, everything else (setup, boot, no Wi-Fi ...) is left alone.
+static PictureKind pictureKindOf(Screen s) {
+  switch (s) {
+    case Screen::Flight: return PictureKind::Plane;
+    case Screen::News: return PictureKind::Headline;
+    case Screen::Weather:
+    case Screen::Idle: return PictureKind::Static;
+    default: return PictureKind::Other;
+  }
+}
+
+static const char *panelModeName(PanelMode m) {
+  switch (m) {
+    case PanelMode::Normal: return "Normal";
+    case PanelMode::Dim: return "Dim";
+    case PanelMode::Night: return "Night";
+    case PanelMode::NightAwake: return "NightAwake";
+  }
+  return "?";
+}
+
+// One Serial line when the mode or the drift offset changes, printed once the fade has settled (about a second later)
+// so the brightness shown is the level it is heading for. A change that reverts before then prints nothing.
+static void logProtect(const ProtectOut &out, uint32_t now) {
+  static PanelMode shownMode = PanelMode::Normal;
+  static int shownDx = 0, shownDy = 0;
+  static bool pending = false;
+  static uint32_t changedAt = 0;
+  bool differs = out.mode != shownMode || out.dx != shownDx || out.dy != shownDy;
+  if (!differs) {
+    pending = false;
+  } else if (!pending) {
+    pending = true;
+    changedAt = now;
+  } else if (now - changedAt >= 1200) {
+    Serial.printf("PROTECT mode=%s brightness=%d drift=%d,%d\n", panelModeName(out.mode), out.brightness, out.dx, out.dy);
+    shownMode = out.mode;
+    shownDx = out.dx;
+    shownDy = out.dy;
+    pending = false;
+  }
+}
+
+// One Serial line when the picture changes (another screen, or another plane in a cycle), for soak tests and bench checks.
+static void logShown(Screen s, const char *callsign) {
+  static Screen lastScreen = Screen::Boot;
+  static char lastCs[10] = "";
+  static bool first = true;
+  if (!first && s == lastScreen && strcmp(callsign, lastCs) == 0) return;
+  first = false;
+  lastScreen = s;
+  strlcpy(lastCs, callsign, sizeof(lastCs));
+  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi"};
+  Serial.printf("SHOW %s %s\n", names[(int)s], callsign);
 }
 
 static void renderTask(void *) {
@@ -90,6 +183,7 @@ static void renderTask(void *) {
       UiState ui = {ni.apSsid[0] ? ni.apSsid : "ledmatrix", ni.apPass[0] ? ni.apPass : "7K3PQ9XM",
                     ni.apIp[0] ? ni.apIp : "192.168.4.1", ni.ip[0] ? ni.ip : "192.168.1.100", cfg.clock24h};
 
+      const ProtectConfig pcfg = protectConfigOf(cfg);
       Screen screen;
       uint8_t layout = 0;
       int flightIdx = 0;
@@ -128,7 +222,8 @@ static void renderTask(void *) {
           ui.headlineAgeMs = lv.newsAgeMs;
           screen = Screen::News;
           layout = cfg.newsLayout;
-        } else if (cfg.showWeather && lv.wx.valid) {
+        } else if (cfg.showWeather && lv.wx.valid && (!cfg.rotateOn || protectWeatherTurn(pcfg, now))) {
+          // with rotation on, weather only has the even slots; the clock (or black) idle screen has the others
           ui.wx = &lv.wx;
           screen = Screen::Weather;
           layout = cfg.weatherLayout;
@@ -139,12 +234,22 @@ static void renderTask(void *) {
         if (lv.timeValid) ui.clock = &lv.now;
       }
 
+      ProtectFrame pf;
+      pf.nowMs = now;
+      pf.timeValid = lv.timeValid;
+      pf.localMinute = lv.timeValid ? (uint16_t)(lv.now.tm_hour * 60 + lv.now.tm_min) : 0;
+      pf.kind = pictureKindOf(screen);
+      ProtectOut out = protectStep(pcfg, pf);
+      logProtect(out, now);
+      logShown(screen, live && screen == Screen::Flight ? lv.plane.cs : "");
+
       matrix.fillScreen(0);
       drawScreen(screen, layout, now, flightIdx, ui);
+      shiftPicture(out.dx, out.dy);  // drift moves the picture only; the overlays below stay at their fixed positions
       if (live && lv.stale && (now / 700) % 2 == 0) matrix.fillRect(60, 1, 3, 3, matrix.color565(255, 120, 20));  // stale-data dot
       int hold = gHoldPct;
       if (hold > 8) matrix.fillRect(0, 31, PANEL_W * hold / 100, 1, matrix.color565(255, 176, 0));  // long-press progress
-      applyBrightness(cfg.brightness);
+      applyBrightness(out.brightness);
       matrix.show();
       static uint32_t lastShow = 0;
       uint32_t t = millis();
@@ -187,11 +292,13 @@ void loop() {
   bool up = digitalRead(BUTTON_UP) == LOW;
   bool down = digitalRead(BUTTON_DOWN) == LOW;
   if (up && !upWas) {
+    protectWake(millis());  // a short press wakes the panel
     goTo(gIndex + 1);
     lastChange = millis();
     upSince = millis();
   }
   if (down && !downWas) {
+    protectWake(millis());
     goTo(gIndex - 1);
     lastChange = millis();
   }

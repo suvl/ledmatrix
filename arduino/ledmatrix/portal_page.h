@@ -18,8 +18,10 @@ h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;margin:0 0 10px}
 p.lede{color:var(--muted);margin:0 0 24px}
 section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
 label{display:block;font-size:14px;color:var(--muted);margin:12px 0 4px}
-input[type=text],input[type=number],input[type=search]{width:100%;font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#0f1216;color:var(--text)}
+input[type=text],input[type=number],input[type=search],input[type=time]{width:100%;font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#0f1216;color:var(--text)}
 input[type=range]{width:100%;accent-color:var(--amber)}
+input:disabled{opacity:.45}
+input[aria-invalid=true]{border-color:var(--warn)}
 .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
 .switch{display:flex;align-items:center;gap:10px;margin:8px 0;color:var(--text);font-size:15px}
 .switch input{width:20px;height:20px;accent-color:var(--amber)}
@@ -51,12 +53,43 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <label class="switch"><input type="checkbox" id="showNews"> Headlines</label>
 <label for="dwell">Show each new plane for <b id="dwellVal">10</b> seconds</label>
 <input type="range" id="dwell" min="3" max="60" step="1" value="10">
+<label class="switch"><input type="checkbox" id="cyclePlanes"> Cycle every plane in range</label>
+<p class="note">Off by default. Shows each plane in range for the number of seconds set above, nearest first, for as long as it stays in range. Planes keep priority, so weather, clock and headlines appear only when the radar is empty.</p>
 </section>
 
 <section>
 <h2>Display</h2>
 <label for="bright">Brightness <b id="brightVal">100</b>%</label>
 <input type="range" id="bright" min="10" max="100" step="5" value="100">
+</section>
+
+<section>
+<h2>Panel protection</h2>
+<p class="note">A picture that stays on for hours can wear the same LEDs. These settings take effect when you press Save.</p>
+<label class="switch"><input type="checkbox" id="drift"> Pixel drift</label>
+<p class="note">Moves static pictures one pixel every few minutes.</p>
+
+<label class="switch"><input type="checkbox" id="dimOn"> Dim when nothing new</label>
+<div class="row">
+<div><label for="dimAfter">After (minutes)</label><input type="number" id="dimAfter" min="1" max="120" step="1" inputmode="numeric"></div>
+<div><label for="dimLevel">Dim level (%)</label><input type="number" id="dimLevel" min="5" max="100" step="1" inputmode="numeric"></div>
+</div>
+<p class="note">After this many minutes with no new plane, the clock, weather and idle screens dim to this percent of full brightness, never above your brightness setting. Planes are never dimmed. A new plane or a button press brings the brightness back.</p>
+
+<label class="switch"><input type="checkbox" id="nightOn"> Night blanking</label>
+<div class="row">
+<div><label for="nightStart">Dark from</label><input type="time" id="nightStart"></div>
+<div><label for="nightEnd">Dark until</label><input type="time" id="nightEnd"></div>
+</div>
+<p class="note">The panel is dark between these local times, using the time zone set below<span id="nightZone"></span>. A start later than the end runs past midnight; equal times mean no blanking. Planes and headlines do not wake it. A short press of UP or DOWN lights it for 30 seconds.</p>
+
+<label class="switch"><input type="checkbox" id="rotateOn"> Swap weather and clock</label>
+<div class="row">
+<div><label for="rotateEvery">Every (minutes)</label><input type="number" id="rotateEvery" min="1" max="240" step="1" inputmode="numeric"></div>
+</div>
+<p class="note">Off by default. Swaps the weather and clock screens every this many minutes when nothing else is showing.</p>
+
+<p class="note" id="panelLive" hidden></p>
 </section>
 
 <section>
@@ -147,7 +180,9 @@ const WHITE = [255, 255, 255], AMBER = [255, 176, 0], BLUE = [40, 110, 255], GRE
 
 function glcdCode(ch) { return ch === '°' ? 248 : ch.charCodeAt(0) & 255; }
 function w6(s, size) { return s.length * 6 * (size || 1); }
-function wTT(s) { let w = 0; for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; w += g ? g[3] : 4; } return w; }
+// Pixel width of a 4x6 string, as the panel's ttWidth(): every glyph's advance, minus the empty column after the last glyph
+// (a trailing degree ring keeps its gap there, like the panel).
+function wTT(s) { let w = 0; for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; w += g ? g[3] : 4; } return s.length && s[s.length - 1] !== '°' ? w - 1 : w; }
 function drawGlcd(fb, x, y, s, c, size) {
   size = size || 1;
   for (const ch of s) {
@@ -231,6 +266,8 @@ const FLIGHTS = [
   { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9812ft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
   { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12240ft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
 ];
+// Example weather the three weather layouts show (same values as the panel's demo weather).
+const WX = { loc: 'HOME', temp: '18', text: 'Partly cloudy', line: 'H21 L12 10%', icon: 'part', cols: [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']] };
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
 
@@ -253,30 +290,30 @@ const flightB = (fb, t, ctx) => {
 };
 const flightC = (fb, t, ctx) => {
   const f = FLIGHTS[state.flight];
-  T6(fb, ctx, 2, 1, f.air, WHITE, 60);
-  T6(fb, ctx, 2, 9, f.route, CYAN, 60);
-  TT(fb, ctx, 2, 21, f.type, AMBER, 60);
-  TT(fb, ctx, 2, 27, f.alt + ' ' + f.spd, GREY, 60);
-  TT(fb, ctx, 2, 32, f.trk + ' ' + f.vr, GREY, 60);
+  T6(fb, ctx, 2, 0, f.air, WHITE, 60);
+  T6(fb, ctx, 2, 8, f.route, CYAN, 60);
+  TT(fb, ctx, 2, 20, f.type, AMBER, 60);
+  TT(fb, ctx, 2, 26, f.alt + ' ' + f.spd, GREY, 60);
+  TT(fb, ctx, 2, 31, f.trk + ' ' + f.vr, GREY, 60);
 };
 const wxA = (fb, t, ctx) => {
-  wxIcon(fb, 1, 2, 'part', 16);
-  T6(fb, ctx, 21, 3, '18', WHITE, 26, 2); drawGlcd(fb, 45, 3, '°', WHITE, 1); drawGlcd(fb, 51, 3, 'C', WHITE, 1);
-  TT(fb, ctx, 2, 25, 'Partly cloudy', AMBER, 60);
-  TT(fb, ctx, 2, 31, 'H21 L12 rain 10%', GREY, 60);
+  wxIcon(fb, 1, 2, WX.icon, 16);
+  T6(fb, ctx, WX.temp.length === 1 ? 27 : 21, 3, WX.temp, WHITE, 26, 2); drawGlcd(fb, 45, 3, '°', WHITE, 1); drawGlcd(fb, 51, 3, 'C', WHITE, 1);
+  TT(fb, ctx, 2, 25, WX.text, AMBER, 60);
+  TT(fb, ctx, 2, 31, WX.line, GREY, 60);
 };
 const wxB = (fb, t, ctx) => {
-  TT(fb, ctx, 2, 7, 'HOME', AMBER, 60);
-  T6(fb, ctx, centerX(w6('18°C', 2)), 10, '18°C', WHITE, 62, 2);
-  TT(fb, ctx, centerX(wTT('Partly cloudy')), 31, 'Partly cloudy', GREY, 62);
+  const big = WX.temp + '°C';
+  TT(fb, ctx, 2, 7, (WX.loc || 'WEATHER').toUpperCase(), AMBER, 60);
+  T6(fb, ctx, centerX(w6(big, 2)), 10, big, WHITE, 62, 2);
+  TT(fb, ctx, centerX(wTT(WX.text)), 30, WX.text, GREY, 62);  // baseline 30: a 'y' descender reaches the baseline row, row 31 stays black
 };
 const wxC = (fb, t, ctx) => {
-  const cols = [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']];
-  cols.forEach(([lab, ic, tmp], i) => {
-    const x0 = 2 + i * 21;
-    TT(fb, ctx, x0 + Math.floor((20 - wTT(lab)) / 2), 7, lab, AMBER, 20);  // wTT counts the last gap, the panel's ttWidth does not
+  WX.cols.forEach(([lab, ic, tmp], i) => {
+    const x0 = 2 + i * 21;  // each column is 19 px wide, so the last one ends at x=62
+    TT(fb, ctx, x0 + Math.floor((19 - wTT(lab)) / 2), 7, lab, AMBER, 19);
     wxIcon(fb, x0 + 3, 10, ic, 12);
-    TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 20);
+    TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 19);
   });
 };
 const newsA = (fb, t, ctx) => {
@@ -441,6 +478,7 @@ const nowifi = (fb, t, ctx) => {
     if (here) lines.push('It is ' + here + ' in ' + tz.name + ' right now.');
     if (boardLocal) lines.push('The display\u2019s clock reads ' + boardLocal + '.');
     $('tzNow').textContent = lines.join(' ');
+    $('nightZone').textContent = ' (' + tz.name + ')';
   }
   function setZone(name, how) {
     if (!TZ[name]) return false;
@@ -466,6 +504,7 @@ const nowifi = (fb, t, ctx) => {
     $('bright').value = c.brightness; $('brightVal').textContent = c.brightness; $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
     sel.flight = c.layouts.flight; sel.weather = c.layouts.weather; sel.news = c.layouts.news; sel.idle = c.layouts.idle;
     $('c24').checked = c.clock24h;
+    applyProtection(c);
     $('svc').value = (c.service && c.service.host) || '';
     tokenSet = !!(c.service && c.service.tokenSet); tokClear = false; $('tok').value = '';
     $('tok').placeholder = tokenSet ? 'A token is saved. Type a new one to replace it.' : 'Leave empty if the service needs none';
@@ -482,6 +521,46 @@ const nowifi = (fb, t, ctx) => {
     }
     refreshGroups();
   }
+  /* ---- panel protection: defaults are the device defaults, used when the board does not send a group ---- */
+  const PROT = ['dimAfter', 'dimLevel', 'nightStart', 'nightEnd', 'rotateEvery'];
+  function applyProtection(c) {
+    const p = c.protection || {}, dim = p.dim || {}, night = p.night || {}, rot = p.rotate || {};
+    const or = (v, d) => (v === undefined || v === null ? d : v);
+    $('cyclePlanes').checked = !!c.cyclePlanes;
+    $('drift').checked = !!or(p.drift, true);
+    $('dimOn').checked = !!or(dim.on, true); $('dimAfter').value = or(dim.afterMin, 2); $('dimLevel').value = or(dim.level, 10);
+    $('nightOn').checked = !!or(night.on, true); $('nightStart').value = or(night.start, '00:00'); $('nightEnd').value = or(night.end, '06:00');
+    $('rotateOn').checked = !!or(rot.on, false); $('rotateEvery').value = or(rot.everyMin, 15);
+    syncProtection();
+  }
+  function syncProtection() {  // a switch that is off greys out its inputs; their values are still saved
+    $('dimAfter').disabled = $('dimLevel').disabled = !$('dimOn').checked;
+    $('nightStart').disabled = $('nightEnd').disabled = !$('nightOn').checked;
+    $('rotateEvery').disabled = !$('rotateOn').checked;
+  }
+  ['dimOn', 'nightOn', 'rotateOn'].forEach(id => $(id).addEventListener('change', syncProtection));
+  PROT.forEach(id => $(id).addEventListener('input', () => $(id).removeAttribute('aria-invalid')));
+  function protectionError() {  // the same ranges the display enforces; returns a message or '' when all is well
+    const wholeIn = (id, name, lo, hi, unit) => {
+      const v = $(id).value;
+      return v === '' || !Number.isInteger(+v) || +v < lo || +v > hi ? name + ': enter a whole ' + unit + ' from ' + lo + ' to ' + hi + '.' : '';
+    };
+    const timeIn = (id, name) => /^([01]\d|2[0-3]):[0-5]\d$/.test($(id).value) ? '' : name + ': enter a time.';
+    const checks = [
+      ['dimAfter', wholeIn('dimAfter', 'Dim after', 1, 120, 'number of minutes')],
+      ['dimLevel', wholeIn('dimLevel', 'Dim level', 5, 100, 'percent')],
+      ['nightStart', timeIn('nightStart', 'Night blanking, dark from')],
+      ['nightEnd', timeIn('nightEnd', 'Night blanking, dark until')],
+      ['rotateEvery', wholeIn('rotateEvery', 'Swap weather and clock', 1, 240, 'number of minutes')],
+    ];
+    PROT.forEach(id => $(id).removeAttribute('aria-invalid'));
+    const bad = checks.filter(c => c[1]);
+    bad.forEach(c => $(c[0]).setAttribute('aria-invalid', 'true'));
+    if (!bad.length) return '';
+    const el = $(bad[0][0]);
+    if (el.disabled) return bad[0][1] + ' Turn its switch on to change it.';
+    el.focus(); return bad[0][1];
+  }
   function serviceBlock() {  // the token is only sent when typed (replace) or when removal was asked for; it is never read back
     const o = { host: $('svc').value.trim() }, typed = $('tok').value.trim();
     if (typed) o.token = typed; else if (tokClear) o.clearToken = true;
@@ -497,9 +576,15 @@ const nowifi = (fb, t, ctx) => {
     return {
       showFlights: $('showFlights').checked, showWeather: $('showWeather').checked, showNews: $('showNews').checked,
       layouts: { flight: sel.flight, weather: sel.weather, news: sel.news, idle: sel.idle },
-      dwellSec: +$('dwell').value, brightness: +$('bright').value, clock24h: $('c24').checked,
+      dwellSec: +$('dwell').value, cyclePlanes: $('cyclePlanes').checked, brightness: +$('bright').value, clock24h: $('c24').checked,
       location: { set: hasLoc && !isNaN(lat) && !isNaN(lon), lat: isNaN(lat) ? 0 : lat, lon: isNaN(lon) ? 0 : lon,
         radiusKm: +$('radius').value, altMinFt: +$('altmin').value, altMaxFt: +$('altmax').value },
+      protection: {
+        drift: $('drift').checked,
+        dim: { on: $('dimOn').checked, afterMin: +$('dimAfter').value, level: +$('dimLevel').value },
+        night: { on: $('nightOn').checked, start: $('nightStart').value, end: $('nightEnd').value },
+        rotate: { on: $('rotateOn').checked, everyMin: +$('rotateEvery').value },
+      },
       queries: q,
       service: serviceBlock(),
       timezone: { name: tz.name, posix: tz.posix },
@@ -516,6 +601,8 @@ const nowifi = (fb, t, ctx) => {
   });
   $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
   $('save').addEventListener('click', async () => {
+    const bad = protectionError();
+    if (bad) { setStatus(bad, 'err'); return; }
     setStatus('Saving…');
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collect()) });
@@ -527,8 +614,24 @@ const nowifi = (fb, t, ctx) => {
 
   /* ---- data service: live status and the connection test ---- */
   function age(s) { return s < 90 ? s + ' s ago' : Math.round(s / 60) + ' min ago'; }
+  function panelLine(l) {  // what the panel is doing now; every field is optional (older firmware sends none)
+    const out = [], p = l.panel;
+    if (p && typeof p === 'object') {
+      const pct = Number.isFinite(p.brightness) ? Math.round(p.brightness) + ' %' : '';
+      let s;
+      if (p.mode === 'dim') s = 'dimmed' + (pct ? ' to ' + pct : '');
+      else if (p.mode === 'night') s = 'dark (night blanking)';
+      else if (p.mode === 'night-awake') s = 'lit for a moment after a button press (night blanking)';
+      else if (p.mode === 'normal') s = 'normal brightness' + (pct ? ' (' + pct + ')' : '');
+      else s = pct ? 'at ' + pct : '';
+      if (s) out.push('Panel now: ' + s + '.');
+    }
+    if (l.cycling) out.push(Number.isFinite(l.cycleCount) && l.cycleCount > 0 ? 'Cycling ' + l.cycleCount + (l.cycleCount === 1 ? ' plane.' : ' planes.') : 'Cycling the planes in range.');
+    return out.join(' ');
+  }
   function showLive() {
     fetch('/api/live').then(r => r.json()).then(l => {
+      const pl = panelLine(l); $('panelLive').textContent = pl; $('panelLive').hidden = !pl;
       const parts = [];
       parts.push(l.timeSynced ? 'Clock synchronised.' : 'Clock not synchronised yet.');
       boardLocal = l.localTime ? l.localTime.slice(11, 16) + (l.timeZone ? ' (' + l.timeZone + ')' : '') : ''; showZone('');
