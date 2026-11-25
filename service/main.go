@@ -7,6 +7,7 @@
 //	GET /v1/flights?lat=&lon=&radius_km=&alt_min=&alt_max=&n=
 //	GET /v1/headlines?q=&n=&hl=&gl=&ceid=
 //	GET /v1/logo/{iata}   512 bytes, 16x16 RGB565 big-endian; 404 when the airline has none
+//	GET /v1/firmware/manifest, GET /v1/firmware/{file}   the firmware update (open to unsigned callers, see firmware.go)
 //
 // Every /v1 request must be signed by the board (X-Device, X-Timestamp, X-Signature; scheme v1 in
 // shared/device-auth.md, code in auth.go). /healthz is open.
@@ -15,7 +16,8 @@
 // characters; the device keys are derived from it) or AUTH_OFF=1 (local development only: nothing is
 // checked; the service refuses to start with neither, or with both); REVOKED_DEVICES (optional,
 // comma-separated device IDs); PUBLIC_HOST (optional, the host name the board uses, when a proxy
-// rewrites the Host header); LOGO_DIR (optional folder of <IATA>.bin logo files).
+// rewrites the Host header); LOGO_DIR (optional folder of <IATA>.bin logo files); FIRMWARE_DIR
+// (folder with manifest.json and the firmware image, default /firmware).
 package main
 
 import (
@@ -46,6 +48,7 @@ type app struct {
 	flights  *Flights
 	headline *Headlines
 	auth     *authenticator
+	firmware *firmwareStore
 	logoDir  string // folder of <IATA>.bin logo files; empty = no logos
 	sem      chan struct{}
 }
@@ -186,6 +189,10 @@ func (a *app) routes() http.Handler {
 		return a.headline.Get(r.Context(), q)
 	}))
 	signed("GET /v1/logo/{code}", a.logoHandler)
+	// Public on purpose: a board whose key is refused must still be able to fetch a fix. These
+	// bypass the data routes' load limit; the download has slots of its own.
+	public("GET /v1/firmware/manifest", a.firmware.manifest)
+	public("GET /v1/firmware/{file}", a.firmware.download)
 	return logRequests(mux)
 }
 
@@ -196,6 +203,9 @@ type statusRecorder struct {
 }
 
 func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
+
+// Unwrap lets http.ResponseController reach the real connection (the firmware download lifts the write timeout).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // logRequests logs method, path, status and duration. The query string is deliberately left out:
 // it carries the display's coordinates.
@@ -209,13 +219,13 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
-func newApp(up *Upstream, auth *authenticator) (*app, error) {
+func newApp(up *Upstream, auth *authenticator, fw *firmwareStore) (*app, error) {
 	cache := NewCache()
 	w, err := NewWeather(cache, up)
 	if err != nil {
 		return nil, err
 	}
-	return &app{weather: w, flights: NewFlights(cache, up), headline: NewHeadlines(cache, up), auth: auth, sem: make(chan struct{}, 32)}, nil
+	return &app{weather: w, flights: NewFlights(cache, up), headline: NewHeadlines(cache, up), auth: auth, firmware: fw, sem: make(chan struct{}, 32)}, nil
 }
 
 func main() {
@@ -223,7 +233,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	a, err := newApp(NewUpstream(), auth)
+	fwDir := os.Getenv("FIRMWARE_DIR")
+	if fwDir == "" {
+		fwDir = "/firmware"
+	}
+	a, err := newApp(NewUpstream(), auth, newFirmware(fwDir, time.Now, log.Printf))
 	if err != nil {
 		log.Fatal(err)
 	}

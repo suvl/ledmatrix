@@ -2,6 +2,8 @@
 """Pixel drift moves the finished picture one pixel right and/or down, so on every screen it applies to
 (flight layouts A-C, weather layouts A-C, the idle clock, the problem message) column 63 and row 31 must stay black,
 whatever the data. This draws those screens with worst-case data and exits 1 if any picture lights column 63 or row 31.
+The two firmware-update screens are never drifted, so they may use both: for them this only checks that the board and
+renderer.js draw the same pixels for the example states and a few hundred made-up ones.
 
   1. shared/renderer.js (preview page and portal thumbnails) in headless Chrome.
   2. arduino/ledmatrix/screens.cpp (the real board code and the real Adafruit GFX library, built for the
@@ -19,6 +21,7 @@ rd = lambda p: open(os.path.join(root, p)).read()
 # ---- the page that runs inside Chrome: appended to renderer.js, so it sees FB, FLIGHTS, WX, wxA, ... ----------
 TEST_JS = r'''
 const HOST = __HOST__;
+const UPDATES = __UPDATES__;
 const SAMPLES = FLIGHTS.slice();
 const RealDate = Date;
 let fakeNow = new RealDate(2026, 10, 21, 21, 47, 0);  // Sat 21 Nov, 21:47: the board's demo clock
@@ -94,8 +97,40 @@ FLIGHTS.length = 0; SAMPLES.forEach(f => FLIGHTS.push(f));
 for (const l of 'ABC') compare('weather' + l, L[l][1]);
 compare('idleA', idleA);
 compare('problem', problemMsg);
+
+// the firmware-update screens: never drifted, so no margin to keep; only the pixels must equal the board's
+const updBase = JSON.parse(JSON.stringify(UPD));
+for (const [name, code, secs, ver, pct, line] of UPDATES) {
+  Object.assign(UPD, { code, secondsLeft: secs, version: ver, percent: pct, line });
+  compare(name + '.code', updateCode); compare(name + '.prog', updateProgress);
+  for (const [grp, fn] of [['Update code', updateCode], ['Update progress', updateProgress]]) {
+    const fb = new FB(); fn(fb, 0, { warn() {} });
+    const s = stats[grp] || (stats[grp] = { n: 0, bad: 0, maxx: -1, maxy: -1, example: '', free: true }); s.n++;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 3; if (fb.d[i] | fb.d[i + 1] | fb.d[i + 2]) { s.maxx = Math.max(s.maxx, x); s.maxy = Math.max(s.maxy, y); } }
+  }
+}
+Object.assign(UPD, updBase);
 document.getElementById('o').textContent = JSON.stringify({ stats, same });
 '''
+
+
+def update_states():
+    """States of the two firmware-update screens: (name, code, seconds left, version, percent, status word). The examples first
+    (a code with 150 s left; version 0.10.1 at 42 %; an upload with no version), then made-up ones with a fixed seed."""
+    import random
+    rng = random.Random(4242)
+    st = [('updateCode', '012345', 150, '', 0, ''), ('updateProgress', '', 0, '0.10.1', 42, 'Downloading'), ('updateUpload', '', 0, '', 60, 'Uploading')]
+    words = ['Checking', 'Downloading', 'Installing', 'Restarting', 'Uploading', 'Verifying', 'Writing', 'Done']
+    for i in range(400):
+        code = ''.join(rng.choice('0123456789') for _ in range(6 if i % 8 else rng.randint(0, 7)))
+        secs = rng.choice([0, 1, 29, 30, 31, 179, 180, 181, 5999, 7000, -5]) if i % 3 == 0 else rng.randint(0, 180)
+        if i % 5 == 0: ver = ''
+        elif i % 5 == 1: ver = '%d.%d.%d' % (rng.randint(0, 9999), rng.randint(0, 9999), rng.randint(0, 9999))
+        else: ver = '%d.%d.%d' % (rng.randint(0, 99), rng.randint(0, 99), rng.randint(0, 99))
+        pct = rng.choice([0, 1, 50, 99, 100, 101, -3]) if i % 4 == 0 else rng.randint(0, 100)
+        line = rng.choice(words) if i % 6 else ''.join(rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .') for _ in range(rng.randint(0, 23)))
+        st.append(('upd%d' % i, code, secs, ver, pct, line))
+    return st
 
 
 def find_chrome(arg):
@@ -106,7 +141,7 @@ def find_chrome(arg):
     sys.exit('Chrome not found: pass --chrome PATH or set CHROME')
 
 
-def board_run(gfx, tmp):
+def board_run(gfx, tmp, states):
     """Builds tools/check_margins.d/main.cpp with screens.cpp and the GFX library. Returns (ok, text, demo pixels)."""
     cxx = shutil.which('c++') or shutil.which('clang++') or shutil.which('g++')
     if not cxx:
@@ -127,6 +162,12 @@ def board_run(gfx, tmp):
             cur = demo.setdefault(line[5:], [])
         elif cur is not None and len(line) == 256:
             cur.append([int(line[i:i + 4], 16) for i in range(0, 256, 4)])
+    feed = ''.join('\t'.join(str(v) for v in st) + '\n' for st in states)
+    for line in subprocess.run([exe, '-u'], input=feed, capture_output=True, text=True).stdout.splitlines():
+        if line.startswith('DUMP '):
+            cur = demo.setdefault(line[5:], [])
+        elif cur is not None and len(line) == 256:
+            cur.append([int(line[i:i + 4], 16) for i in range(0, 256, 4)])
     return run.returncode == 0, run.stdout.rstrip(), demo
 
 
@@ -139,18 +180,18 @@ def main():
     failed = False
     tmp = tempfile.mkdtemp(prefix='check_margins_')
     try:
-        demo = {}
+        demo, states = {}, update_states()
         print('Board code (screens.cpp, built for the laptop):')
         if a.no_board:
             print('  skipped (--no-board)')
         else:
-            ok, text, demo = board_run(a.gfx, tmp)
+            ok, text, demo = board_run(a.gfx, tmp, states)
             print('\n'.join('  ' + l if not l.startswith('  ') else l for l in text.splitlines()) if ok is not None else '  skipped: ' + text)
             failed |= ok is False
 
         print('Preview and portal renderer (shared/renderer.js, headless Chrome):')
         page = '<!doctype html><meta charset=utf-8><pre id=o></pre><script>' + rd('shared/renderer.js').replace('__FONTS__', rd('shared/fonts.json')) + '\n' + \
-               TEST_JS.replace('__HOST__', json.dumps(demo)) + '</script>'
+               TEST_JS.replace('__HOST__', json.dumps(demo)).replace('__UPDATES__', json.dumps(states)) + '</script>'
         path = os.path.join(tmp, 'check.html')
         open(path, 'w').write(page)
         r = subprocess.run([find_chrome(a.chrome), '--headless=new', '--disable-gpu', '--virtual-time-budget=60000', '--dump-dom', 'file://' + path],
@@ -162,13 +203,13 @@ def main():
         res = json.loads(html.unescape(m.group(1)))
         for name in sorted(res['stats']):
             s = res['stats'][name]
-            print('  %-12s %7d pictures, lit up to column %2d and row %2d: %s' % (name, s['n'], s['maxx'], s['maxy'], 'FAIL' if s['bad'] else 'ok'))
+            print('  %-15s %7d pictures, lit up to column %2d and row %2d: %s' % (name, s['n'], s['maxx'], s['maxy'], 'FAIL' if s['bad'] else 'ok (may use column 63 and row 31)' if s.get('free') else 'ok'))
             if s['bad']:
                 failed = True
                 print('      %d of them touch column 63 or row 31, first: %s' % (s['bad'], s['example']))
         if res['same']:
             diffs = [(n, d) for n, d in res['same'] if d]
-            print('  same pixels as the board on the %d example screens: %s' % (len(res['same']), 'yes' if not diffs else 'NO, differing: ' + ', '.join('%s (%d px)' % x for x in diffs)))
+            print('  same pixels as the board on the %d example and made-up screens: %s' % (len(res['same']), 'yes' if not diffs else 'NO, differing: ' + ', '.join('%s (%d px)' % x for x in diffs)))
             failed |= bool(diffs)
         else:
             print('  (no board run, so the example screens were not compared with the board)')

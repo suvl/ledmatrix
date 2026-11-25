@@ -10,6 +10,7 @@
 
 #include "identity.h"
 #include "live.h"
+#include "ota.h"
 #include "portal_page.h"
 #include "settings.h"
 
@@ -21,6 +22,8 @@ SemaphoreHandle_t lockHandle = nullptr;
 NetInfo info;
 WebServer server(80);
 DNSServer dns;
+volatile bool wifiJoinedOnce = false;  // the station loop saw the Wi-Fi joined (netWifiJoined)
+volatile uint32_t portalBeatMs = 0;  // the last time the station loop served the web server (netPortalAnswering)
 
 const char *const AP_SSID = "ledmatrix";
 const char *const HOSTNAME = "ledmatrix";
@@ -162,6 +165,11 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
 }
 
 // ---- station mode ---------------------------------------------------------------------------------------------
+void sendOta(const ota::Reply &r) {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(r.http, "application/json", r.json);
+}
+
 void registerStationRoutes() {
   server.on("/", HTTP_GET, []() {
     server.sendHeader("Cache-Control", "no-store");
@@ -194,18 +202,58 @@ void registerStationRoutes() {
   });
   server.on("/api/selftest", HTTP_GET, []() {  // takes up to about 30 s: three real connections
     server.sendHeader("Cache-Control", "no-store");
+    if (ota::flashing()) {  // it would wait for the one-request-at-a-time turn, which a download holds, and block the portal for minutes
+      server.send(409, "application/json", "{\"error\":\"An update is being installed right now. Try the connection test afterwards.\"}");
+      return;
+    }
     server.send(200, "application/json", liveSelfTestJson(settings::get()));
   });
   server.on("/status", HTTP_GET, []() {
-    char buf[720];
+    char buf[780];
     snprintf(buf, sizeof(buf),
-             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
-             WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
+             "{\"version\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
+             ota::version(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
              WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
              (unsigned long)gFrames, (unsigned long)gFrameMaxMs, (unsigned long)gFramesOver1s, identity::deviceId(), identity::statusName(),
              identity::signerName(), identity::signerCheckName());
     server.send(200, "application/json", buf);
   });
+  // Firmware updates (shared/firmware-update.md): every answer is the same JSON, built by ota.cpp. No answer ever holds the code.
+  server.on("/api/update", HTTP_GET, []() { sendOta(ota::apiState()); });
+  server.on("/api/update/check", HTTP_POST, []() { sendOta(ota::apiCheck()); });
+  server.on("/api/update/start", HTTP_POST, []() {
+    String body = server.arg("plain");
+    sendOta(ota::apiStart(body.c_str(), body.length()));
+  });
+  server.on("/api/update/confirm", HTTP_POST, []() {
+    String body = server.arg("plain");
+    sendOta(ota::apiConfirm(body.c_str(), body.length()));
+  });
+  server.on("/api/update/cancel", HTTP_POST, []() { sendOta(ota::apiCancel()); });
+  server.on(
+      "/api/update/upload", HTTP_POST,
+      []() {  // after the whole body: the answer (and the restart, when the file was accepted)
+        ota::Reply r = ota::uploadFinish();
+        sendOta(r);
+        if (r.restart) {
+          Serial.println("OTA restarting into the uploaded firmware");
+          vTaskDelay(pdMS_TO_TICKS(2000));
+          ESP.restart();
+        }
+      },
+      []() {  // while the body arrives; the form fields before the file (the code) are known by the time the file starts
+        HTTPUpload &u = server.upload();
+        switch (u.status) {
+          case UPLOAD_FILE_START: {
+            String code = server.arg("code");
+            ota::uploadBegin(code.c_str(), u.name.c_str(), server.clientContentLength());
+            break;
+          }
+          case UPLOAD_FILE_WRITE: ota::uploadWrite(u.buf, u.currentSize); break;
+          case UPLOAD_FILE_END: ota::uploadEnd(); break;
+          case UPLOAD_FILE_ABORTED: ota::uploadAbort(); break;
+        }
+      });
   server.on("/forget", HTTP_POST, []() {
     String h = pageStart("ledmatrix");
     h += "<h1>Forgotten</h1><p>The display is restarting in setup mode. Join the network <b>ledmatrix</b> using the password shown on the panel.</p>";
@@ -253,6 +301,7 @@ void ensureDns() {
   uint32_t lastDnsCheck = 0;
   for (;;) {
     bool up = WiFi.status() == WL_CONNECTED;
+    if (up) wifiJoinedOnce = true;
     if (up && millis() - lastDnsCheck > 2000) {
       lastDnsCheck = millis();
       ensureDns();
@@ -272,7 +321,10 @@ void ensureDns() {
       info.state = (millis() - t0 < 20000) ? NetState::Connecting : NetState::Offline;
     }
     xSemaphoreGive(lockHandle);
-    if (services) server.handleClient();
+    if (services) {
+      server.handleClient();
+      portalBeatMs = millis() ? millis() : 1;
+    }
     vTaskDelay(pdMS_TO_TICKS(up ? 5 : 200));
   }
 }
@@ -296,6 +348,13 @@ NetInfo netInfo() {
   copy = info;
   xSemaphoreGive(lockHandle);
   return copy;
+}
+
+bool netWifiJoined() { return wifiJoinedOnce; }
+
+bool netPortalAnswering() {
+  uint32_t beat = portalBeatMs;
+  return beat != 0 && millis() - beat < 5000;
 }
 
 void netWipeAndRestart() {

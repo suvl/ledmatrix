@@ -1,18 +1,47 @@
 name: ledmatrix-api image
 
+# One workflow, one image: the service image carries the firmware that matches the repository state (shared/firmware-update.md).
+# The steps: test the service, test the host-side code, compile the firmware, write the manifest and the image into
+# service/firmware/ (git-ignored), then build the service image with that folder in it. No secret is used for the firmware.
+
 on:
   push:
     branches: [main]
-    paths: ["service/**", "shared/device-auth-vectors.json", ".github/workflows/service.yml"]
+    paths:
+      - "service/**"
+      - "arduino/**"
+      - "shared/**"
+      - "tools/make_manifest.py"
+      - ".github/workflows/service.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+env:
+  # The toolchain, pinned. Change a pin here and the cache below (keyed on all of them) starts afresh.
+  ARDUINO_CLI_VERSION: "1.6.0"
+  # SHA-256 of arduino-cli_<version>_Linux_64bit.tar.gz, from the release's own checksums file.
+  ARDUINO_CLI_SHA256: "321ee249f44c78053234fec0f36101092bc6021bf24939e15e0cc2449c5ed250"
+  ESP32_CORE_VERSION: "3.3.13"
+  ESP32_INDEX_URL: "https://espressif.github.io/arduino-esp32/package_esp32_index.json"
+  FQBN: "esp32:esp32:adafruit_matrixportal_esp32s3"
+  # What the sketch includes (ArduinoJson, Adafruit Protomatter and, through it, Adafruit GFX and Adafruit BusIO), at the
+  # versions the firmware is developed with. Installed one by one without dependency resolution so nothing floats to a newer one.
+  ARDUINO_LIBRARIES: |
+    Adafruit BusIO@1.17.4
+    Adafruit GFX Library@1.13.0
+    Adafruit Protomatter@1.7.1
+    ArduinoJson@7.4.3
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,6 +50,91 @@ jobs:
       - name: Test
         working-directory: service
         run: go vet ./... && go test -count=1 ./...
+      - name: Python tests
+        run: |
+          python3 -I tools/test_make_manifest.py
+          python3 -I tools/test_provision.py
+          python3 -I tools/test_burn_key.py
+
+      - name: Arduino settings
+        id: arduino
+        run: |
+          {
+            echo "ARDUINO_DIRECTORIES_DATA=$HOME/.arduino15"
+            echo "ARDUINO_DIRECTORIES_USER=$HOME/Arduino"
+            echo "ARDUINO_DIRECTORIES_DOWNLOADS=$RUNNER_TEMP/arduino-downloads"
+            echo "ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS=$ESP32_INDEX_URL"
+            echo "ARDUINO_METRICS_ENABLED=false"
+            echo "ARDUINO_UPDATER_ENABLE_NOTIFICATION=false"
+          } >> "$GITHUB_ENV"
+          pins="$(printf '%s\n' "$ARDUINO_CLI_VERSION" "$ESP32_CORE_VERSION" "$FQBN" "$ARDUINO_LIBRARIES")"
+          echo "key=$(printf '%s' "$pins" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Cache the Arduino core and libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino
+          key: arduino-${{ runner.os }}-cli${{ env.ARDUINO_CLI_VERSION }}-esp32${{ env.ESP32_CORE_VERSION }}-${{ steps.arduino.outputs.key }}
+      - name: Install arduino-cli
+        run: |
+          archive="$RUNNER_TEMP/arduino-cli.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" "https://github.com/arduino/arduino-cli/releases/download/v${ARDUINO_CLI_VERSION}/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz"
+          echo "${ARDUINO_CLI_SHA256}  ${archive}" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/arduino-cli-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/arduino-cli-bin" arduino-cli
+          echo "$RUNNER_TEMP/arduino-cli-bin" >> "$GITHUB_PATH"
+      - name: Install the esp32 core and the libraries
+        run: |
+          arduino-cli version
+          arduino-cli core update-index
+          arduino-cli core install "esp32:esp32@${ESP32_CORE_VERSION}"
+          arduino-cli lib update-index
+          while IFS= read -r lib; do
+            [ -n "$lib" ] && arduino-cli lib install --no-deps "$lib"
+          done <<< "$ARDUINO_LIBRARIES"
+          arduino-cli core list
+          arduino-cli lib list
+
+      - name: Host tests (C++, no hardware)
+        run: |
+          out="$RUNNER_TEMP/host-tests"
+          mkdir -p "$out"
+          json="$ARDUINO_DIRECTORIES_USER/libraries/ArduinoJson/src"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$json" tools/test_deviceauth.cpp -o "$out/test_deviceauth"
+          "$out/test_deviceauth" shared/device-auth-vectors.json
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_problems.cpp -o "$out/test_problems"
+          "$out/test_problems"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_cycle.cpp -o "$out/test_cycle"
+          "$out/test_cycle"
+          c++ -std=c++17 -Iarduino/ledmatrix tools/test_protect.cpp arduino/ledmatrix/protect.cpp -o "$out/test_protect"
+          "$out/test_protect"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$json" tools/test_otalogic.cpp -o "$out/test_otalogic"
+          "$out/test_otalogic"
+      - name: Compile the firmware
+        run: |
+          # --build-path, not --output-dir: with --output-dir this arduino-cli also writes a build/ folder into the sketch folder.
+          arduino-cli compile --fqbn "$FQBN" --jobs 0 --build-path "$RUNNER_TEMP/firmware-build" arduino/ledmatrix
+          ls -l "$RUNNER_TEMP/firmware-build/ledmatrix.ino.bin"
+      - name: Check the compiled image (version marker, header)
+        run: '"$RUNNER_TEMP/host-tests/test_otalogic" "$RUNNER_TEMP/firmware-build/ledmatrix.ino.bin"'
+      - name: Write the manifest and the image into service/firmware
+        run: |
+          notes="$(git log -1 --format=%s)"
+          line="$(python3 -I tools/make_manifest.py "$RUNNER_TEMP/firmware-build/ledmatrix.ino.bin" --version-from arduino/ledmatrix/version.h --notes="$notes" --out service/firmware)"
+          echo "$line"
+          echo "Firmware: \`$line\`" >> "$GITHUB_STEP_SUMMARY"
+          ls -l service/firmware
+      - name: Keep the firmware as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            service/firmware/manifest.json
+            service/firmware/ledmatrix-*.bin
+          if-no-files-found: error
+          retention-days: 30
+
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:

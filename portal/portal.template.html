@@ -36,6 +36,27 @@ button.search{margin-top:8px}
 #probLog td{white-space:nowrap;overflow-wrap:anywhere;vertical-align:top}#probLog td:nth-child(3){white-space:normal}#probLog td:nth-child(2)::first-letter{text-transform:uppercase}
 .sub{display:block;color:var(--muted);font-size:12px}#probNow{color:var(--warn)}.note.ok{color:var(--ok)}
 @media(max-width:640px){#probLog,#probLog tbody{display:block}#probLog thead{display:none}#probLog tr{display:grid;grid-template-columns:auto 1fr;gap:0 12px;padding:8px 0;border-bottom:1px solid var(--line)}#probLog td{border:0;padding:1px 0;white-space:normal}#probLog td:nth-child(n+3){grid-column:1/-1}#probLog td:first-child,#probLog td:nth-child(4){color:var(--muted)}#probLog td:nth-child(2){font-weight:600}}
+[hidden]{display:none!important}
+h3{font-size:15px;margin:0 0 6px}
+.note.err{color:var(--warn)}#fwMsg:empty,#upMsg:empty{margin:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.banner{display:block;margin:0 0 16px;padding:12px 14px;border:2px solid var(--amber);border-radius:10px;background:rgba(255,176,0,.1);color:var(--text);font-weight:600;text-decoration:none}.banner:hover{background:rgba(255,176,0,.17)}
+.fwbox{border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0;background:#0f1216}
+.fwbox p{margin:6px 0}.fwbox[tabindex]:focus{outline:none}
+.fwbox.avail{border:2px solid var(--amber);background:rgba(255,176,0,.09)}.fwbox.avail h3{color:var(--amber);font-size:17px}
+.fwbox.bad{border-color:var(--warn);background:rgba(255,122,69,.09)}.fwbox.bad h3{color:var(--warn)}
+.fwnotes{white-space:pre-line;overflow-wrap:anywhere}
+.fwhost{margin:12px 0 0!important;padding:10px 12px;border-left:4px solid var(--amber);background:rgba(255,176,0,.14);font-weight:600;overflow-wrap:anywhere}.fwhost code{background:#0b0d10;font:600 15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 0}.btns button{min-height:44px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.codein{font:600 26px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.3em;text-align:center;max-width:11em}
+.pbar{height:14px;border-radius:7px;background:#0b0d10;border:1px solid var(--line);overflow:hidden;margin:8px 0}.pbar>div{height:100%;width:0;background:var(--ok);transition:width .4s}
+.pbar.indet>div{width:35%;animation:fwslide 1.4s ease-in-out infinite alternate}
+@keyframes fwslide{from{margin-left:0}to{margin-left:65%}}
+@media(prefers-reduced-motion:reduce){.pbar>div{transition:none}.pbar.indet>div{animation:none}}
+input[type=file]{width:100%;font:inherit;color:var(--text);padding:6px 0}
+input[type=file]::file-selector-button{font:inherit;color:var(--text);background:transparent;border:1px solid var(--line);border-radius:8px;padding:8px 14px;margin-right:12px;cursor:pointer}
+@media(max-width:640px){.btns{flex-direction:column}.btns button{width:100%}.codein{max-width:none;width:100%}.fwbox{padding:12px}}
 code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 #devId{font:16px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;padding:4px 10px;-webkit-user-select:all;user-select:all;cursor:copy}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
@@ -45,6 +66,7 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <main>
 <h1>ledmatrix</h1>
 <p class="lede">Settings for the display. Changes apply when you press Save, except brightness, which applies as soon as you release the slider.</p>
+<a class="banner" id="fwBanner" href="#fw" hidden></a>
 
 <section>
 <h2>What to show</h2>
@@ -151,6 +173,62 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <p class="note" id="probMsg" hidden></p>
 <p class="note" id="probNone">Loading…</p>
 <div style="overflow-x:auto"><table id="probLog" hidden><thead><tr><th>When</th><th>What</th><th>What happened</th><th>Times</th></tr></thead><tbody></tbody></table></div>
+</section>
+
+<section id="fw" aria-labelledby="fwH">
+<h2 id="fwH">Firmware</h2>
+<p class="note" style="margin:0 0 8px">Nothing here needs Save: the buttons act at once.</p>
+<p id="fwVer" style="margin:0">Loading…</p>
+<p class="note" id="fwProb" hidden></p>
+<p class="note" id="fwChecked" style="margin:4px 0 0"></p>
+<p class="note err" id="fwOff" hidden></p>
+<div class="btns"><button type="button" class="ghost" id="fwCheck">Check now</button></div>
+<div class="fwbox bad" id="fwRolled" hidden></div>
+<div class="fwbox bad" id="fwErr" hidden role="alert"></div>
+<div class="fwbox avail" id="fwAvail" role="region" aria-labelledby="fwAvailH" hidden>
+<h3 id="fwAvailH">New firmware available</h3>
+<p id="fwAvailV" style="font-weight:600"></p>
+<p class="fwnotes" id="fwNotes"></p>
+<p class="fwhost" id="fwFrom"><span id="fwFromA">From: </span><code id="fwHostName"></code><span id="fwFromB"></span></p>
+<div class="btns"><button type="button" class="primary" id="fwUpdate">Update</button></div>
+</div>
+<form class="fwbox" id="fwCodeBox" autocomplete="off" hidden>
+<label for="fwCode" style="margin-top:0;color:var(--text)">A 6-digit code is now on the display. Type it here:</label>
+<input type="text" class="codein" id="fwCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="fwCodeInfo">
+<p class="note" id="fwCodeInfo"></p>
+<div class="btns"><button type="submit" class="primary" id="fwConfirm">Confirm</button><button type="button" class="ghost" id="fwCancel">Cancel</button></div>
+</form>
+<div class="fwbox" id="fwProgBox" tabindex="-1" hidden>
+<p id="fwProgText" style="margin-top:0"></p>
+<div class="pbar" id="fwBar" role="progressbar" aria-label="Firmware update progress" aria-valuemin="0" aria-valuemax="100"><div></div></div>
+<p class="note" id="fwProgNote" hidden></p>
+</div>
+<p class="note" id="fwMsg" role="status" aria-live="polite"></p>
+<span class="sr" id="fwLive" role="status" aria-live="polite"></span>
+</section>
+
+<section id="up" aria-labelledby="upH">
+<h2 id="upH">Install a .bin file</h2>
+<p class="note">For when the normal update does not work: a bad release, no internet, a bad certificate store. Choose a firmware file built for this display.</p>
+<div class="fwbox bad"><h3>Read this first</h3><p>This skips the checksum. The display only checks that the file is a valid image for this chip, not that it is the right one or a good one. Only install a file you built yourself or trust.</p></div>
+<label for="upFile">Firmware file (.bin)</label>
+<input type="file" id="upFile" accept=".bin,application/octet-stream">
+<p class="note err" id="upHold" hidden></p>
+<div class="btns"><button type="button" class="primary" id="upStart" disabled>Install this file</button></div>
+<form class="fwbox" id="upCodeBox" autocomplete="off" hidden>
+<label for="upCode" style="margin-top:0;color:var(--text)">A 6-digit code is now on the display. Type it here:</label>
+<input type="text" class="codein" id="upCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="upCodeInfo">
+<p class="note" id="upCodeInfo"></p>
+<div class="btns"><button type="submit" class="primary" id="upConfirm">Install</button><button type="button" class="ghost" id="upCancel">Cancel</button></div>
+</form>
+<div class="fwbox" id="upProgBox" tabindex="-1" hidden>
+<p id="upProgText" style="margin-top:0"></p>
+<div class="pbar" id="upBar" role="progressbar" aria-label="Firmware file progress" aria-valuemin="0" aria-valuemax="100"><div></div></div>
+<p class="note" id="upProgNote" hidden></p>
+</div>
+<div class="fwbox bad" id="upErr" hidden role="alert"></div>
+<p class="note" id="upMsg" role="status" aria-live="polite"></p>
+<span class="sr" id="upLive" role="status" aria-live="polite"></span>
 </section>
 
 <section>
@@ -481,6 +559,287 @@ __RENDERER__
     }).catch(() => { if (!probSeen) { $('probNone').textContent = 'Could not read the problem list.'; $('probNone').className = 'note'; $('probNone').hidden = false; } });
   }
   showProblems(); setInterval(showProblems, 15000);
+
+  /* ---- firmware: the display's JSON API (shared/firmware-update.md). Every word that comes from the display goes in as text.
+     The authorisation code lives only in its input box: it is sent once in a request body, never kept, never put in the address. ---- */
+  const FW_ACTIVE = ['downloading', 'installing', 'restarting'];
+  const FW_SLOT = 2097152;  // one application slot: a bigger file cannot fit
+  const FW_WORDS = { checking: 'Checking for a new version.', waiting_code: 'A code is now on the display.', downloading: 'Downloading the update.', installing: 'Installing the update. Do not unplug the display.', restarting: 'The display is restarting.', failed: 'The update did not work.', probation: 'The display restarted on the new version.' };
+  let fw = null;           // the last answer of GET /api/update
+  let fwPolling = false, fwWorking = false, fwTimer = 0, fwOffline = false, fwNoApi = false;
+  let fwWait = null;       // the code window being shown: when it was seen, seconds then left, tries left
+  let fwDown = null;       // set while the display is away restarting: when, the version before, which path
+  let fwUp = null;         // set while the file goes up: bytes sent and total
+  let fwUpSent = false;    // the whole file has left this page: a lost connection now means the display is restarting
+  let fwTarget = '';       // the version asked for with Update
+  const fwMsgs = { fw: null, up: null };
+
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  const ago = s => s < 60 ? 'just now' : s < 3600 ? plural(Math.floor(s / 60), 'minute') + ' ago' : s < 86400 ? plural(Math.floor(s / 3600), 'hour') + ' ago' : plural(Math.floor(s / 86400), 'day') + ' ago';
+  const kb = n => Math.round(n / 1024);
+  const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  const triesText = n => n === 1 ? '1 try left' : n + ' tries left';
+  function setText(id, s) { const e = $(id); if (e.textContent !== s) e.textContent = s; }  // identical text is never rewritten: screen readers would read it again
+  function putText(id, s) { setText(id, s || ''); $(id).hidden = !s; }
+  const fwSec = j => (j && j.source === 'upload') ? 'up' : 'fw';
+
+  async function fwCall(path, method, body, timeout) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeout || 8000);
+    try {
+      const opt = { method, signal: ctl.signal, cache: 'no-store' };
+      if (body !== undefined) { opt.headers = { 'Content-Type': 'application/json' }; opt.body = JSON.stringify(body); }
+      const r = await fetch('/api/update' + path, opt);
+      let j = null; try { j = await r.json(); } catch (e) { j = null; }
+      return { ok: r.ok, status: r.status, j };
+    } finally { clearTimeout(timer); }
+  }
+  const fwHttp = r => (r.j && typeof r.j.error === 'string' && r.j.error) || 'The display did not accept that (HTTP ' + r.status + ').';
+  function fwSay(sec, text, kind) { fwMsgs[sec] = text ? { text, kind: kind || '' } : null; fwRender(); }
+
+  /* the display answered: remember it, notice what changed, draw it */
+  function fwTake(j) {
+    if (!j || typeof j !== 'object' || typeof j.state !== 'string') return;
+    const prev = fw;
+    fwOffline = false; fwNoApi = false;
+    if (fwDown) {  // back after a restart
+      const d = fwDown; fwDown = null; fwUpSent = false; fwUp = null;
+      const sec = d.source === 'upload' ? 'up' : 'fw';
+      if (j.rolledBack) fwMsgs[sec] = { text: 'The display restarted and is running version ' + j.version + ' again.', kind: 'err' };
+      else if (d.from && j.version !== d.from) fwMsgs[sec] = { text: 'Done: the display now runs version ' + j.version + '.' + (j.state === 'probation' ? ' It is on probation: for the next 3 minutes it checks that Wi-Fi, this page and the data service work, and if not it goes back to the previous version by itself.' : ''), kind: 'ok' };
+      else fwMsgs[sec] = { text: 'The display restarted and still runs version ' + j.version + '.', kind: '' };
+    }
+    if (!FW_ACTIVE.includes(j.state)) fwUpSent = false;
+    if (fwWait && j.state !== 'waiting_code' && !FW_ACTIVE.includes(j.state)) {  // the code window closed and it was not us
+      fwMsgs[fwWait.source === 'upload' ? 'up' : 'fw'] = { text: 'The code is no longer valid: it expired, or too many wrong codes were typed. Press ' + (fwWait.source === 'upload' ? 'Install this file' : 'Update') + ' to get a new one.', kind: 'err' };
+    }
+    fwWait = j.state === 'waiting_code' ? { source: j.source, at: Date.now(), left: Number.isFinite(j.codeSecondsLeft) ? j.codeSecondsLeft : 0, tries: Number.isFinite(j.triesLeft) ? j.triesLeft : null, polled: false } : null;
+    fw = j;
+    if (prev && prev.state !== j.state) {
+      for (const sec of ['fw', 'up']) setText(sec + 'Live', sec === fwSec(j) ? (FW_WORDS[j.state] || '') : '');
+    }
+    fwRender();
+  }
+  function fwLost() {
+    fwOffline = true;
+    if (!fwDown && (fwUpSent || (fw && FW_ACTIVE.includes(fw.state)))) fwDown = { since: Date.now(), from: fw ? fw.version : '', source: fwUpSent ? 'upload' : (fw && fw.source) };
+    fwRender();
+  }
+  function fwSchedule() {
+    clearTimeout(fwTimer);
+    const fast = fwWorking || fwUp || fwDown || (fw && (fw.state === 'checking' || fw.state === 'waiting_code' || FW_ACTIVE.includes(fw.state)));
+    fwTimer = setTimeout(fwPoll, fast ? 2000 : 15000);  // 2 s while an update is under way, 15 s otherwise
+  }
+  async function fwPoll() {
+    if (fwPolling || fwUp) { fwSchedule(); return; }  // the display is busy taking the file: ask again afterwards
+    fwPolling = true;
+    try {
+      const r = await fwCall('', 'GET', undefined, 4000);
+      if (r.ok && r.j) fwTake(r.j);
+      else if (r.status === 404 && !fw) { fwNoApi = true; fwRender(); }
+      else fwLost();
+    } catch (e) { fwLost(); }
+    fwPolling = false; fwSchedule();
+  }
+
+  /* the section, drawn from what the display last said plus the few things only this page knows */
+  function fwShowProg(pre, p) {
+    $(pre + 'ProgBox').hidden = !p;
+    if (!p) return;
+    setText(pre + 'ProgText', p.text); putText(pre + 'ProgNote', p.note);
+    const bar = $(pre + 'Bar');
+    if (p.pct === null) { bar.classList.add('indet'); bar.removeAttribute('aria-valuenow'); bar.firstElementChild.style.width = ''; }
+    else { bar.classList.remove('indet'); bar.setAttribute('aria-valuenow', String(p.pct)); bar.firstElementChild.style.width = p.pct + '%'; }
+  }
+  const pctOf = (done, total) => total > 0 ? Math.max(0, Math.min(100, Math.floor(100 * done / total))) : null;
+  function fwRender() {
+    const j = fw || {}, st = j.state || '', active = FW_ACTIVE.includes(st), waiting = st === 'waiting_code', away = !!fwDown;
+    const upPath = j.source === 'upload' || !!fwUp || (away && fwDown.source === 'upload');
+    const idleish = !!fw && !active && !waiting && st !== 'checking' && !away && !fwUp;  // nothing is going on: new work may start
+    const a = j.available && typeof j.available === 'object' ? j.available : null;
+    const target = upPath ? '' : (fwTarget || (a && a.version) || '');
+    const err = typeof j.error === 'string' && j.error ? j.error : '';
+
+    /* top of the page */
+    const inFlow = waiting || active || away || !!fwUp;
+    $('fwBanner').hidden = !(inFlow || a);
+    if (inFlow) setText('fwBanner', 'A firmware update is under way. See Firmware below.');
+    else if (a) setText('fwBanner', 'New firmware ' + a.version + ' is available. See Firmware below.');
+
+    /* version, probation, last check */
+    setText('fwVer', fwNoApi ? 'This display’s firmware cannot be updated from this page yet.' : fw ? 'Version ' + j.version + ' is running on this display.' : 'Loading…');
+    const hold = st === 'probation' && !away && !fwUp;  // the display refuses a new update until the running image is confirmed
+    const HOLD = 'The display is still checking the new firmware. This takes a few minutes.';
+    putText('fwProb', st === 'probation' ? HOLD + ' It checks that Wi-Fi, this page and the data service work, and if they do not within 3 minutes it goes back to the previous version by itself.' : '');
+    putText('upHold', hold ? HOLD : '');
+    putText('fwOff', fwOffline && !away ? 'The display does not answer right now. This page keeps trying.' : '');
+    const checked = st === 'checking' ? 'Checking for a new version…' : !fw ? '' : j.checkedAgo === null || j.checkedAgo === undefined ? 'Not checked for a new version yet.' : 'Checked ' + ago(j.checkedAgo) + (a || err ? '.' : '. You have the newest version.');
+    setText('fwChecked', checked); $('fwChecked').hidden = !checked;
+    $('fwCheck').disabled = !idleish || fwWorking;
+
+    /* rolled back, error */
+    const rb = j.rolledBack && typeof j.rolledBack === 'object' ? j.rolledBack : null;
+    putText('fwRolled', rb ? 'Version ' + rb.version + ' failed on this display and was rolled back: ' + rb.why : '');
+    putText('fwErr', upPath ? '' : err); putText('upErr', upPath ? err : '');
+
+    /* the new-version notice */
+    const showAvail = !!a && !(waiting && !upPath) && !(active && !upPath) && !(away && !upPath);
+    $('fwAvail').hidden = !showAvail;
+    if (a) {
+      setText('fwAvailV', 'Version ' + a.version + (Number.isFinite(a.size) ? ' (' + kb(a.size) + ' KB)' : ''));
+      setText('fwNotes', String(a.notes || '').split(/\r?\n/).filter(l => l.trim()).slice(0, 3).join('\n'));
+      const host = typeof a.host === 'string' ? a.host : '';  // where the update would come from: the owner must see it before pressing Update
+      setText('fwHostName', host); $('fwFromA').hidden = $('fwHostName').hidden = !host;
+      setText('fwFromB', host ? '. Only update if this is your own service.' : 'The update comes from the service address saved on this display. Only update if that is your own service.');
+    }
+    $('fwUpdate').disabled = !idleish || hold || fwWorking;
+
+    /* code boxes: one for each path, never both */
+    const codeFw = waiting && !upPath, codeUp = waiting && upPath;
+    $('fwCodeBox').hidden = !codeFw; $('upCodeBox').hidden = !codeUp;
+    const file = $('upFile').files[0];
+    $('fwConfirm').disabled = fwWorking; $('fwCancel').disabled = fwWorking;
+    $('upConfirm').disabled = fwWorking || !file; $('upCancel').disabled = fwWorking;
+    if (!codeFw) $('fwCode').value = ''; if (!codeUp) $('upCode').value = '';
+    fwTick();
+
+    /* progress */
+    let pf = null, pu = null, p = null;
+    if (fwUp) {
+      const pct = pctOf(fwUp.sent, fwUp.total);
+      p = fwUp.done ? { text: 'The file is sent. The display is checking it and writing it…', pct: 100, note: 'Do not close this page or unplug the display.' } : { text: 'Sending the file: ' + kb(fwUp.sent) + ' of ' + kb(fwUp.total) + ' KB (' + pct + ' %)', pct, note: 'Do not close this page or unplug the display.' };
+    } else if (away) {
+      const mins = Math.floor((Date.now() - fwDown.since) / 60000);
+      p = { text: 'The display is restarting. This page reconnects by itself.', pct: null, note: mins >= 3 ? 'The display has not answered for ' + plural(mins, 'minute') + '. Check that it has power and Wi-Fi. A new version that does not start is replaced by the previous one by itself, which can take a few minutes.' : '' };
+    } else if (st === 'downloading') {
+      const pr = j.progress && typeof j.progress === 'object' ? j.progress : null, pct = pr ? pctOf(pr.done, pr.total) : null;
+      p = { text: 'Downloading ' + (target ? 'version ' + target : 'the new firmware') + (pr && pct !== null ? ': ' + kb(pr.done) + ' of ' + kb(pr.total) + ' KB (' + pct + ' %)' : '…'), pct, note: '' };
+    } else if (st === 'installing') {
+      const pr = j.progress && typeof j.progress === 'object' ? j.progress : null;
+      p = { text: 'Installing' + (target ? ' version ' + target : '') + '. Do not unplug the display.', pct: pr ? pctOf(pr.done, pr.total) : null, note: '' };
+    } else if (st === 'restarting') {
+      p = { text: 'The display is restarting. This page reconnects by itself.', pct: null, note: '' };
+    }
+    if (p) { if (upPath) pu = p; else pf = p; }
+    fwShowProg('fw', pf); fwShowProg('up', pu);
+
+    /* the file chooser */
+    const tooBig = file && file.size > FW_SLOT, empty = file && file.size === 0;
+    $('upFile').disabled = !(idleish || codeUp) || fwWorking;
+    $('upStart').disabled = !(idleish && file && !tooBig && !empty) || hold || fwWorking;
+    $('upStart').hidden = waiting && upPath;  // the code box has the Install button
+    let upNote = '';
+    if (tooBig) upNote = 'That file is larger than the display’s 2 MB program slot, so it cannot be a firmware image.';
+    else if (empty) upNote = 'That file is empty.';
+    else if (codeUp && !file) upNote = 'Choose the file again: this page needs it to send it once the code is right.';
+    const m = fwMsgs.up;
+    const upShow = m ? m.text : upNote;
+    setText('upMsg', upShow); $('upMsg').className = 'note' + (m && m.kind ? ' ' + m.kind : (upNote && !m ? ' err' : ''));
+    const mf = fwMsgs.fw; setText('fwMsg', mf ? mf.text : ''); $('fwMsg').className = 'note' + (mf && mf.kind ? ' ' + mf.kind : '');
+  }
+
+  /* countdown of the code: counted here between the answers, so it runs smoothly */
+  function fwTick() {
+    if (!fwWait) return;
+    const pre = fwWait.source === 'upload' ? 'up' : 'fw', left = Math.max(0, fwWait.left - Math.floor((Date.now() - fwWait.at) / 1000));
+    setText(pre + 'CodeInfo', left > 0 ? 'The code works for ' + mmss(left) + ' more.' + (fwWait.tries !== null ? ' ' + triesText(fwWait.tries) + '.' : '') : 'The code has expired.');
+    if (!left && !fwWait.polled) { fwWait.polled = true; clearTimeout(fwTimer); fwTimer = setTimeout(fwPoll, 300); }
+  }
+  setInterval(fwTick, 500);
+
+  /* actions */
+  function fwWrong(sec, j) {
+    const again = sec === 'up' ? 'Install this file' : 'Update';
+    $(sec + 'Code').value = '';
+    if (j && j.state && j.state !== 'waiting_code') {  // used up by this try, or expired meanwhile: the display says why in `error`
+      fwSay(sec, (typeof j.error === 'string' && j.error ? j.error + ' ' : '') + 'The code is no longer valid. Press ' + again + ' to get a new one (after wrong codes the display makes you wait a little first).', 'err');
+      return;
+    }
+    const t = j && Number.isFinite(j.triesLeft) ? j.triesLeft : null;
+    fwSay(sec, 'That is not the code on the display.' + (t ? ' ' + triesText(t) + '.' : ''), 'err');
+    $(sec + 'Code').focus();
+  }
+  async function fwAction(sec, work) {
+    fwWorking = true; fwRender();
+    try { await work(); } catch (e) { fwSay(sec, 'Could not reach the display.', 'err'); }
+    fwWorking = false; fwRender(); fwSchedule();
+  }
+  $('fwCheck').addEventListener('click', () => { fwMsgs.fw = null; fwAction('fw', async () => {
+    const r = await fwCall('/check', 'POST'); if (r.j) fwTake(r.j); if (!r.ok) fwSay('fw', fwHttp(r), 'err');
+  }); });
+  async function fwStart(source) {
+    const sec = source === 'upload' ? 'up' : 'fw';
+    fwMsgs.fw = fwMsgs.up = null; fwTarget = source === 'service' && fw && fw.available ? fw.available.version : '';
+    await fwAction(sec, async () => {
+      const r = await fwCall('/start', 'POST', { source });
+      if (r.j) fwTake(r.j);
+      if (!r.ok) fwSay(sec, fwHttp(r), 'err');
+    });
+    if (fw && fw.state === 'waiting_code' && !$(sec + 'CodeBox').hidden) $(sec + 'Code').focus();
+  }
+  $('fwUpdate').addEventListener('click', () => fwStart('service'));
+  $('upStart').addEventListener('click', () => fwStart('upload'));
+  async function fwCancel(sec) {
+    fwWait = null; fwMsgs[sec] = null;
+    await fwAction(sec, async () => {
+      const r = await fwCall('/cancel', 'POST'); if (r.j) fwTake(r.j); if (!r.ok) fwSay(sec, fwHttp(r), 'err');
+    });
+    const next = sec === 'up' ? $('upStart') : $('fwUpdate');
+    if (!next.disabled && !next.hidden && next.getClientRects().length) next.focus();
+  }
+  $('fwCancel').addEventListener('click', () => fwCancel('fw'));
+  $('upCancel').addEventListener('click', () => fwCancel('up'));
+  for (const sec of ['fw', 'up']) $(sec + 'Code').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6); });
+  $('upFile').addEventListener('change', () => { fwMsgs.up = null; fwRender(); });
+
+  $('fwCodeBox').addEventListener('submit', e => {
+    e.preventDefault();
+    const code = $('fwCode').value;
+    if (!/^\d{6}$/.test(code)) { fwSay('fw', 'Type all 6 digits of the code shown on the display.', 'err'); $('fwCode').focus(); return; }
+    fwMsgs.fw = null; fwWait = null;
+    fwAction('fw', async () => {
+      const r = await fwCall('/confirm', 'POST', { code });
+      $('fwCode').value = '';
+      if (r.j) fwTake(r.j);
+      if (r.status === 403) fwWrong('fw', r.j); else if (!r.ok) fwSay('fw', fwHttp(r), 'err');
+      else { fwRender(); if (!$('fwProgBox').hidden) $('fwProgBox').focus(); }  // the box with the button just closed: keep the focus on something that is there
+    });
+  });
+
+  /* the forced upload: the code goes in the same request as the file, before the file, so the display can refuse early */
+  function fwSendFile(file, code) {
+    return new Promise(resolve => {
+      const x = new XMLHttpRequest(), fd = new FormData();
+      fd.append('code', code); fd.append('file', file, file.name || 'firmware.bin');
+      x.open('POST', '/api/update/upload'); x.timeout = 600000;
+      x.upload.onprogress = ev => { if (fwUp) { fwUp.sent = ev.loaded; if (ev.lengthComputable) fwUp.total = ev.total; fwRender(); } };
+      x.upload.onload = () => { if (fwUp) { fwUp.done = true; fwUp.sent = fwUp.total; } fwUpSent = true; fwRender(); };
+      x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch (e) { j = null; } resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, j }); };
+      x.onerror = x.ontimeout = x.onabort = () => resolve({ ok: false, status: 0, j: null });
+      x.send(fd);
+    });
+  }
+  $('upCodeBox').addEventListener('submit', async e => {
+    e.preventDefault();
+    const file = $('upFile').files[0], code = $('upCode').value;
+    if (!file) { fwSay('up', 'Choose the firmware file first.', 'err'); return; }
+    if (!/^\d{6}$/.test(code)) { fwSay('up', 'Type all 6 digits of the code shown on the display.', 'err'); $('upCode').focus(); return; }
+    fwMsgs.up = null; fwWait = null; fwUpSent = false; fwUp = { sent: 0, total: file.size, done: false };
+    fwRender(); fwSchedule();
+    const r = await fwSendFile(file, code);
+    $('upCode').value = ''; fwUp = null;
+    if (r.status === 403) { if (r.j) fwTake(r.j); fwWrong('up', r.j); }
+    else if (r.ok) { if (r.j) fwTake(r.j); fwSay('up', 'The display accepted the file. It installs it and restarts; this page reconnects by itself.', 'ok'); }
+    else if (r.status) { if (r.j) fwTake(r.j); fwSay('up', fwHttp(r), 'err'); }
+    else {  // no answer: the display stopped the upload (a wrong code) or is already restarting. Ask it.
+      fwRender();
+      try { const g = await fwCall('', 'GET', undefined, 4000); if (g.ok && g.j) fwTake(g.j); else fwLost(); } catch (err) { fwLost(); }
+      if (fw && fw.state === 'waiting_code') fwSay('up', 'The upload was stopped before the end. Check the code on the display and try again' + (fwWait && fwWait.tries !== null ? ' (' + triesText(fwWait.tries) + ')' : '') + '.', 'err');
+      else if (!fwDown && !(fw && FW_ACTIVE.includes(fw.state))) fwSay('up', 'The upload did not go through.', 'err');
+    }
+    fwRender(); fwSchedule();
+  });
+  window.addEventListener('pagehide', () => { $('fwCode').value = ''; $('upCode').value = ''; });  // a typed code is not kept by the browser's back button either
+  fwRender(); fwPoll();
 
   /* ---- start ---- */
   Object.keys(groups).forEach(buildGroup);

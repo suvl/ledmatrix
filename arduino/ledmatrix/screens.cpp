@@ -329,6 +329,85 @@ void problemScreen() {
   tt(2, 29, "ledmatrix.local", CYAN, 60);
 }
 
+// ---- firmware update screens (ticket 33, shared/firmware-update.md) ---------------------------------------------------
+// Drawn instead of the normal screens, never dimmed and never drifting, so these two may light column 63 and row 31
+// (the countdown bar below does use row 31). They are static apart from the data in UpdateView.
+constexpr int UPDATE_CODE_SECONDS = 180;  // how long a code is valid (the contract: 3 minutes); the countdown bar's full length
+constexpr uint16_t TRACK = c565(40, 40, 50);
+
+int clampInt(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// Ink width of a string in the 4x6 font at an integer scale (the library scales every pixel).
+int ttWidthN(const String &s, int size) {
+  useTinyFont();
+  matrix.setTextSize(size);
+  int16_t x1, y1;
+  uint16_t w, h;
+  matrix.getTextBounds(s.c_str(), 0, 0, &x1, &y1, &w, &h);
+  useDefaultFont();
+  return x1 + (int)w;
+}
+// The 4x6 font at an integer scale; base is the baseline row (the glyphs reach up to base - 5 * size).
+void ttBig(int x, int base, const String &s, uint16_t color, int size) {
+  useTinyFont();
+  matrix.setTextSize(size);
+  matrix.setCursor(x, base);
+  matrix.setTextColor(color);
+  matrix.print(s);
+  useDefaultFont();
+}
+// Text centred on the panel, in the 4x6 font.
+void ttCentered(int base, const String &s, uint16_t color) { tt(centerX(ttWidth(s)), base, s, color, 62); }
+
+// The authorisation code. Six digits do not fit the 6x8 font doubled (72 px), so they are the 4x6 font doubled: 6x10 px
+// each, in two groups of three. The code is only ever drawn here, never logged.
+void updateCodeScreen(const UpdateView &u) {
+  t6(2, 0, "UPDATE", AMBER, 36);
+  int left = clampInt(u.secondsLeft, 0, 5999);
+  char clockText[8];
+  snprintf(clockText, sizeof(clockText), "%d:%02d", left / 60, left % 60);
+  tt(62 - ttWidth(clockText), 6, clockText, left <= 30 ? RED : GREY, 30);  // m:ss, its last pixel in column 61
+
+  String code = u.code;
+  String a = code.substring(0, 3), b = code.length() > 3 ? code.substring(3) : String("");
+  const int gap = b.length() ? 6 : 0;  // blank columns between the two groups
+  int wa = ttWidthN(a, 2), wb = b.length() ? ttWidthN(b, 2) : 0;
+  int x0 = centerX(wa + gap + wb);
+  ttBig(x0, 19, a, WHITE, 2);
+  if (b.length()) ttBig(x0 + wa + gap, 19, b, WHITE, 2);
+
+  ttCentered(27, "Type it in portal", GREY);
+
+  // Countdown bar on the last row: one pixel per three seconds, red for the last half minute.
+  matrix.fillRect(2, PANEL_H - 1, 60, 1, TRACK);
+  int fill = clampInt(left, 0, UPDATE_CODE_SECONDS) * 60 / UPDATE_CODE_SECONDS;
+  if (fill > 0) matrix.fillRect(2, PANEL_H - 1, fill, 1, left <= 30 ? RED : AMBER);
+}
+
+// Download or install progress. With a version: its number in the 6x8 font, the bar, the status word. Without one (an uploaded
+// file of unknown version) the status word takes the place of the number.
+void updateProgressScreen(const UpdateView &u) {
+  t6(2, 0, "UPDATE", AMBER, 36);
+  int pct = clampInt(u.percent, 0, 100);
+  String p = String(pct) + "%";
+  t6(63 - (int)p.length() * 6, 0, p, WHITE, 26);  // right-aligned: its last pixel in column 61
+
+  bool hasVersion = u.version[0] != 0;
+  int barY;
+  if (hasVersion) {
+    t6(2, 9, String("v") + u.version, WHITE, 60);
+    tt(2, 30, u.line, CYAN, 60);
+    barY = 18;
+  } else {
+    t6(2, 10, u.line, WHITE, 60);
+    barY = 20;
+  }
+
+  matrix.drawRect(2, barY, 60, 6, GREY);
+  int fill = pct * 58 / 100;
+  if (fill > 0) matrix.fillRect(3, barY + 1, fill, 4, GREEN);
+}
+
 }  // namespace
 
 void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiState &ui) {
@@ -365,5 +444,7 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Stale: staleScreen(t); break;
     case Screen::NoWifi: noWifiScreen(); break;
     case Screen::Problem: problemScreen(); break;
+    case Screen::UpdateCode: if (ui.update) updateCodeScreen(*ui.update); break;
+    case Screen::UpdateProgress: if (ui.update) updateProgressScreen(*ui.update); break;
   }
 }

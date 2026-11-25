@@ -57,6 +57,25 @@ function TT(fb, ctx, x, base, s, c, maxW) {
   drawTT(fb, x, base, t, c); return t;
 }
 function centerX(w) { return Math.max(0, Math.floor((W - w) / 2)); }
+// The 4x6 font at an integer scale n, like the panel's matrix.setTextSize(n): every font pixel becomes n x n, advances grow n times.
+// wTTn is the ink width the panel gets from getTextBounds: the right edge of the furthest glyph box.
+function wTTn(s, n) {
+  let x = 0, right = 0;
+  for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; if (!g) { x += 4 * n; continue; } right = Math.max(right, x + (g[4] + g[1]) * n); x += g[3] * n; }
+  return right;
+}
+function drawTTn(fb, x, base, s, c, n) {
+  for (const ch of s) {
+    const g = FONTS.tt.glyphs[ch.charCodeAt(0)];
+    if (!g) { x += 4 * n; continue; }
+    const [off, w, h, adv, xo, yo] = g; let bit = 0;
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+      if (FONTS.tt.bitmaps[off + (bit >> 3)] & (0x80 >> (bit & 7))) fb.fill(x + (xo + xx) * n, base + (yo + yy) * n, n, n, c);
+      bit++;
+    }
+    x += adv * n;
+  }
+}
 
 /* ---------- placeholder art ---------- */
 function logo(fb, x, y, kind) {
@@ -217,6 +236,36 @@ const problemMsg = (fb, t, ctx) => {
   TT(fb, ctx, 2, 15, 'Data is failing', WHITE, 60);
   TT(fb, ctx, 2, 22, 'See the portal:', GREY, 60);
   TT(fb, ctx, 2, 29, 'ledmatrix.local', CYAN, 60);
+};
+// The two firmware-update screens (screens.cpp updateCodeScreen and updateProgressScreen). They are drawn instead of the normal
+// screens, never dimmed or drifted, so they may use column 63 and row 31 (the countdown bar uses row 31). UPD is the panel's
+// UpdateView, with an example in it: a code with 150 s left, then a download of 0.10.1 at 42 %.
+const UPD = { code: '012345', secondsLeft: 150, version: '0.10.1', percent: 42, line: 'Downloading' };
+const UPDATE_CODE_SECONDS = 180;  // how long a code is valid: the countdown bar's full length
+const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const updateCode = (fb, t, ctx) => {
+  T6(fb, ctx, 2, 0, 'UPDATE', AMBER, 36);
+  const left = clampN(UPD.secondsLeft, 0, 5999), clockText = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+  TT(fb, ctx, 62 - wTT(clockText), 6, clockText, left <= 30 ? RED : GREY, 30);  // m:ss, its last pixel in column 61
+  const a = UPD.code.slice(0, 3), b = UPD.code.slice(3), gap = b.length ? 6 : 0;  // six digits: two groups of three
+  const wa = wTTn(a, 2), x0 = centerX(wa + gap + (b.length ? wTTn(b, 2) : 0));
+  drawTTn(fb, x0, 19, a, WHITE, 2);
+  if (b.length) drawTTn(fb, x0 + wa + gap, 19, b, WHITE, 2);
+  TT(fb, ctx, centerX(wTT('Type it in portal')), 27, 'Type it in portal', GREY, 62);
+  fb.fill(2, H - 1, 60, 1, [40, 40, 50]);
+  const fill = Math.floor(clampN(left, 0, UPDATE_CODE_SECONDS) * 60 / UPDATE_CODE_SECONDS);
+  if (fill > 0) fb.fill(2, H - 1, fill, 1, left <= 30 ? RED : AMBER);
+};
+const updateProgress = (fb, t, ctx) => {
+  T6(fb, ctx, 2, 0, 'UPDATE', AMBER, 36);
+  const pct = clampN(UPD.percent, 0, 100), p = pct + '%';
+  T6(fb, ctx, 63 - p.length * 6, 0, p, WHITE, 26);  // right-aligned: its last pixel in column 61
+  let barY;
+  if (UPD.version) { T6(fb, ctx, 2, 9, 'v' + UPD.version, WHITE, 60); TT(fb, ctx, 2, 30, UPD.line, CYAN, 60); barY = 18; }
+  else { T6(fb, ctx, 2, 10, UPD.line, WHITE, 60); barY = 20; }  // an uploaded file of unknown version: the status word takes the number's place
+  fb.rect(2, barY, 60, 6, GREY);
+  const fill = Math.floor(pct * 58 / 100);
+  if (fill > 0) fb.fill(3, barY + 1, fill, 4, GREEN);
 };
 const nowifi = (fb, t, ctx) => {
   for (let i = 0; i < 12; i++) { fb.px(3 + i, 9 + i, RED); fb.px(14 - i, 9 + i, RED); fb.px(4 + i, 9 + i, RED); fb.px(13 - i, 9 + i, RED); }

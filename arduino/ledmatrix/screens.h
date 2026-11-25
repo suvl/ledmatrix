@@ -6,8 +6,17 @@
 #include "live.h"
 #include "sample_data.h"
 
-// Problem is last: ledmatrix.ino indexes a name table with these values.
-enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, Stale, NoWifi, Problem };
+// UpdateProgress is last: ledmatrix.ino indexes a name table with these values.
+enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, Stale, NoWifi, Problem, UpdateCode, UpdateProgress };
+
+// What the two firmware-update screens show (shared/firmware-update.md). The update module fills it, the screens only draw it.
+struct UpdateView {
+  char code[8] = "";          // UpdateCode: the 6-digit authorisation code (NUL-terminated); never logged
+  int secondsLeft = 0;        // UpdateCode: seconds until the code expires
+  char version[24] = "";      // UpdateProgress: the version being installed; empty for an uploaded file of unknown version
+  int percent = 0;            // UpdateProgress: 0..100
+  char line[24] = "";         // UpdateProgress: a short status word, e.g. "Downloading", "Checking", "Installing", "Restarting"
+};
 
 // Live strings some screens show (setup network details, the station address).
 struct UiState {
@@ -23,6 +32,8 @@ struct UiState {
   const char *headlineSource = nullptr;
   uint32_t headlineAgeMs = 0;
   const struct tm *clock = nullptr;
+  // Only for Screen::UpdateCode and Screen::UpdateProgress; null otherwise.
+  const UpdateView *update = nullptr;
 };
 
 // Draws one frame of a screen into the Protomatter back buffer (the caller clears and calls show()).
