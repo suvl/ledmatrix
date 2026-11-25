@@ -1,5 +1,6 @@
 // This board's identity (tickets 37 and 39): the device ID (the chip's factory MAC), the identity record in the read-only `ident`
-// partition, and the signer that proves the ID to the owner's service. The rules and the formats are in deviceauth.h (pure logic,
+// partition, and the signer that proves the ID to the owner's service: the saved software key, or, once the key is burned into the
+// chip (tools/burn_key), the chip's HMAC unit. The rules and the formats are in deviceauth.h (pure logic,
 // tested on the laptop) and shared/device-auth.md. This file is the part that touches the chip.
 //
 // begin() reads the record once. After that everything here is read-only except the clock offset, which has its own tiny lock,
@@ -17,6 +18,10 @@ const char *deviceId();                 // this chip's factory MAC, 12 lowercase
 devauth::Identity status();             // Ok, or why the board cannot sign
 const char *statusName();               // for /status: "ok", "missing", "invalid", "other_board", "hardware_key"
 const char *rawProblem();               // the PROBLEM_RAW_* text (problems.h) for a status that is not Ok, "" when it is Ok
+const char *signerName();               // for /status: "software", "hardware", or "none" (the board cannot sign)
+const char *signerCheckName();          // for /status: "not_run", "match" or "mismatch" (the chip's key against the saved one)
+const char *notice();                   // a PROBLEM_RAW_* text for a condition the owner should know about although signing works
+                                        // (today: the chip's key and the saved key disagree), "" when there is none
 
 // Writes the three signature header lines (CRLF-terminated, see devauth::buildHeaders) for a GET of `target` on `hostLower`
 // (devauth::lowerHost) into hdr. The timestamp is the board's clock plus the stored clock offset. False, with hdr empty, when

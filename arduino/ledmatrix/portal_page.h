@@ -719,7 +719,8 @@ const nowifi = (fb, t, ctx) => {
     missing: 'This board has no identity record. It must be provisioned over USB.',
     invalid: 'This board\u2019s identity record is not valid. It must be provisioned again over USB.',
     other_board: 'This board\u2019s identity record is for another board. It must be provisioned again over USB.',
-    hardware_key: 'This board\u2019s key is burned into the chip but this firmware cannot use it. Update the firmware.',
+    hardware_key: 'This board\u2019s record says the key is burned into the chip but the chip has no key. It must be provisioned again over USB.',
+    hardware_unprotected: 'This board\u2019s record says the key is burned into the chip but the burned key is not fully protected, so it is not used. It must be provisioned again over USB.',
   };
   fetch('/status').then(r => r.json()).then(s => {
     $('devId').textContent = s.device || 'unknown';

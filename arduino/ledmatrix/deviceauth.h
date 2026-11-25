@@ -132,7 +132,7 @@ inline RecordStatus parseRecord(const uint8_t *sector, size_t len, IdentRecord &
 }
 
 // What the board knows about its own identity. The names are what /status reports.
-enum class Identity : uint8_t { Ok, Missing, Invalid, OtherBoard, HardwareKey };
+enum class Identity : uint8_t { Ok, Missing, Invalid, OtherBoard, HardwareKey, HardwareKeyUnprotected };
 
 inline const char *identityName(Identity i) {
   switch (i) {
@@ -141,6 +141,7 @@ inline const char *identityName(Identity i) {
     case Identity::Invalid: return "invalid";
     case Identity::OtherBoard: return "other_board";
     case Identity::HardwareKey: return "hardware_key";
+    case Identity::HardwareKeyUnprotected: return "hardware_unprotected";
   }
   return "invalid";
 }
@@ -152,6 +153,8 @@ inline const char *identityName(Identity i) {
 //   Invalid      something is there but no copy is valid, or the chip's own ID is not known
 //   OtherBoard   a valid record, but for another chip
 //   HardwareKey  a valid record whose key is burned into the eFuse, and this firmware has no hardware signer
+//                (chooseSigner below also gives HardwareKey when the chip has no key although the record says it is burned,
+//                 and HardwareKeyUnprotected when it has one that is not fully protected)
 // `rec` holds the record only when this returns Ok; in every other case it is wiped.
 inline Identity loadIdentity(const uint8_t *s0, size_t n0, const uint8_t *s1, size_t n1, const char *chipId, bool haveHardwareSigner,
                              IdentRecord &rec) {
@@ -330,6 +333,96 @@ inline bool signRequest(Signer &signer, const char *deviceId, const char *method
   if (!ok && hdrCap) hdr[0] = 0;
   if (!ok) hdrLen = 0;
   return ok;
+}
+
+// ---- which signer: the saved software key, or the key burned into the chip --------------------------------------------------
+// The record's flag bit 0 says whether the key is burned into the chip's eFuse (BLOCK_KEY5, purpose HMAC_UP). The chip's key
+// counts as usable only when it is there (HMAC_UP, block in use) AND fully protected: read protection, write protection and the
+// write protection of the purpose field. A key without all three is a burn that was not finished: it is never used. The rules:
+//   flag set                          hardware only. No key in the chip: Identity::HardwareKey. A key that is not fully protected:
+//                                     Identity::HardwareKeyUnprotected. Either way there is no software key left to fall back on.
+//   flag clear, no key in the chip    software, the saved key (the behaviour before the burn).
+//   flag clear, key not fully         software; the chip's key is never used; the board says so (SignerCheck::Unprotected).
+//   protected
+//   flag clear, a protected key       the burn is done but the record still holds the software key: check that both signers give
+//   in the chip                       the same answers (signersAgree). Equal: hardware, and the software key leaves RAM.
+//                                     Different: software stays, the chip's key is never used, and the board says so (Mismatch).
+enum class SignerKind : uint8_t { None, Software, Hardware };
+enum class SignerCheck : uint8_t { NotRun, Match, Mismatch, Unprotected };
+
+struct SignerPlan {
+  SignerKind kind = SignerKind::None;
+  SignerCheck check = SignerCheck::NotRun;
+  Identity problem = Identity::Ok;  // why there is no signer (kind None)
+};
+
+// Is the comparison needed? Only when both keys could be used: the record still has its key and the chip has a protected one.
+inline bool needsSignerCheck(bool flagBurned, bool hwKeyPresent, bool hwProtected) { return !flagBurned && hwKeyPresent && hwProtected; }
+
+// hwProtected only counts when hwKeyPresent; hwMatchesSoft only counts when needsSignerCheck is true (the caller runs
+// signersAgree only then).
+inline SignerPlan chooseSigner(bool flagBurned, bool hwKeyPresent, bool hwProtected, bool hwMatchesSoft) {
+  SignerPlan p;
+  bool unprotected = hwKeyPresent && !hwProtected;
+  if (unprotected) p.check = SignerCheck::Unprotected;
+  if (flagBurned) {
+    if (hwKeyPresent && hwProtected) p.kind = SignerKind::Hardware;
+    else p.problem = unprotected ? Identity::HardwareKeyUnprotected : Identity::HardwareKey;
+    return p;
+  }
+  if (!hwKeyPresent || unprotected) {
+    p.kind = SignerKind::Software;
+    return p;
+  }
+  p.kind = hwMatchesSoft ? SignerKind::Hardware : SignerKind::Software;
+  p.check = hwMatchesSoft ? SignerCheck::Match : SignerCheck::Mismatch;
+  return p;
+}
+
+inline const char *signerKindName(SignerKind k) {
+  switch (k) {
+    case SignerKind::Software: return "software";
+    case SignerKind::Hardware: return "hardware";
+    case SignerKind::None: break;
+  }
+  return "none";
+}
+inline const char *signerCheckName(SignerCheck c) {
+  switch (c) {
+    case SignerCheck::Match: return "match";
+    case SignerCheck::Mismatch: return "mismatch";
+    case SignerCheck::Unprotected: return "unprotected";
+    case SignerCheck::NotRun: break;
+  }
+  return "not_run";
+}
+
+// The messages that prove two signers are the same function: the lengths of the shared vectors' length table
+// (shared/device-auth-vectors.json) that hit every branch of the hardware unit's padding, message byte i = (i * 7 + 3) & 0xff.
+static const size_t VERIFY_COUNT = 11;
+static const uint16_t VERIFY_LENGTHS[VERIFY_COUNT] = {0, 1, 55, 56, 63, 64, 65, 119, 120, 128, 200};
+static const size_t VERIFY_MAX = 200;
+
+inline void verifyMessage(uint8_t *buf, size_t len) {
+  for (size_t i = 0; i < len; i++) buf[i] = (uint8_t)((i * 7 + 3) & 0xff);
+}
+
+// Signs every verification message with both signers and compares every result. False when any answer differs or either signer
+// fails. Nothing is printed and nothing outlives the call; the answers are signatures over public messages, wiped anyway.
+inline bool signersAgree(Signer &a, Signer &b) {
+  alignas(4) uint8_t msg[VERIFY_MAX];
+  alignas(4) uint8_t ra[SIG_LEN], rb[SIG_LEN];
+  bool same = true;
+  for (size_t i = 0; i < VERIFY_COUNT && same; i++) {
+    size_t len = VERIFY_LENGTHS[i];
+    verifyMessage(msg, len);
+    memset(ra, 0xA5, sizeof(ra));  // a signer that claims success but writes nothing must not look equal to another that does the same
+    memset(rb, 0x5A, sizeof(rb));
+    same = a.sign(msg, len, ra) && b.sign(msg, len, rb) && memcmp(ra, rb, SIG_LEN) == 0;
+  }
+  secureZero(ra, sizeof(ra));
+  secureZero(rb, sizeof(rb));
+  return same;
 }
 
 // ---- the clock -------------------------------------------------------------------------------------------------------------

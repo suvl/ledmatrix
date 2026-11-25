@@ -197,12 +197,13 @@ void registerStationRoutes() {
     server.send(200, "application/json", liveSelfTestJson(settings::get()));
   });
   server.on("/status", HTTP_GET, []() {
-    char buf[640];
+    char buf[720];
     snprintf(buf, sizeof(buf),
-             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\"}",
+             "{\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
              WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
              WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
-             (unsigned long)gFrames, (unsigned long)gFrameMaxMs, (unsigned long)gFramesOver1s, identity::deviceId(), identity::statusName());
+             (unsigned long)gFrames, (unsigned long)gFrameMaxMs, (unsigned long)gFramesOver1s, identity::deviceId(), identity::statusName(),
+             identity::signerName(), identity::signerCheckName());
     server.send(200, "application/json", buf);
   });
   server.on("/forget", HTTP_POST, []() {

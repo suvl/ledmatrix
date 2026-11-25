@@ -26,7 +26,7 @@ static const uint32_t PROBLEM_FRESH_MS = 10UL * 60 * 1000;  // a failure this re
 static const uint32_t PROBLEM_MESSAGE_PERIOD_MS = 60UL * 1000;
 static const uint32_t PROBLEM_MESSAGE_SHOW_MS = 5UL * 1000;
 
-enum class ProblemKind : uint8_t { Flights, Weather, Headlines, Logo, Clock, Update, Count };
+enum class ProblemKind : uint8_t { Flights, Weather, Headlines, Logo, Clock, Update, Identity, Count };
 static const int PROBLEM_KINDS = (int)ProblemKind::Count;
 
 inline const char *problemKindName(ProblemKind k) {
@@ -37,6 +37,7 @@ inline const char *problemKindName(ProblemKind k) {
     case ProblemKind::Logo: return "logo";
     case ProblemKind::Clock: return "clock";
     case ProblemKind::Update: return "update check";
+    case ProblemKind::Identity: return "identity";
     default: return "?";
   }
 }
@@ -58,7 +59,10 @@ inline const char *problemKindName(ProblemKind k) {
 #define PROBLEM_RAW_ID_MISSING "no identity record"
 #define PROBLEM_RAW_ID_INVALID "identity record is not valid"
 #define PROBLEM_RAW_ID_OTHER_BOARD "identity record is for another board"
-#define PROBLEM_RAW_ID_HARDWARE_KEY "key is burned into the chip but this firmware cannot use it"
+#define PROBLEM_RAW_ID_HARDWARE_KEY "record says the key is burned into the chip but the chip has no key"
+#define PROBLEM_RAW_ID_HARDWARE_UNPROTECTED "the burned key is not fully protected"
+#define PROBLEM_RAW_SIGNER_MISMATCH "the chip's key and the saved key give different answers"  // signing works with the saved key
+#define PROBLEM_RAW_SIGNER_UNPROTECTED "the key in the chip is not fully protected"              // signing works with the saved key
 #define PROBLEM_RAW_SIGN_FAILED "could not sign the request"  // the request itself was not valid, or the signer failed
 
 inline const char *problemFind(const char *hay, const char *needle) {  // case-insensitive substring; where it starts, or nullptr
@@ -108,7 +112,13 @@ inline void problemWords(const char *raw, char *why, size_t whyCap, char *detail
   } else if (problemHas(raw, PROBLEM_RAW_ID_OTHER_BOARD)) {
     s = "This board's identity record is for another board. It must be provisioned again over USB.";
   } else if (problemHas(raw, PROBLEM_RAW_ID_HARDWARE_KEY)) {
-    s = "This board's key is burned into the chip but this firmware cannot use it. Update the firmware.";
+    s = "This board's record says the key is burned into the chip but the chip has no key. It must be provisioned again over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_ID_HARDWARE_UNPROTECTED)) {
+    s = "This board's record says the key is burned into the chip but the burned key is not fully protected, so it is not used. It must be provisioned again over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_SIGNER_UNPROTECTED)) {
+    s = "The key in the chip is not fully protected (was a burn interrupted?), so the board does not use it and keeps signing with the saved key.";
+  } else if (problemHas(raw, PROBLEM_RAW_SIGNER_MISMATCH)) {
+    s = "The chip's key and the saved key give different answers, so the board keeps signing with the saved key. The burn may have used the wrong key.";
   } else if (problemHas(raw, PROBLEM_RAW_SIGN_FAILED) || problemHas(raw, "could not sign")) {
     s = "The board could not sign the request. Restart it; if this keeps happening the firmware needs an update.";
   } else if (problemHas(raw, PROBLEM_RAW_AUTH_MISSING) || problemHas(raw, "did not receive a signature")) {
