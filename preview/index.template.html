@@ -106,7 +106,7 @@ figcaption strong { display: block; color: var(--text); font-weight: 500; font-s
   </section>
 
   <section id="status">
-    <header><h2>Status screens</h2><p>Boot, connected, stale data and no Wi-Fi.</p></header>
+    <header><h2>Status screens</h2><p>Boot, connected, stale data, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
     <div class="grid" id="status-grid"></div>
   </section>
 
@@ -178,6 +178,7 @@ addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
 addPanel('status-grid', 'Stale data indicator', FB6, stale, true);
 addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
+addPanel('status-grid', 'Problem message', FB6, problemMsg);
 
 /* ---------- controls ---------- */
 const chips = document.getElementById('flight-chips');

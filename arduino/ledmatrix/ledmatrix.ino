@@ -5,6 +5,7 @@
 //   slice 4: live data from the owner's service (this file decides what to show; see live.cpp)
 //   slice 7: panel protection (protect.cpp): pixel drift, dim after stillness, night blanking, clock/weather rotation;
 //            a short press of UP or DOWN wakes the panel
+//   slice 8: the problem list (problems.h, live.cpp) and the panel message that points to it after an hour of failure
 //
 //   core 1: render task   ~30 fps, picks the screen from the network state, the settings and the live data
 //   core 0: net task      Wi-Fi, setup access point, DNS, web server and portal API (see net.cpp)
@@ -20,6 +21,7 @@
 #include "live.h"
 #include "net.h"
 #include "plane_view.h"
+#include "problems.h"
 #include "protect.h"
 #include "screens.h"
 #include "settings.h"
@@ -159,7 +161,7 @@ static void logShown(Screen s, const char *callsign) {
   first = false;
   lastScreen = s;
   strlcpy(lastCs, callsign, sizeof(lastCs));
-  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi"};
+  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi", "problem"};
   Serial.printf("SHOW %s %s\n", names[(int)s], callsign);
 }
 
@@ -241,6 +243,16 @@ static void renderTask(void *) {
       pf.kind = pictureKindOf(screen);
       ProtectOut out = protectStep(pcfg, pf);
       logProtect(out, now);
+
+      // The problem message (ticket 23) takes the place of weather or the clock for 5 s once a minute, while some kind of data
+      // has been failing for an hour and still is. Decided after protectStep, which was given the weather or clock as the
+      // picture: the message counts as that static picture (dims after stillness, drifts, does not reset the stillness timer).
+      // A plane card or a headline is never replaced, and it stays dark during night blanking (a button press, which opens the
+      // 30 s NightAwake window, may show it).
+      // The decision itself is problemMessageWanted() (problems.h), which the laptop tests cover.
+      if (problemMessageWanted(live, lv.problemMessage, now, screen == Screen::Weather || screen == Screen::Idle,
+                               out.mode == PanelMode::Night))
+        screen = Screen::Problem;
       logShown(screen, live && screen == Screen::Flight ? lv.plane.cs : "");
 
       matrix.fillScreen(0);

@@ -47,6 +47,7 @@ struct LiveView {
   uint32_t newsAgeMs = 0;
   LiveWeather wx;
   bool stale = false;       // data is older than it should be
+  bool problemMessage = false;  // some kind of data has been failing for an hour and still is: the panel may show the message
   bool timeValid = false;
   struct tm now = {};
 };
@@ -54,6 +55,7 @@ struct LiveView {
 void liveBegin();                                         // starts the data task (core 0)
 LiveView liveView(uint32_t nowMs, const Settings &cfg);   // called every frame by the render task
 String livePlanesJson();                                  // /api/planes: the last planes seen, newest first
+String liveProblemsJson();                                // /api/problems: the last 10 problems with their reasons, and what is failing now
 String liveStatusJson();                                  // for /api/live
 String liveSelfTestJson(const Settings &cfg);             // /api/selftest: reaches IPv4-only, IPv6-only and dual-stack hosts
 bool liveLogo(const char *airlineIata, uint16_t *out256);  // copies the cached 16x16 logo; false = none (use the badge)
