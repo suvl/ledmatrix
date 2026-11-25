@@ -5,6 +5,7 @@
 #include <Adafruit_Protomatter.h>
 #include <Arduino.h>
 
+#include <iostream>
 #include <map>
 #include <random>
 #include <string>
@@ -143,6 +144,39 @@ int main(int argc, char **argv) {
   UiState ui;
   ui.apSsid = ui.apPass = ui.apIp = ui.staIp = "";
   ui.clock24h = true;
+
+  if (argc > 1 && std::string(argv[1]) == "-u") {  // the firmware-update screens for the states on stdin, as pixels
+    // One state per line, tab separated: name, code, seconds left, version, percent, status word. Dumps name.code and name.prog.
+    std::string line;
+    while (std::getline(std::cin, line)) {
+      std::vector<std::string> f;
+      size_t from = 0;
+      for (;;) {
+        size_t tab = line.find('\t', from);
+        f.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
+        if (tab == std::string::npos) break;
+        from = tab + 1;
+      }
+      if (f.size() != 6) continue;
+      UpdateView v;
+      strlcpy(v.code, f[1].c_str(), sizeof v.code);
+      v.secondsLeft = atoi(f[2].c_str());
+      strlcpy(v.version, f[3].c_str(), sizeof v.version);
+      v.percent = atoi(f[4].c_str());
+      strlcpy(v.line, f[5].c_str(), sizeof v.line);
+      UiState u = ui;
+      u.update = &v;
+      auto dumpScreen = [&](const std::string &name, Screen s) {
+        matrix.clear();
+        drawScreen(s, 0, 0, 0, u);
+        printf("DUMP %s\n", name.c_str());
+        for (int y = 0; y < 32; y++) { for (int x = 0; x < 64; x++) printf("%04x", matrix.fb[y][x]); printf("\n"); }
+      };
+      dumpScreen(f[0] + ".code", Screen::UpdateCode);
+      dumpScreen(f[0] + ".prog", Screen::UpdateProgress);
+    }
+    return 0;
+  }
 
   if (argc > 1 && std::string(argv[1]) == "-d") {  // the demo screens as RGB565 hex, one line per picture row
     auto dump = [&](const std::string &name) {

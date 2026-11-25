@@ -8,6 +8,8 @@
 #include "cycle.h"
 #include "deviceauth.h"
 #include "identity.h"
+#include "ota.h"
+#include "otalogic.h"
 #include "problems.h"
 #include "protect.h"
 
@@ -21,12 +23,14 @@ const uint32_t RETRY_WEATHER_MS = 60UL * 1000;
 const uint32_t RETRY_NEWS_MS = 5UL * 60 * 1000;
 const int QUEUE_MAX = 3;
 const uint32_t CYCLE_LIST_MAX_AGE_MS = 2UL * 60 * 1000;  // cycle mode: with no successful fetch for this long the list is dropped (a fetch is due every 30 s)
+const uint32_t HEADER_DEADLINE_MS = 15UL * 1000;  // the status line and all the headers together: a server that drips one line every few seconds is not waited for
 const uint32_t CLOCK_GRACE_MS = 60UL * 1000;  // Wi-Fi up this long with no time from the servers: that is a problem
 const uint32_t CLOCK_NOTE_EVERY_MS = 60UL * 1000;
 const uint32_t IDENTITY_NOTE_EVERY_MS = 30UL * 60 * 1000;  // a standing notice (identity::notice) is put in the problem list again now and then, so it is not pushed out
 const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
+volatile bool serviceAnswered = false;  // the service gave one complete HTTP answer, whatever the status, since boot (the probation checklist)
 volatile bool netBusy = false;  // one HTTPS request at a time, see NetTurn (a flag, not a FreeRTOS mutex: a mutex held across a request reset the board)
 
 // ---- shared state (guarded by mu) --------------------------------------------------------------------
@@ -281,11 +285,19 @@ int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply
   req += authHeaders;
   req += "Connection: close\r\n\r\n";
   c.print(req);
+  uint32_t headersFrom = millis();
   String statusLine = c.readStringUntil('\n');
   int sp = statusLine.indexOf(' ');
   r.status = sp > 0 ? statusLine.substring(sp + 1).toInt() : 0;
+  if (sign && otalogic::isHttpAnswer(r.status)) serviceAnswered = true;  // the owner's service answered (a 401 too): it was reached
   bool chunked = false;
   for (;;) {
+    if (millis() - headersFrom > HEADER_DEADLINE_MS) {  // stalled in the middle of the headers: give up, the data task has other work
+      c.stop();
+      r.ms = millis() - t0;
+      r.error = PROBLEM_RAW_NO_ANSWER;
+      return -1;
+    }
     String line = c.readStringUntil('\n');
     if (line == "\r" || (line.length() == 0 && !c.connected())) break;
     line.toLowerCase();
@@ -675,6 +687,7 @@ void dataTask(void *) {
         }
       }
     }
+    ota::dataTick(now, synced, cfg);  // firmware updates: the daily check, a confirmed download, the probation checklist (ota.cpp)
     static uint32_t lastStackLog = 0;
     if (now - lastStackLog > 60000) { lastStackLog = now; Serial.printf("LIVE data task stack free %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr)); }
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -682,6 +695,122 @@ void dataTask(void *) {
 }
 
 }  // namespace
+
+// ---- for the firmware update module (ota.cpp) ---------------------------------------------------------------------
+namespace {
+const uint32_t STREAM_TOTAL_MS = 10UL * 60 * 1000;   // no download takes longer than this
+
+struct HeapBuf {  // the piece buffer, freed on every way out
+  uint8_t *p;
+  explicit HeapBuf(size_t n) : p((uint8_t *)malloc(n)) {}
+  ~HeapBuf() { free(p); }
+};
+}  // namespace
+
+bool liveHttpsStream(const char *host, const char *path, size_t chunk, int64_t expectLength, uint32_t idleMs, LiveBodySink sink, void *ctx, LiveStreamReply &r) {
+  NetTurn turn;
+  if (!turn.ok) { r.error = PROBLEM_RAW_BUSY; return false; }
+  uint32_t t0 = millis();
+  HeapBuf buf(chunk);
+  if (!buf.p) { r.error = PROBLEM_RAW_BUSY; return false; }  // no memory for a piece: the same plain "try again later"
+  NetworkClientSecure c;
+  c.setTimeout(5000);
+  if (!connectDual(c, host, r.family, r.error)) { r.ms = millis() - t0; return false; }
+  // Unsigned, as given: this goes to the owner's service only (the caller passes the saved host), and follows no redirect.
+  String req = String("GET ") + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: ledmatrix\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n";
+  c.print(req);
+  uint32_t headersFrom = millis();
+  String statusLine = c.readStringUntil('\n');
+  int sp = statusLine.indexOf(' ');
+  r.status = sp > 0 ? statusLine.substring(sp + 1).toInt() : 0;
+  if (otalogic::isHttpAnswer(r.status)) serviceAnswered = true;  // only ever called for the saved service host
+  for (;;) {
+    if (millis() - headersFrom > HEADER_DEADLINE_MS) {  // stalled in the middle of the headers
+      c.stop();
+      r.ms = millis() - t0;
+      r.error = PROBLEM_RAW_NO_ANSWER;
+      return false;
+    }
+    String line = c.readStringUntil('\n');
+    if (line == "\r" || (line.length() == 0 && !c.connected())) break;
+    line.toLowerCase();
+    if (line.startsWith("transfer-encoding:") && line.indexOf("chunked") >= 0) r.chunked = true;
+    if (line.startsWith("content-length:")) r.length = (int64_t)line.substring(15).toInt();
+  }
+  if (r.status != 200) {
+    r.error = r.status ? "HTTP " + String(r.status) : String(PROBLEM_RAW_NO_ANSWER);
+    c.stop();
+    r.ms = millis() - t0;
+    return false;
+  }
+  if (expectLength >= 0 && r.length >= 0 && r.length != expectLength) {  // the server announces another size than the manifest: do not even start
+    r.lengthMismatch = true;
+    r.error = PROBLEM_RAW_UNEXPECTED;
+    c.stop();
+    r.ms = millis() - t0;
+    return false;
+  }
+
+  // Reads exactly `want` bytes (want < 0: until the server closes) in pieces, handing each to the sink.
+  auto pump = [&](int64_t want) -> bool {
+    uint32_t last = millis();
+    int64_t got = 0;
+    while (want < 0 || got < want) {
+      int avail = c.available();
+      if (avail > 0) {
+        size_t n = (size_t)avail < chunk ? (size_t)avail : chunk;
+        if (want >= 0 && (int64_t)n > want - got) n = (size_t)(want - got);
+        int rd = c.read(buf.p, n);
+        if (rd > 0) {
+          if (!sink(buf.p, (size_t)rd, ctx)) { r.stopped = true; return false; }
+          got += rd;
+          r.bytes += (size_t)rd;
+          last = millis();
+          vTaskDelay(pdMS_TO_TICKS(2));  // a short pause after every piece: the Wi-Fi and the portal tasks share this core
+          continue;
+        }
+      }
+      if (!c.connected() && c.available() <= 0) return want < 0;  // closed: whole only when the server's close was the end
+      if (millis() - last > idleMs || millis() - t0 > STREAM_TOTAL_MS) return false;
+      vTaskDelay(1);
+    }
+    return true;
+  };
+
+  bool whole = false;
+  if (r.chunked) {
+    for (;;) {
+      if (millis() - t0 > STREAM_TOTAL_MS) break;
+      String line = c.readStringUntil('\n');
+      if (line.length() == 0) break;  // nothing came: cut off
+      size_t sz = 0;
+      if (!otalogic::parseChunkSize(line.c_str(), line.length(), sz)) {  // not a chunk size: the framing is broken, which is not "the last chunk"
+        r.error = PROBLEM_RAW_UNEXPECTED;
+        break;
+      }
+      if (sz == 0) { whole = true; break; }
+      if (!pump((int64_t)sz)) break;
+      String end = c.readStringUntil('\n');  // the line that ends the chunk's data
+      if (!otalogic::isChunkEnd(end.c_str(), end.length())) {
+        r.error = PROBLEM_RAW_UNEXPECTED;
+        break;
+      }
+    }
+  } else {
+    whole = pump(r.length >= 0 ? r.length : -1);
+  }
+  c.stop();
+  r.ms = millis() - t0;
+  r.complete = whole && !r.stopped;
+  if (!r.complete && r.error.length() == 0 && !r.stopped) r.error = PROBLEM_RAW_NO_ANSWER;  // cut off, or too slow
+  return r.complete;
+}
+
+void liveNoteProblem(ProblemKind kind, const char *raw) { noteProblem(kind, raw); }
+void liveNoteWorking(ProblemKind kind) { noteWorking(kind); }
+
+bool liveServiceAnswered() { return serviceAnswered; }
+bool liveStarted() { return mu != nullptr; }
 
 bool liveLogo(const char *ai, uint16_t *out) {
   if (!ai || strlen(ai) != 2) return false;

@@ -21,6 +21,7 @@
 #include "identity.h"
 #include "live.h"
 #include "net.h"
+#include "ota.h"
 #include "plane_view.h"
 #include "problems.h"
 #include "protect.h"
@@ -162,7 +163,7 @@ static void logShown(Screen s, const char *callsign) {
   first = false;
   lastScreen = s;
   strlcpy(lastCs, callsign, sizeof(lastCs));
-  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi", "problem"};
+  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi", "problem", "update code", "update progress"};
   Serial.printf("SHOW %s %s\n", names[(int)s], callsign);
 }
 
@@ -237,6 +238,20 @@ static void renderTask(void *) {
         if (lv.timeValid) ui.clock = &lv.now;
       }
 
+      // A firmware update takes over the panel (ota.h): the code screen while a code is pending, the progress screen while the
+      // image comes in or is installed. Decided before panel protection, so these pictures count as "other" (never dimmed,
+      // blanked at night or drifted: the owner is standing in front of the panel). Only while online: setup and the Wi-Fi
+      // screens have no update to show. The stale-data dot and the problem message give way too (live is dropped).
+      UpdateView uv;
+      if (ni.state == NetState::Online) {
+        ota::PanelScreen os = ota::panel(now, uv);
+        if (os != ota::PanelScreen::None) {
+          screen = os == ota::PanelScreen::Code ? Screen::UpdateCode : Screen::UpdateProgress;
+          ui.update = &uv;
+          live = false;
+        }
+      }
+
       ProtectFrame pf;
       pf.nowMs = now;
       pf.timeValid = lv.timeValid;
@@ -289,12 +304,14 @@ static void goTo(int index) {
 
 void setup() {
   Serial.begin(115200);
+  ota::probationBoot();  // FIRST: an image on probation counts this boot (more than 3 crashes: back to the previous image), see ota.h
   pinMode(BUTTON_UP, INPUT_PULLUP);
   pinMode(BUTTON_DOWN, INPUT_PULLUP);
   delay(1500);
   Serial.println("\nledmatrix: slice 4, live data");
   settings::begin();  // loads the saved settings; must run before the tasks read them
   identity::begin();  // reads this board's identity record once; must run before the net and data tasks use it
+  ota::begin();       // the update module's lock and saved state; must run before the net and data tasks use it
   netBegin();         // must run before the render task asks for the network state
   liveBegin();        // must run before the render task asks for the live view
   xTaskCreatePinnedToCore(renderTask, "render", 10240, nullptr, 2, nullptr, 1);

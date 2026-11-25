@@ -1,3 +1,5 @@
 circuitpython/settings.toml
 arduino/milestone/secrets.h
 logos/
+service/firmware/*
+!service/firmware/README.md

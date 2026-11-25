@@ -64,6 +64,25 @@ inline const char *problemKindName(ProblemKind k) {
 #define PROBLEM_RAW_SIGNER_MISMATCH "the chip's key and the saved key give different answers"  // signing works with the saved key
 #define PROBLEM_RAW_SIGNER_UNPROTECTED "the key in the chip is not fully protected"              // signing works with the saved key
 #define PROBLEM_RAW_SIGN_FAILED "could not sign the request"  // the request itself was not valid, or the signer failed
+// Firmware updates (ticket 33, shared/firmware-update.md, otalogic.h's Fail). A reason may follow a macro after ": " (a detail for
+// the list: the HTTP status, the manifest rule that failed, the ESP-IDF error name); the sentence is chosen by the macro's start.
+#define PROBLEM_RAW_UPDATE_NO_FIRMWARE "no firmware is published (HTTP 404)"                 // the manifest route answered 404
+#define PROBLEM_RAW_UPDATE_MANIFEST_INVALID "firmware manifest is not valid"                 // the manifest broke a rule of the contract
+#define PROBLEM_RAW_UPDATE_NO_SERVICE "no service address saved for the update check"        // a check was asked for with no address
+#define PROBLEM_RAW_UPDATE_NO_CLOCK "the clock is not set yet, needed for the update check"  // secure connections need the time
+#define PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED "firmware download failed"                        // the transfer broke off, or the server said no
+#define PROBLEM_RAW_UPDATE_UPLOAD_INCOMPLETE "firmware upload did not finish"                // the browser stopped sending the file
+#define PROBLEM_RAW_UPDATE_WRONG_SIZE "firmware size does not match the manifest"            // not the number of bytes the manifest said
+#define PROBLEM_RAW_UPDATE_WRONG_CHECKSUM "firmware checksum does not match the manifest"    // the SHA-256 differs
+#define PROBLEM_RAW_UPDATE_WRONG_VERSION "firmware version does not match the manifest"      // the image says it is another version
+#define PROBLEM_RAW_UPDATE_BAD_IMAGE "firmware image is not valid for this chip"             // the ESP-IDF image validation said no
+#define PROBLEM_RAW_UPDATE_TOO_BIG "firmware image does not fit the update slot"             // more than the 2 MB slot
+#define PROBLEM_RAW_UPDATE_FLASH_FAILED "flash write failed while installing the firmware"   // erase, write or switching the boot slot failed
+#define PROBLEM_RAW_UPDATE_WRONG_CODE "update refused: wrong code"                           // the code was used up by 3 wrong tries
+#define PROBLEM_RAW_UPDATE_CODE_EXPIRED "update refused: code expired"                       // the 3 minutes ran out
+#define PROBLEM_RAW_UPDATE_ROLLED_BACK "update rolled back"                                  // the new image failed its probation
+#define PROBLEM_RAW_UPDATE_NO_ROLLBACK "no previous firmware to go back to"                  // it failed its probation and there is nothing to return to
+#define PROBLEM_RAW_UPDATE_NOT_CONFIRMED "could not record that the new firmware is good"    // the otadata write that ends the probation failed
 
 inline const char *problemFind(const char *hay, const char *needle) {  // case-insensitive substring; where it starts, or nullptr
   size_t n = strlen(needle);
@@ -103,9 +122,44 @@ inline void problemWords(const char *raw, char *why, size_t whyCap, char *detail
   if (h) http = atoi(h + 5);
   const char *s = nullptr;  // a sentence without a number in it; the HTTP ones are worded below because they carry the status
 
-  // Device authentication first: the raw texts of a refusal carry "HTTP 401" and "refused", which the branches below would take.
-  // Each sentence also holds a phrase of its own, so a sentence fed back in is recognised as itself.
-  if (problemHas(raw, PROBLEM_RAW_ID_MISSING)) {
+  // Firmware updates first of all: their raw texts may end in a reason that holds an HTTP status, "timed out" or "refused", which the
+  // branches below would take. Each sentence also holds a phrase of its own, so a sentence fed back in is recognised as itself.
+  if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_FIRMWARE) || problemHas(raw, "has no firmware published")) {
+    s = "The service answered, but it has no firmware published to offer.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_MANIFEST_INVALID) || problemHas(raw, "firmware details from the service are not valid")) {
+    s = "The firmware details from the service are not valid, so no update is offered.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_SERVICE) || problemHas(raw, "no service address is saved")) {
+    s = "No service address is saved, so there is nothing to check for updates.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_CLOCK) || problemHas(raw, "clock is not set yet")) {
+    s = "The clock is not set yet, and secure connections need the right time. Try again in a minute.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED) || problemHas(raw, "firmware download did not finish")) {
+    s = "The firmware download did not finish, so nothing was changed. Try again later.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_UPLOAD_INCOMPLETE) || problemHas(raw, "firmware file did not finish arriving")) {
+    s = "The firmware file did not finish arriving, so nothing was changed. Try the upload again.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_WRONG_SIZE) || problemHas(raw, "not the size the service announced")) {
+    s = "The downloaded firmware is not the size the service announced, so it was thrown away. Nothing was changed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_WRONG_CHECKSUM) || problemHas(raw, "does not match the checksum the service announced")) {
+    s = "The downloaded firmware does not match the checksum the service announced, so it was thrown away. Nothing was changed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_WRONG_VERSION) || problemHas(raw, "different version from the one the service announced")) {
+    s = "The downloaded firmware is a different version from the one the service announced, so it was not installed. Nothing was changed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_BAD_IMAGE) || problemHas(raw, "not a valid program for this board")) {
+    s = "The firmware file is not a valid program for this board's chip, so it was not installed. Nothing was changed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_TOO_BIG) || problemHas(raw, "too big for the space kept for updates")) {
+    s = "The firmware is too big for the space kept for updates, so it was not installed. Nothing was changed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_FLASH_FAILED) || problemHas(raw, "writing the new firmware to the board's memory failed")) {
+    s = "Writing the new firmware to the board's memory failed. The board keeps running the current firmware.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_WRONG_CODE) || problemHas(raw, "typed wrong three times")) {
+    s = "The update was refused: the code was typed wrong three times. Starting again is blocked for a while.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_CODE_EXPIRED) || problemHas(raw, "code on the panel ran out of time")) {
+    s = "The update was refused: the code on the panel ran out of time. Start again if you still want to update.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_ROLLBACK) || problemHas(raw, "no previous firmware to go back to")) {
+    s = "The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NOT_CONFIRMED) || problemHas(raw, "board could not record that")) {
+    s = "The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK) || problemHas(raw, "went back to the previous firmware")) {
+    s = "The new firmware did not pass its start-up check, so the board went back to the previous firmware.";
+  // Device authentication next: the raw texts of a refusal carry "HTTP 401" and "refused", which the branches below would take.
+  } else if (problemHas(raw, PROBLEM_RAW_ID_MISSING)) {
     s = "This board has no identity record. It must be provisioned over USB.";
   } else if (problemHas(raw, PROBLEM_RAW_ID_INVALID)) {
     s = "This board's identity record is not valid. It must be provisioned again over USB.";

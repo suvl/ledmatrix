@@ -12,6 +12,7 @@
 # never left open by accident. Optional settings, as plain env entries below: REVOKED_DEVICES (comma-separated device
 # IDs the service refuses) and PUBLIC_HOST (the name the display uses, if a proxy rewrites the Host header).
 # AUTH_OFF=1 exists for running the service on your own computer; do not use it here.
+# Firmware images are part of the image (/firmware, see service/README.md): there is nothing to mount or create for them.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

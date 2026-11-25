@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <time.h>
 
+#include "problems.h"
 #include "settings.h"
 
 struct LivePlane {
@@ -59,3 +60,30 @@ String liveProblemsJson();                                // /api/problems: the 
 String liveStatusJson();                                  // for /api/live
 String liveSelfTestJson(const Settings &cfg);             // /api/selftest: reaches IPv4-only, IPv6-only and dual-stack hosts
 bool liveLogo(const char *airlineIata, uint16_t *out256);  // copies the cached 16x16 logo; false = none (use the badge)
+
+// ---- for the firmware update module (ota.cpp, shared/firmware-update.md) ----------------------------------------------------
+// The same connection code as the fetchers (IPv6/IPv4, the built-in certificate store, one request at a time), for a download that
+// is too big to hold in RAM. Unsigned: the manifest and the images are public routes, and no signature header ever leaves here.
+typedef bool (*LiveBodySink)(const uint8_t *data, size_t len, void *ctx);  // false = stop (the transfer ends, nothing more is read)
+struct LiveStreamReply {
+  int status = 0;              // the HTTP status; 0 = no status line arrived
+  int64_t length = -1;         // Content-Length, -1 when the server sent none
+  bool chunked = false;        // the body came as Transfer-Encoding: chunked
+  bool lengthMismatch = false; // expectLength was given and Content-Length said another number: no body was read
+  bool stopped = false;        // the sink said stop
+  bool complete = false;       // a 200 whose whole body arrived
+  size_t bytes = 0;            // body bytes handed to the sink
+  const char *family = "";
+  uint32_t ms = 0;
+  String error;                // the raw text (problems.h) when the call returns false, e.g. "HTTP 404" or PROBLEM_RAW_NO_ANSWER
+};
+// GET https://host/path, no redirects. A 200 body goes to `sink` in pieces of up to `chunk` bytes, with a short pause after each so the
+// Wi-Fi, the portal and the render task keep running; the heap buffer for a piece is freed on return. `expectLength` >= 0: a
+// Content-Length that says another number ends the call before any body is read (lengthMismatch). `idleMs`: no byte for this long
+// ends the transfer. Returns true only when the status was 200, the whole body was delivered and the sink took all of it. The caller's
+// sink may block (a flash write); nothing here holds a lock.
+bool liveHttpsStream(const char *host, const char *path, size_t chunk, int64_t expectLength, uint32_t idleMs, LiveBodySink sink, void *ctx, LiveStreamReply &r);
+void liveNoteProblem(ProblemKind kind, const char *raw);  // the problem list and the one-hour rule (live.cpp's noteProblem), lock free
+void liveNoteWorking(ProblemKind kind);                    // this kind works again
+bool liveServiceAnswered();                                // the saved service host has given one complete HTTP answer (any status) since boot
+bool liveStarted();                                        // liveBegin() has run: the lock behind liveNoteProblem exists

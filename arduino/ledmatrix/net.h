@@ -21,3 +21,5 @@ struct NetInfo {
 void netBegin();                 // starts the network task
 NetInfo netInfo();               // thread-safe snapshot
 void netWipeAndRestart();        // forgets the Wi-Fi network and restarts into setup mode
+bool netWifiJoined();           // the station has been joined to the Wi-Fi at some time since boot (a flag, for the probation task)
+bool netPortalAnswering();       // the portal server is up and its loop ran within the last 5 s (the probation checklist, otalogic.h Health)

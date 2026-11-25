@@ -94,7 +94,7 @@ func (s *stub) app(t *testing.T, now time.Time) *app {
 	f.adsb, f.db = s.srv.URL, s.srv.URL
 	h := NewHeadlines(cache, up)
 	h.base = s.srv.URL
-	return &app{weather: w, flights: f, headline: h, auth: testAuthenticator(t), sem: make(chan struct{}, 32)}
+	return &app{weather: w, flights: f, headline: h, auth: testAuthenticator(t), firmware: newFirmware(t.TempDir(), time.Now, silent), sem: make(chan struct{}, 32)}
 }
 
 func lisbonNoon(t *testing.T) time.Time {

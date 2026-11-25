@@ -9,6 +9,8 @@ cheap request instead of fetching and parsing large responses from several serve
 | `GET /v1/flights?lat=&lon=&radius_km=&alt_min=&alt_max=&n=` | planes nearest first, with airline, route, cities, aircraft and telemetry | adsb.fi (positions), adsbdb (routes) |
 | `GET /v1/headlines?q=&n=&hl=&gl=&ceid=` | newest headlines for a topic, de-duplicated | Google News RSS |
 | `GET /v1/logo/{iata}` | 512 bytes: a 16x16 airline logo, RGB565 big-endian; 404 if none | files in `LOGO_DIR` (not in the image) |
+| `GET /v1/firmware/manifest` | the newest firmware's version, file name, size, SHA-256 and notes; 404 when none is published | the `/firmware` folder in the image |
+| `GET /v1/firmware/{file}` | the firmware image named in the manifest, byte ranges supported | the `/firmware` folder in the image |
 | `GET /healthz` | `ok` | |
 
 Run locally (no secret needed, nothing is checked; for your own computer only):
@@ -49,6 +51,27 @@ The body is part of the signature. The display sends only `GET`, so a `GET` or `
 `Content-Length` other than 0, or any `Transfer-Encoding`) is refused as `malformed` and its body is never read; any
 other method may carry at most 4 KB, read before the signature is checked (`413` above that), so a caller who cannot
 sign cannot make the service hold much memory.
+
+## Firmware updates
+
+The image carries the firmware: the build workflow compiles it, writes `manifest.json` and `ledmatrix-<version>.bin` into
+`service/firmware/` (git-ignored; `tools/make_manifest.py` does the writing) and builds the image with that folder as
+`/firmware`. A new firmware reaches a display by deploying a new image: there is no storage, token or secret to add, and
+the manifest and the image are never written by the service. The contract is [`shared/firmware-update.md`](../shared/firmware-update.md).
+
+- `GET /v1/firmware/manifest` answers `{"version","file","size","sha256","notes"}` with `Cache-Control: no-cache`, or `404
+  {"error":"no firmware is published"}`.
+- `GET /v1/firmware/{file}` streams the image (`Content-Length` exact, `Range` works). The name is only compared with the
+  manifest's `file`, never used as a path; any other name is `404 {"error":"no such firmware"}`.
+- **Both are open to unsigned callers on purpose**: they ignore the signature headers completely, so a display whose key
+  is refused can still fetch a fix. The integrity check is the display's SHA-256 against the manifest, over HTTPS.
+- The manifest is checked when the service starts and again at most once a minute: the version is three numbers of 1 to 4
+  digits, `file` is `ledmatrix-<version>.bin`, the size is above 100 KB and at most 2,097,152 bytes and equals the real
+  file's, the SHA-256 equals the real file's (hashed once per change of the file), the notes are at most 200 characters.
+  Anything else is "no firmware is published", logged once per change (not per request) with the reason.
+- Downloads have their own limit (8 at once, then `503`), apart from the limit of the data routes, and lift the server's
+  20 s write timeout (10 minutes instead), so a slow display cannot starve the signed routes or be cut off half way.
+- Folder: `FIRMWARE_DIR` (default `/firmware`). Without a manifest the service works as before.
 
 ## Behaviour worth knowing
 

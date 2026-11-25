@@ -37,11 +37,15 @@ template <size_t N> struct Guard {
 // ---- problemWords: which sentence did a raw text become? ----------------------------------------------------------------
 enum Tag { PASS, IDMISSING, IDINVALID, IDOTHER, IDHARDWARE, IDHARDWAREUNPROT, SIGNERMISMATCH, SIGNERUNPROT, SIGNFAIL, AUTHMISSING, AUTHMALFORMED, AUTHBAD, AUTHREVOKED, AUTHCLOCK,
            HTTPAUTH, NOTSVC, LIMIT, DOWN, ODDSTATUS, NOANSWER, DNS, CERT, HSTIMEOUT,
-           TIMEOUT, REFUSED, CLOSED, NOCONN, UNREADABLE, BUSY };
+           TIMEOUT, REFUSED, CLOSED, NOCONN, UNREADABLE, BUSY,
+           UPD_NOFW, UPD_MANIFEST, UPD_NOSVC, UPD_NOCLOCK, UPD_DOWNLOAD, UPD_UPLOAD, UPD_SIZE, UPD_SUM, UPD_IMAGE, UPD_BIG, UPD_FLASH, UPD_CODE,
+           UPD_EXPIRED, UPD_ROLLED, UPD_NOROLL, UPD_NOTCONF, UPD_VERSION };
 static const char *tagName(Tag t) {
   static const char *n[] = {"PASS", "IDMISSING", "IDINVALID", "IDOTHER", "IDHARDWARE", "IDHARDWAREUNPROT", "SIGNERMISMATCH", "SIGNERUNPROT", "SIGNFAIL", "AUTHMISSING", "AUTHMALFORMED",
                             "AUTHBAD", "AUTHREVOKED", "AUTHCLOCK", "HTTPAUTH", "NOTSVC", "LIMIT", "DOWN", "ODDSTATUS", "NOANSWER", "DNS",
-                            "CERT", "HSTIMEOUT", "TIMEOUT", "REFUSED", "CLOSED", "NOCONN", "UNREADABLE", "BUSY"};
+                            "CERT", "HSTIMEOUT", "TIMEOUT", "REFUSED", "CLOSED", "NOCONN", "UNREADABLE", "BUSY",
+                            "UPD_NOFW", "UPD_MANIFEST", "UPD_NOSVC", "UPD_NOCLOCK", "UPD_DOWNLOAD", "UPD_UPLOAD", "UPD_SIZE", "UPD_SUM", "UPD_IMAGE",
+                            "UPD_BIG", "UPD_FLASH", "UPD_CODE", "UPD_EXPIRED", "UPD_ROLLED", "UPD_NOROLL", "UPD_NOTCONF", "UPD_VERSION"};
   return n[t];
 }
 // One marker per sentence (case-sensitive, taken from the sentences' own wording). PASS = none of them: the text was passed through.
@@ -60,6 +64,14 @@ static Tag classify(const char *why) {
       {"The server did not answer in time.", TIMEOUT}, {"refused the connection", REFUSED},
       {"closed the connection", CLOSED},       {"Could not connect", NOCONN},        {"cannot read", UNREADABLE},
       {"busy with another request", BUSY},
+      {"has no firmware published", UPD_NOFW}, {"firmware details from the service are not valid", UPD_MANIFEST},
+      {"No service address is saved", UPD_NOSVC}, {"clock is not set yet", UPD_NOCLOCK}, {"firmware download did not finish", UPD_DOWNLOAD},
+      {"firmware file did not finish arriving", UPD_UPLOAD}, {"not the size the service announced", UPD_SIZE},
+      {"does not match the checksum the service announced", UPD_SUM}, {"not a valid program for this board", UPD_IMAGE},
+      {"too big for the space kept for updates", UPD_BIG}, {"Writing the new firmware to the board's memory failed", UPD_FLASH},
+      {"typed wrong three times", UPD_CODE}, {"code on the panel ran out of time", UPD_EXPIRED}, {"went back to the previous firmware", UPD_ROLLED},
+      {"no previous firmware to go back to", UPD_NOROLL}, {"board could not record that", UPD_NOTCONF},
+      {"different version from the one the service announced", UPD_VERSION},
   };
   for (const M &x : m) if (strstr(why, x.marker)) return x.tag;
   return PASS;
@@ -442,6 +454,98 @@ static void testWordsDeviceAuth() {
   CHECK(l.n == 10);
   note(PROBLEM_RAW_AUTH_BAD_SIGNATURE, 1015, 25);
   CHECK(l.n == 10 && l.e[0].count == 2 && words(PROBLEM_RAW_AUTH_BAD_SIGNATURE).why == l.e[0].why);
+}
+
+static void testWordsUpdate() {
+  SECTION("problemWords: firmware updates (every failure, ticket 33)");
+  struct Case { const char *raw; Tag tag; const char *sentence; };
+  static const Case cases[] = {
+      {PROBLEM_RAW_UPDATE_NO_FIRMWARE, UPD_NOFW, "The service answered, but it has no firmware published to offer."},
+      {PROBLEM_RAW_UPDATE_MANIFEST_INVALID, UPD_MANIFEST, "The firmware details from the service are not valid, so no update is offered."},
+      {PROBLEM_RAW_UPDATE_NO_SERVICE, UPD_NOSVC, "No service address is saved, so there is nothing to check for updates."},
+      {PROBLEM_RAW_UPDATE_NO_CLOCK, UPD_NOCLOCK, "The clock is not set yet, and secure connections need the right time. Try again in a minute."},
+      {PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED, UPD_DOWNLOAD, "The firmware download did not finish, so nothing was changed. Try again later."},
+      {PROBLEM_RAW_UPDATE_UPLOAD_INCOMPLETE, UPD_UPLOAD, "The firmware file did not finish arriving, so nothing was changed. Try the upload again."},
+      {PROBLEM_RAW_UPDATE_WRONG_SIZE, UPD_SIZE, "The downloaded firmware is not the size the service announced, so it was thrown away. Nothing was changed."},
+      {PROBLEM_RAW_UPDATE_WRONG_CHECKSUM, UPD_SUM, "The downloaded firmware does not match the checksum the service announced, so it was thrown away. Nothing was changed."},
+      {PROBLEM_RAW_UPDATE_BAD_IMAGE, UPD_IMAGE, "The firmware file is not a valid program for this board's chip, so it was not installed. Nothing was changed."},
+      {PROBLEM_RAW_UPDATE_TOO_BIG, UPD_BIG, "The firmware is too big for the space kept for updates, so it was not installed. Nothing was changed."},
+      {PROBLEM_RAW_UPDATE_FLASH_FAILED, UPD_FLASH, "Writing the new firmware to the board's memory failed. The board keeps running the current firmware."},
+      {PROBLEM_RAW_UPDATE_WRONG_CODE, UPD_CODE, "The update was refused: the code was typed wrong three times. Starting again is blocked for a while."},
+      {PROBLEM_RAW_UPDATE_CODE_EXPIRED, UPD_EXPIRED, "The update was refused: the code on the panel ran out of time. Start again if you still want to update."},
+      {PROBLEM_RAW_UPDATE_ROLLED_BACK, UPD_ROLLED, "The new firmware did not pass its start-up check, so the board went back to the previous firmware."},
+      {PROBLEM_RAW_UPDATE_NO_ROLLBACK, UPD_NOROLL, "The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running."},
+      {PROBLEM_RAW_UPDATE_WRONG_VERSION, UPD_VERSION, "The downloaded firmware is a different version from the one the service announced, so it was not installed. Nothing was changed."},
+      {PROBLEM_RAW_UPDATE_NOT_CONFIRMED, UPD_NOTCONF, "The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts."},
+  };
+  for (const Case &c : cases) {
+    EXPECT(c.raw, c.tag);
+    Words r = words(c.raw);
+    CHECK(r.why == c.sentence);
+    CHECK(r.why.size() < 159);
+    CHECK(r.detail == c.raw);  // the technical text stays as the detail
+    // a reason after the macro changes the detail, never the sentence, whatever words the reason holds
+    for (const char *reason : {"HTTP 404", "HTTP 503", "HTTP 401", "no answer: the connection closed or timed out", "SSL - The operation timed out",
+                               "X509 - Certificate verification failed", "connection refused", "no identity record", "v4 connect failed: ", "handshake timeout"}) {
+      std::string withReason = std::string(c.raw) + ": " + reason;
+      Words w = words(withReason.c_str());
+      checks++;
+      if (w.tag != c.tag || w.why != c.sentence) { fails++; printf("    FAIL: \"%s\" -> \"%s\"\n", withReason.c_str(), w.why.c_str()); }
+      CHECK(w.detail == withReason.substr(0, 79) || w.detail == withReason);
+    }
+    // a sentence fed back in is itself (the portal and the connection test may pass one on)
+    CHECK(words(r.why.c_str()).why == r.why);
+    EXPECT(r.why.c_str(), c.tag);
+    // upper case, as the raw text of another place might have it
+    std::string up = c.raw;
+    for (char &ch : up) ch = (char)toupper((unsigned char)ch);
+    EXPECT(up.c_str(), c.tag);
+    // plain words: no secret, key or code in any sentence, and no jargon the board's owner would not know
+    for (const char *w : {"secret", "password", "token", "master", "hmac", "sha", "esp_", "0x", "errno", "partition", "ota_"}) CHECK(!problemHas(r.why.c_str(), w));
+    CHECK(r.why[0] >= 'A' && r.why[0] <= 'Z');
+  }
+  // every one has its own sentence
+  for (size_t a = 0; a < sizeof cases / sizeof cases[0]; a++)
+    for (size_t b = a + 1; b < sizeof cases / sizeof cases[0]; b++) CHECK(strcmp(cases[a].sentence, cases[b].sentence) != 0);
+  // the raw texts are short, plain and carry nothing secret
+  for (const Case &c : cases) CHECK(strlen(c.raw) < 60 && !strchr(c.raw, '<'));
+  // the pieces the device adds after the macro (ota.cpp): a manifest rule, an HTTP status, an ESP-IDF error name
+  Words r = words(PROBLEM_RAW_UPDATE_MANIFEST_INVALID ": size is missing or out of range");
+  CHECK(r.tag == UPD_MANIFEST && r.detail == PROBLEM_RAW_UPDATE_MANIFEST_INVALID ": size is missing or out of range");
+  r = words(PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": HTTP 404");
+  CHECK(r.tag == UPD_DOWNLOAD && r.detail == PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": HTTP 404");
+  r = words(PROBLEM_RAW_UPDATE_FLASH_FAILED ": ESP_ERR_OTA_VALIDATE_FAILED");
+  CHECK(r.tag == UPD_FLASH);
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": The panel did not draw 100 frames within 3 minutes of starting.");
+  CHECK(r.tag == UPD_ROLLED);
+  // a long reason is cut in the detail, never in the sentence
+  std::string longReason = std::string(PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": ") + std::string(500, 'x');
+  r = words(longReason.c_str());
+  CHECK(r.tag == UPD_DOWNLOAD && r.detail.size() == 79 && r.why == cases[4].sentence);
+  // the neighbours are not taken for an update text: the same words in another sentence stay what they were
+  EXPECT("HTTP 404", NOTSVC);                       // a bare 404 is still "not the data service" (a check's own 404 has its own macro)
+  EXPECT("download failed", PASS);                 // not the firmware's text: shown as it came
+  EXPECT("The firmware is old", PASS);
+  EXPECT("manifest", PASS);
+  // each kind of connection trouble during a check is worded like every other fetch (the check reports the connection's own text)
+  EXPECT("HTTP 503", DOWN);
+  EXPECT("v4 connect failed: SSL - The operation timed out", TIMEOUT);
+  // in the list: the kind is the update's, each failure is its own line, the same failure again counts up
+  ProblemLog l;
+  auto note = [&](const char *raw, uint32_t unixNow, uint32_t upS) {  // what live.cpp's noteProblem does
+    char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+    problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+    l.record(ProblemKind::Update, why, detail, unixNow, upS);
+  };
+  note(PROBLEM_RAW_UPDATE_NO_FIRMWARE, 100, 10);
+  note(PROBLEM_RAW_UPDATE_NO_FIRMWARE, 200, 20);
+  note(PROBLEM_RAW_UPDATE_WRONG_CHECKSUM, 300, 30);
+  note(PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": HTTP 404", 400, 40);
+  note(PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": HTTP 404", 500, 50);
+  CHECK(l.n == 3 && l.e[0].count == 2 && l.e[0].kind == ProblemKind::Update && l.e[1].count == 1 && l.e[2].count == 2);
+  CHECK(strcmp(l.e[0].why, cases[4].sentence) == 0 && strcmp(l.e[2].why, cases[0].sentence) == 0);
+  // the kind's name for the portal
+  CHECK(strcmp(problemKindName(ProblemKind::Update), "update check") == 0);
 }
 
 static void testWordsDetail() {
@@ -1497,6 +1601,7 @@ int main() {
   testRawMacros();
   testWordsSentences();
   testWordsDeviceAuth();
+  testWordsUpdate();
   testWordsDetail();
   testWordsUnknown();
   testWordsIdempotent();
