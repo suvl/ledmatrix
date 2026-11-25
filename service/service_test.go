@@ -81,7 +81,7 @@ func newStub(t *testing.T) *stub {
 	return s
 }
 
-func (s *stub) app(t *testing.T, now time.Time, token string) *app {
+func (s *stub) app(t *testing.T, now time.Time) *app {
 	t.Helper()
 	cache := NewCache()
 	up := NewUpstream()
@@ -94,7 +94,7 @@ func (s *stub) app(t *testing.T, now time.Time, token string) *app {
 	f.adsb, f.db = s.srv.URL, s.srv.URL
 	h := NewHeadlines(cache, up)
 	h.base = s.srv.URL
-	return &app{weather: w, flights: f, headline: h, token: token, sem: make(chan struct{}, 32)}
+	return &app{weather: w, flights: f, headline: h, auth: testAuthenticator(t), sem: make(chan struct{}, 32)}
 }
 
 func lisbonNoon(t *testing.T) time.Time {
@@ -129,7 +129,7 @@ func fixtureTemp(t *testing.T, hour string) float64 {
 
 func TestWeatherForLisbon(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, lisbonNoon(t), "")
+	a := s.app(t, lisbonNoon(t))
 	// nearest station has -99 in the newest hour but a valid reading earlier: the earlier one must be used
 	near := a.weather.nearestStations(38.7223, -9.1393, 1)[0]
 	s.obsBody.Store(fmt.Sprintf(`{"2026-11-21T10:00":{"%[1]s":{"temperatura":13.4}},"2026-11-21T11:00":{"%[1]s":{"temperatura":-99.0}}}`, near.ID))
@@ -168,7 +168,7 @@ func TestWeatherForLisbon(t *testing.T) {
 func TestWeatherFallsBackToForecastWhenObservationsFail(t *testing.T) {
 	s := newStub(t)
 	s.obsStatus.Store(500)
-	a := s.app(t, lisbonNoon(t), "")
+	a := s.app(t, lisbonNoon(t))
 	out, err := a.weather.Get(context.Background(), 38.7223, -9.1393)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestWeatherFallsBackToForecastWhenObservationsFail(t *testing.T) {
 }
 
 func TestWeatherOutsideCoverage(t *testing.T) {
-	a := newStub(t).app(t, lisbonNoon(t), "")
+	a := newStub(t).app(t, lisbonNoon(t))
 	if _, err := a.weather.Get(context.Background(), 40.4168, -3.7038); !errors.Is(err, errOutsideCoverage) {
 		t.Fatalf("Madrid should be outside IPMA coverage, got %v", err)
 	}
@@ -188,7 +188,7 @@ func TestWeatherOutsideCoverage(t *testing.T) {
 
 func TestWeatherUsesForecastCacheAndIcons(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, lisbonNoon(t), "")
+	a := s.app(t, lisbonNoon(t))
 	for i := 0; i < 3; i++ {
 		if _, err := a.weather.Get(context.Background(), 38.7223, -9.1393); err != nil {
 			t.Fatal(err)
@@ -212,7 +212,7 @@ func TestWeatherUsesForecastCacheAndIcons(t *testing.T) {
 
 func TestFlightsRouteTypeAndFilters(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, time.Now(), "")
+	a := s.app(t, time.Now())
 	// centred on the Air France A350 in the fixture
 	q := FlightQuery{Lat: 48.380251, Lon: 8.27444, RadiusKm: 10, AltMin: 0, AltMax: 60000, N: 5}
 	out, err := a.flights.Get(context.Background(), q)
@@ -255,7 +255,7 @@ func TestFlightsRouteTypeAndFilters(t *testing.T) {
 
 func TestFlightsCachesAndSurvivesUpstreamFailure(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, time.Now(), "")
+	a := s.app(t, time.Now())
 	q := FlightQuery{Lat: 48.0, Lon: 10.0, RadiusKm: 100, AltMin: 0, AltMax: 60000, N: 5}
 	for i := 0; i < 3; i++ {
 		if _, err := a.flights.Get(context.Background(), q); err != nil {
@@ -298,7 +298,7 @@ const rssFixture = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><ch
 
 func TestHeadlinesNewestFirstDedupedAndTrimmed(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, time.Now(), "")
+	a := s.app(t, time.Now())
 	out, err := a.headline.Get(context.Background(), HeadlineQuery{Q: "tram", HL: "pt-PT", GL: "PT", CEID: "PT:pt-150", N: 3})
 	if err != nil {
 		t.Fatal(err)
@@ -351,45 +351,45 @@ func TestCacheStaleOnErrorAndTTL(t *testing.T) {
 
 func TestHTTPLayer(t *testing.T) {
 	s := newStub(t)
-	h := s.app(t, lisbonNoon(t), "secret").routes()
-	get := func(path, token string) (int, string) {
+	h := s.app(t, lisbonNoon(t)).routes()
+	get := func(path string, signed bool) (int, string) {
 		req := httptest.NewRequest("GET", path, nil)
-		if token != "" {
-			req.Header.Set("X-Token", token)
+		if signed {
+			req = signedRequest(t, "GET", path, testNow, "")
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.String()
 	}
-	if code, _ := get("/healthz", ""); code != 200 {
+	if code, _ := get("/healthz", false); code != 200 {
 		t.Fatalf("healthz: %d", code)
 	}
-	if code, _ := get("/v1/weather?lat=38.7&lon=-9.1", ""); code != 401 {
-		t.Fatalf("missing token: %d", code)
+	if code, _ := get("/v1/weather?lat=38.7&lon=-9.1", false); code != 401 {
+		t.Fatalf("unsigned: %d", code)
 	}
-	if code, body := get("/v1/weather?lat=38.7&lon=-9.1", "secret"); code != 200 || !strings.Contains(body, `"loc":"Lisboa"`) {
+	if code, body := get("/v1/weather?lat=38.7&lon=-9.1", true); code != 200 || !strings.Contains(body, `"loc":"Lisboa"`) {
 		t.Fatalf("weather: %d %s", code, body)
 	}
 	for _, bad := range []string{"/v1/weather?lat=abc&lon=1", "/v1/weather?lat=95&lon=1", "/v1/weather?lat=1", "/v1/flights?lat=1&lon=1&radius_km=999", "/v1/flights?lat=1&lon=1&alt_min=5000&alt_max=100", "/v1/headlines?q=", "/v1/headlines?q=x&n=99"} {
-		if code, body := get(bad, "secret"); code != 400 || !strings.Contains(body, "error") {
+		if code, body := get(bad, true); code != 400 || !strings.Contains(body, "error") {
 			t.Errorf("%s: want 400 with an error, got %d %s", bad, code, body)
 		}
 	}
-	if code, _ := get("/v1/weather?lat=40.4168&lon=-3.7038", "secret"); code != 422 {
+	if code, _ := get("/v1/weather?lat=40.4168&lon=-3.7038", true); code != 422 {
 		t.Errorf("outside coverage should be 422, got %d", code)
 	}
-	if code, body := get("/v1/flights?lat=48.38&lon=8.27&radius_km=15", "secret"); code != 200 || !strings.Contains(body, `"planes"`) {
+	if code, body := get("/v1/flights?lat=48.38&lon=8.27&radius_km=15", true); code != 200 || !strings.Contains(body, `"planes"`) {
 		t.Errorf("flights: %d %s", code, body)
 	}
 	s.adsbStatus.Store(500)
-	if code, body := get("/v1/flights?lat=10&lon=10&radius_km=15", "secret"); code != 502 || strings.Contains(body, "127.0.0.1") {
+	if code, body := get("/v1/flights?lat=10&lon=10&radius_km=15", true); code != 502 || strings.Contains(body, "127.0.0.1") {
 		t.Errorf("upstream failure should be 502 without leaking the upstream: %d %s", code, body)
 	}
 }
 
 func TestLogos(t *testing.T) {
 	s := newStub(t)
-	a := s.app(t, lisbonNoon(t), "secret")
+	a := s.app(t, lisbonNoon(t))
 	dir := t.TempDir()
 	good := make([]byte, logoBytes)
 	good[0], good[511] = 0xF8, 0x1F
@@ -397,28 +397,28 @@ func TestLogos(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "XX.bin"), []byte("short"), 0o644)
 	a.logoDir = dir
 	h := a.routes()
-	get := func(path, token string) (int, []byte) {
+	get := func(path string, signed bool) (int, []byte) {
 		req := httptest.NewRequest("GET", path, nil)
-		if token != "" {
-			req.Header.Set("X-Token", token)
+		if signed {
+			req = signedRequest(t, "GET", path, testNow, "")
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.Bytes()
 	}
-	if code, b := get("/v1/logo/tp", "secret"); code != 200 || len(b) != logoBytes || b[0] != 0xF8 {
+	if code, b := get("/v1/logo/tp", true); code != 200 || len(b) != logoBytes || b[0] != 0xF8 {
 		t.Fatalf("logo: %d, %d bytes", code, len(b))
 	}
-	if code, _ := get("/v1/logo/TP", ""); code != 401 {
-		t.Errorf("missing token: %d", code)
+	if code, _ := get("/v1/logo/TP", false); code != 401 {
+		t.Errorf("unsigned: %d", code)
 	}
 	for _, p := range []string{"/v1/logo/ZZ", "/v1/logo/XX", "/v1/logo/..", "/v1/logo/TAP", "/v1/logo/%2e%2e", "/v1/logo/T%2FP"} {
-		if code, b := get(p, "secret"); code == 200 || len(b) == logoBytes { // the mux may redirect a cleaned path; it must never serve one
+		if code, b := get(p, true); code == 200 || len(b) == logoBytes { // the mux may redirect a cleaned path; it must never serve one
 			t.Errorf("%s: served a file (%d)", p, code)
 		}
 	}
 	a.logoDir = ""
-	if code, _ := get("/v1/logo/TP", "secret"); code != 404 {
+	if code, _ := get("/v1/logo/TP", true); code != 404 {
 		t.Errorf("no logo folder: %d", code)
 	}
 }

@@ -11,11 +11,44 @@ cheap request instead of fetching and parsing large responses from several serve
 | `GET /v1/logo/{iata}` | 512 bytes: a 16x16 airline logo, RGB565 big-endian; 404 if none | files in `LOGO_DIR` (not in the image) |
 | `GET /healthz` | `ok` | |
 
-Run locally: `docker build -t ledmatrix-api service && docker run -p 8080:8080 ledmatrix-api`.
-Test: `docker run --rm -v "$PWD/service":/src -w /src golang:1.25 go test ./...`.
-Configuration (environment): `LISTEN` (default `:8080`), `API_TOKEN` (sent as `X-Token`; leave it unset only on a network nobody else can reach: a service on the internet must have one). When it is set, every `/v1/` endpoint, logos included, answers
-401 without it, and `/healthz` stays open. Enter the same value in the portal's "Service access token" field;
-the display sends it to the service host only.
+Run locally (no secret needed, nothing is checked; for your own computer only):
+`docker build -t ledmatrix-api service && docker run -e AUTH_OFF=1 -p 8080:8080 ledmatrix-api`.
+Test: `docker run --rm -v "$PWD":/src -w /src/service golang:1.25 go test ./...` (mount the whole repository: the tests read
+`shared/device-auth-vectors.json`).
+
+## Authentication
+
+There is no token. The display signs every request with a key of its own, and every `/v1/` endpoint, logos included,
+answers `401` unless the signature is valid. `GET /healthz` stays open. The scheme is written down in
+[`shared/device-auth.md`](../shared/device-auth.md) (headers `X-Device`, `X-Timestamp`, `X-Signature`; known-answer
+vectors in `shared/device-auth-vectors.json`); the code is `auth.go`.
+
+Configuration (environment):
+
+| Variable | Meaning |
+| --- | --- |
+| `LISTEN` | listen address, default `:8080` |
+| `MASTER_SECRET` | **Required** (or `AUTH_OFF=1`). Text only you know, at least 32 characters; whitespace around it (space, tab, CR, LF) is removed. Every device key is derived from it: key = HMAC-SHA256(master secret, device ID). The service keeps no device keys, only this secret. |
+| `REVOKED_DEVICES` | Optional. Comma-separated device IDs (12 lowercase hex characters, the board's MAC) that are refused with `revoked` even with a valid signature. A bad ID stops the service from starting. Remove an ID to let the device back in: nothing is ever banned for good. |
+| `PUBLIC_HOST` | Optional. The host name the display uses, for when a proxy rewrites the `Host` header. When set it is used instead of the request's `Host` in the signed text (lower case, no port). |
+| `AUTH_OFF` | `1` turns the check off, for local development only; the service logs a loud warning at start. It refuses to start if `MASTER_SECRET` is also set, and it refuses to start with neither (it never runs open by accident). |
+| `LOGO_DIR` | Optional folder of `<IATA>.bin` logo files. |
+
+Make a master secret with `openssl rand -hex 32` and keep it out of the repository, tickets, logs and chat. **Back it up
+offline** (a password manager, or paper in a safe place): the display's key is derived from it, and once the key has
+been burned into the display's chip a lost master secret cannot be recovered, so the display would be locked out of this
+service for good. Changing the master secret locks out every display that was provisioned with the old one.
+
+A refusal is `401` with `{"error": "<a plain sentence>", "reason": "<code>"}`; the codes are `missing`, `malformed`,
+`bad_signature`, `revoked` and `clock_skew` (the last also carries `serverTime`, Unix seconds, so the display can correct
+its clock). The service logs one line per refusal with the device ID and the reason, never a key, a signature or the
+secret, and at most once per device and reason per minute (and 30 lines per minute in all), so a scanner cannot flood
+the log.
+
+The body is part of the signature. The display sends only `GET`, so a `GET` or `HEAD` that carries a body (a
+`Content-Length` other than 0, or any `Transfer-Encoding`) is refused as `malformed` and its body is never read; any
+other method may carry at most 4 KB, read before the signature is checked (`413` above that), so a caller who cannot
+sign cannot make the service hold much memory.
 
 ## Behaviour worth knowing
 

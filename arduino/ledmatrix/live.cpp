@@ -6,6 +6,8 @@
 #include <lwip/netdb.h>
 
 #include "cycle.h"
+#include "deviceauth.h"
+#include "identity.h"
 #include "problems.h"
 #include "protect.h"
 
@@ -233,6 +235,8 @@ struct Reply {
   const char *family = "";
   String error;
   uint32_t ms = 0;
+  devauth::Refusal refusal;  // what the service said in a 401 (httpsGet fills it)
+  bool authProblem = false;  // the request was refused for authentication, or the board could not sign it (serviceGet sets it)
 };
 
 // One HTTPS request at a time. The data task refreshes everything right after a settings save, and the portal's
@@ -248,19 +252,32 @@ struct NetTurn {
 };
 
 // GET https://host/path. The body is written to body[] (NUL-terminated); returns its length, or -1.
-// token (optional) is sent as the X-Token header; only the owner's service may be given one. This is raw HTTPS on
-// a socket that follows no redirects (a 3xx is just a failed status), so the token can never travel to another
-// host. Keep it that way: do not add redirect handling without dropping the header on a host change.
-int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply &r, const char *token = "") {
+// sign adds the three device-signature headers (shared/device-auth.md); only the owner's service may be given them. This is
+// raw HTTPS on a socket that follows no redirects (a 3xx is just a failed status), so the signature can never travel to another
+// host. Keep it that way: do not add redirect handling without dropping the headers on a host change. A 401 body is read into
+// r.refusal.
+int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply &r, bool sign = false) {
   NetTurn turn;
   if (!turn.ok) { r.error = PROBLEM_RAW_BUSY; return -1; }
   uint32_t t0 = millis();
+  // The owner's service gets its host name in lower case, the same text that is signed. Other hosts are written as given.
+  char hostLc[devauth::HOST_MAX + 1] = "";
+  if (sign && !devauth::lowerHost(host, hostLc, sizeof(hostLc))) { r.error = PROBLEM_RAW_NO_ADDRESS; return -1; }  // not a host name (a damaged saved value)
   NetworkClientSecure c;
   c.setTimeout(5000);
   if (!connectDual(c, host, r.family, r.error)) { r.ms = millis() - t0; return -1; }
-  // one write, so the request leaves as one TLS record as before; with no token the bytes are unchanged
-  String req = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: ledmatrix\r\nAccept: application/json\r\nAccept-Encoding: identity\r\n";
-  if (token && token[0]) { req += "X-Token: "; req += token; req += "\r\n"; }
+  // The headers are signed now, after the connection is up, so the timestamp is as fresh as it can be.
+  char authHeaders[devauth::HEADERS_CAP] = "";
+  if (sign && !identity::signGet(hostLc, path.c_str(), authHeaders, sizeof(authHeaders))) {
+    c.stop();
+    r.ms = millis() - t0;
+    r.error = PROBLEM_RAW_SIGN_FAILED;
+    r.authProblem = true;
+    return -1;
+  }
+  // one write, so the request leaves as one TLS record as before; unsigned, the bytes are unchanged
+  String req = "GET " + path + " HTTP/1.1\r\nHost: " + (sign ? hostLc : host) + "\r\nUser-Agent: ledmatrix\r\nAccept: application/json\r\nAccept-Encoding: identity\r\n";
+  req += authHeaders;
   req += "Connection: close\r\n\r\n";
   c.print(req);
   String statusLine = c.readStringUntil('\n');
@@ -280,17 +297,48 @@ int httpsGet(const char *host, const String &path, char *body, size_t cap, Reply
   if (r.status != 200) {
     // status 0: no status line came (the server hung up, or nothing arrived in 5 s); "HTTP 0" would tell the owner nothing
     r.error = r.status ? "HTTP " + String(r.status) : String(PROBLEM_RAW_NO_ANSWER);
+    if (r.status == 401) devauth::parseRefusal(body, n, r.refusal);
     return -1;
   }
   return (int)n;
 }
 
-// The only way the fetchers reach the service: adds the saved access token and words a 401 plainly
-// (the message ends up in /api/live and the portal's problem list, so it must not be a bare "HTTP 401").
+// The raw text (problems.h) for a reason the service gave, or nullptr for one this firmware does not know.
+const char *refusalRaw(devauth::Reason why) {
+  switch (why) {
+    case devauth::Reason::Missing: return PROBLEM_RAW_AUTH_MISSING;
+    case devauth::Reason::Malformed: return PROBLEM_RAW_AUTH_MALFORMED;
+    case devauth::Reason::BadSignature: return PROBLEM_RAW_AUTH_BAD_SIGNATURE;
+    case devauth::Reason::Revoked: return PROBLEM_RAW_AUTH_REVOKED;
+    case devauth::Reason::ClockSkew: return PROBLEM_RAW_AUTH_CLOCK_SKEW;
+    case devauth::Reason::Unknown: break;
+  }
+  return nullptr;
+}
+
+// The only way the fetchers reach the service: signs the request and words a 401 plainly (the message ends up in /api/live and
+// the portal's problem list, so it must not be a bare "HTTP 401"). Everything here runs on the data task, never on the render task.
+//  - A board that cannot sign (no identity record, a record for another board, ...) sends nothing: the plain reason comes back.
+//  - clock_skew: the service's time is stored as an offset and the same request is sent once more. Once, not in a loop.
+//  - Any other refusal is just a failed fetch: the caller's normal slow schedule applies, nothing is wiped, the last data stays.
 int serviceGet(const Settings &cfg, const String &path, char *body, size_t cap, Reply &r) {
-  int n = httpsGet(cfg.serviceHost, path, body, cap, r, cfg.serviceToken);
-  if (n < 0 && r.status == 401)
-    r.error = cfg.serviceToken[0] ? "access token refused (HTTP 401)" : "service needs an access token (HTTP 401)";
+  if (identity::status() != devauth::Identity::Ok) {
+    r.error = identity::rawProblem();
+    r.authProblem = true;
+    return -1;
+  }
+  int n = httpsGet(cfg.serviceHost, path, body, cap, r, true);
+  if (n < 0 && r.status == 401 && r.refusal.reason == devauth::Reason::ClockSkew && r.refusal.hasServerTime) {
+    identity::noteServerTime(r.refusal.serverTime);
+    Serial.println("LIVE the service's clock differs from the board's: signing with its time, trying once more");
+    r = Reply();
+    n = httpsGet(cfg.serviceHost, path, body, cap, r, true);
+  }
+  if (n < 0 && r.status == 401) {
+    r.authProblem = true;
+    const char *raw = refusalRaw(r.refusal.reason);
+    if (raw) r.error = raw;  // an unknown reason stays "HTTP 401"
+  }
   return n;
 }
 
@@ -400,14 +448,16 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
   unlock();
 }
 
-bool fetchFlights(const Settings &cfg) {
+// The three fetchers return whether the fetch worked. `refused` is set when it failed because the service refused the board's
+// signature or the board cannot sign (Reply::authProblem): the caller then waits longer than its normal retry (devauth::retryDelayMs).
+bool fetchFlights(const Settings &cfg, bool &refused) {
   // 10 planes fit: a plane is about 200 bytes (260 with every field at its usual longest), so 2 to 3 KB. A longer answer
   // would be cut and fail as "unexpected answer" rather than show half a list.
   char body[4096];
   Reply r;
   String path = "/v1/flights?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4) + "&radius_km=" + String(cfg.radiusKm) +
                 "&alt_min=" + String(cfg.altMinFt) + "&alt_max=" + String(cfg.altMaxFt) + "&n=" + String(cfg.cyclePlanes ? CYCLE_MAX : 5);
-  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Flights, r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { refused = r.authProblem; setError(ProblemKind::Flights, r.error); return false; }
   JsonDocument doc;
   if (deserializeJson(doc, body)) { setError(ProblemKind::Flights, PROBLEM_RAW_UNEXPECTED); return false; }
   uint32_t now = millis();
@@ -455,11 +505,11 @@ bool fetchFlights(const Settings &cfg) {
   return true;
 }
 
-bool fetchWeather(const Settings &cfg) {
+bool fetchWeather(const Settings &cfg, bool &refused) {
   char body[1024];
   Reply r;
   String path = "/v1/weather?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4);
-  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Weather, r.error); return false; }
+  if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { refused = r.authProblem; setError(ProblemKind::Weather, r.error); return false; }
   JsonDocument doc;
   if (deserializeJson(doc, body)) { setError(ProblemKind::Weather, PROBLEM_RAW_UNEXPECTED); return false; }
   LiveWeather w;
@@ -482,7 +532,7 @@ bool fetchWeather(const Settings &cfg) {
   return true;
 }
 
-bool fetchNews(const Settings &cfg) {
+bool fetchNews(const Settings &cfg, bool &refused) {
   bool anyOk = false, anyFail = false;
   static bool firstPass[5] = {true, true, true, true, true};
   for (int i = 0; i < 5; i++) {
@@ -490,7 +540,7 @@ bool fetchNews(const Settings &cfg) {
     char body[2048];
     Reply r;
     String path = "/v1/headlines?n=3&q=" + urlEncode(cfg.queries[i]);
-    if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError(ProblemKind::Headlines, r.error); anyFail = true; continue; }
+    if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { if (r.authProblem) refused = true; setError(ProblemKind::Headlines, r.error); anyFail = true; continue; }
     JsonDocument doc;
     if (deserializeJson(doc, body)) { setError(ProblemKind::Headlines, PROBLEM_RAW_UNEXPECTED); anyFail = true; continue; }
     anyOk = true;
@@ -529,7 +579,6 @@ uint32_t settingsKey(const Settings &c) {
   snprintf(buf, sizeof(buf), "%s|%d%d%d|%.4f|%.4f|%u|%d|%d", c.serviceHost, c.showFlights, c.showWeather, c.showNews, c.lat, c.lon, c.radiusKm, (int)c.altMinFt, (int)c.altMaxFt);
   uint32_t h = fnv(buf);
   for (int i = 0; i < 5; i++) h ^= fnv(c.queries[i]) + i;
-  h ^= fnv(c.serviceToken) * 2654435761u;  // a changed token refreshes straight away; hashed, never formatted into buf or a log
   return h;
 }
 
@@ -563,6 +612,7 @@ void dataTask(void *) {
     if (synced && !announcedTime) {
       announcedTime = true;
       Serial.println("LIVE clock synchronised");
+      identity::clearClockOffset();  // NTP set the clock: a stored difference to the service's time is stale
       noteWorking(ProblemKind::Clock);
     }
     // No time from the servers although the Wi-Fi has been up for a minute: nothing secure can work without it, so say so in
@@ -594,21 +644,24 @@ void dataTask(void *) {
 
     if (synced && cfg.serviceHost[0] && WiFi.status() == WL_CONNECTED) {
       if (cfg.showFlights && cfg.hasLocation && (int32_t)(now - nextF) >= 0) {
-        bool ok = fetchFlights(cfg);
-        nextF = now + (ok ? FLIGHTS_EVERY_MS : 15000);
+        bool refused = false;
+        bool ok = fetchFlights(cfg, refused);
+        nextF = now + (ok ? FLIGHTS_EVERY_MS : devauth::retryDelayMs(refused, 15000));
         Serial.printf("LIVE flights %s\n", ok ? "ok" : "failed");
       }
       if (cfg.showWeather && cfg.hasLocation && (int32_t)(now - nextW) >= 0) {
-        bool ok = fetchWeather(cfg);
-        nextW = now + (ok ? WEATHER_EVERY_MS : RETRY_WEATHER_MS);
+        bool refused = false;
+        bool ok = fetchWeather(cfg, refused);
+        nextW = now + (ok ? WEATHER_EVERY_MS : devauth::retryDelayMs(refused, RETRY_WEATHER_MS));
         Serial.printf("LIVE weather %s\n", ok ? "ok" : "failed");
       }
       if (cfg.showNews && (int32_t)(now - nextN) >= 0) {
         bool any = false;
         for (int i = 0; i < 5; i++) any |= cfg.queries[i][0] != 0;
         if (any) {
-          bool ok = fetchNews(cfg);
-          nextN = now + (ok ? NEWS_EVERY_MS : RETRY_NEWS_MS);
+          bool refused = false;
+          bool ok = fetchNews(cfg, refused);
+          nextN = now + (ok ? NEWS_EVERY_MS : devauth::retryDelayMs(refused, RETRY_NEWS_MS));
           Serial.printf("LIVE headlines %s\n", ok ? "ok" : "failed");
         } else {
           nextN = now + 60000;
@@ -815,8 +868,8 @@ String liveStatusJson() {
 // an IPv6-only host, an IPv4-only host (the service), and a dual-stack host.
 String liveSelfTestJson(const Settings &cfg) {
   struct Target { const char *label; String host; String path; bool service; };
-  // /healthz is not token-protected, so it could not show a wrong token. /v1/logo/ZZ checks the token first and then
-  // answers 404 (no logo) without an upstream call, so 200 or 404 means reachable and the token (if any) is accepted.
+  // /healthz needs no signature, so it could not show a wrong key. /v1/logo/ZZ checks the signature first and then
+  // answers 404 (no logo) without an upstream call, so 200 or 404 means reachable and the board's signature is accepted.
   Target targets[] = {
     {"service (IPv4 only today)", cfg.serviceHost, "/v1/logo/ZZ", true},
     {"IPv6-only host", "api6.ipify.org", "/", false},
@@ -829,20 +882,22 @@ String liveSelfTestJson(const Settings &cfg) {
     JsonObject o = arr.add<JsonObject>();
     o["what"] = t.label;
     if (t.host.length() == 0) { o["result"] = "skipped: no service address saved"; continue; }
-    char body[160];
+    char body[256];  // a refusal is about 100 bytes of JSON
     Reply r;
-    // The access token goes to the owner's service only; the third-party hosts get a request without it.
-    int n = httpsGet(t.host.c_str(), t.path, body, sizeof(body), r, t.service ? cfg.serviceToken : "");
+    // The signature goes to the owner's service only (serviceGet signs, and retries once when the clock is refused);
+    // the third-party hosts get a plain request.
+    int n = t.service ? serviceGet(cfg, t.path, body, sizeof(body), r) : httpsGet(t.host.c_str(), t.path, body, sizeof(body), r);
     o["host"] = t.host;
     o["family"] = r.family;
     o["ms"] = r.ms;
     if (t.service) {
       bool ok = r.status == 200 || r.status == 404;
       o["ok"] = ok;
-      if (r.status == 401)
-        o["error"] = cfg.serviceToken[0] ? "The service refused the access token. Check the token in the Data service section."
-                                         : "The service needs an access token. Enter it in the Data service section.";
-      else if (!ok) o["error"] = r.error;
+      if (r.authProblem) {  // refused, or the board cannot sign: the same plain sentence the problem list shows
+        char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+        problemWords(r.error.c_str(), why, sizeof(why), detail, sizeof(detail));
+        o["error"] = why;  // a char array (not a const one) is copied into the document, so the buffer may go out of scope
+      } else if (!ok) o["error"] = r.error;
       continue;
     }
     o["ok"] = n >= 0 || r.status == 200;

@@ -1,0 +1,115 @@
+{
+ "about": "Known-answer vectors for device authentication scheme v1 (shared/device-auth.md). All values are placeholders, computed with Python hmac/hashlib; the Go service, the C++ firmware code and tools/provision.py must reproduce every one.",
+ "primitive_rfc4231_case2": {
+  "key_hex": "4a656665",
+  "message": "what do ya want for nothing?",
+  "hmac": "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+ },
+ "master_secret": "example-master-secret-0123456789abcdef",
+ "master_secret_with_whitespace": "  example-master-secret-0123456789abcdef\r\n",
+ "device_id": "aabbccddeeff",
+ "device_key_hex": "c16a5445bb2a5a2c8fbe377345acd3970a075e44fc63ae126393c28d6cf15ad9",
+ "requests": [
+  {
+   "name": "flights, empty body",
+   "method": "GET",
+   "host": "ledmatrix.example.com",
+   "uri": "/v1/flights?lat=38.7&lon=-9.1",
+   "timestamp": 1796000000,
+   "body": "",
+   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "canonical": "v1\nGET\nledmatrix.example.com\n/v1/flights?lat=38.7&lon=-9.1\n1796000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "signature": "208f8709d24c52ca3f5c1f981443f6294c0b961f9b9ad3f0e9aee9e442fd7c1d"
+  },
+  {
+   "name": "weather, other query",
+   "method": "GET",
+   "host": "ledmatrix.example.com",
+   "uri": "/v1/weather?lat=38.7&lon=-9.1",
+   "timestamp": 1796000060,
+   "body": "",
+   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "canonical": "v1\nGET\nledmatrix.example.com\n/v1/weather?lat=38.7&lon=-9.1\n1796000060\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "signature": "ea93d49c1da73b3879cd7e501f9152bad5ed19d93cc72612699857e3c7254884"
+  },
+  {
+   "name": "logo, no query",
+   "method": "GET",
+   "host": "ledmatrix.example.com",
+   "uri": "/v1/logo/ZZ",
+   "timestamp": 1796000120,
+   "body": "",
+   "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "canonical": "v1\nGET\nledmatrix.example.com\n/v1/logo/ZZ\n1796000120\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "signature": "007bb3758d32107b668b14be7edfa7322fd2bf4ea2b92df0d1bcf4193405874f"
+  },
+  {
+   "name": "a body is part of the signature",
+   "method": "POST",
+   "host": "ledmatrix.example.com",
+   "uri": "/v1/example",
+   "timestamp": 1796000000,
+   "body": "{\"a\":1}",
+   "body_sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+   "canonical": "v1\nPOST\nledmatrix.example.com\n/v1/example\n1796000000\n015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+   "signature": "2d83d7c02b7de2e3aefc3390e4804e462a70a0597f16c19e66ac5f9967541065"
+  }
+ ],
+ "length_table": {
+  "about": "message byte i = (i*7+3) & 0xff; HMAC-SHA256 under device_key_hex",
+  "rows": [
+   {
+    "length": 0,
+    "hmac": "5f6758f80f1ed267a20c2e782f6d56b0373d0db1416dd971f0d5b971e822bb0e"
+   },
+   {
+    "length": 1,
+    "hmac": "5d9146b6f772c6391e2ffd79e1db680db2f60506c59705ee1f35cc0f6bc4a36c"
+   },
+   {
+    "length": 55,
+    "hmac": "6cafb15ed73129fe97a36bec8e028ca9bee73e1f00c2adc1e22d1059cd6b7920"
+   },
+   {
+    "length": 56,
+    "hmac": "610ac94c3731083e59a14bc88ff6a15d4a8e22e11103e4fa68b946edaa7d3dc6"
+   },
+   {
+    "length": 63,
+    "hmac": "4257e5805ca6bc166823b06dd11c6e937da16ba4fae8ab3c6d18552197289d7b"
+   },
+   {
+    "length": 64,
+    "hmac": "e180b0296d5f5f799f2e8893e6bccc10a582ea37f5aec01a5575354f01c8dd67"
+   },
+   {
+    "length": 65,
+    "hmac": "abf2e91218ef8559b0e2a324d14246be964194e08fb3b06fabe90d8069315572"
+   },
+   {
+    "length": 119,
+    "hmac": "879e4aa622a7a70ea96f0aa251b7bd2dbc579f8a7ff8e0e35f32650b744beb84"
+   },
+   {
+    "length": 120,
+    "hmac": "7f2bb43512b6caae8d11e85ad0897e1d9017df4dadae25554138724fefbcd75f"
+   },
+   {
+    "length": 128,
+    "hmac": "7fb00af00f24d9892b3e0682db551f616e99602dfca992c6b517f51d4d82f8b1"
+   },
+   {
+    "length": 200,
+    "hmac": "b18f08215be486b40f2539985b3aaeaaf05a60b341642ea5b93d44ba4c261fc3"
+   }
+  ]
+ },
+ "bad_device_ids": [
+  "",
+  "AABBCCDDEEFF",
+  "aabbccddeef",
+  "aabbccddeeff0",
+  "aabbccddeefg",
+  "aabbccddee:f"
+ ]
+}

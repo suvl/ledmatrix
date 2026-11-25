@@ -3,7 +3,7 @@ name: ledmatrix-api image
 on:
   push:
     branches: [main]
-    paths: ["service/**", ".github/workflows/service.yml"]
+    paths: ["service/**", "shared/device-auth-vectors.json", ".github/workflows/service.yml"]
   workflow_dispatch:
 
 permissions:

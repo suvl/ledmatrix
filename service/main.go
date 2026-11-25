@@ -8,13 +8,18 @@
 //	GET /v1/headlines?q=&n=&hl=&gl=&ceid=
 //	GET /v1/logo/{iata}   512 bytes, 16x16 RGB565 big-endian; 404 when the airline has none
 //
-// Configuration (environment): LISTEN (default :8080), API_TOKEN (optional; when set, requests
-// must send it in the X-Token header), LOGO_DIR (optional folder of <IATA>.bin logo files).
+// Every /v1 request must be signed by the board (X-Device, X-Timestamp, X-Signature; scheme v1 in
+// shared/device-auth.md, code in auth.go). /healthz is open.
+//
+// Configuration (environment): LISTEN (default :8080); MASTER_SECRET (required, at least 32
+// characters; the device keys are derived from it) or AUTH_OFF=1 (local development only: nothing is
+// checked; the service refuses to start with neither, or with both); REVOKED_DEVICES (optional,
+// comma-separated device IDs); PUBLIC_HOST (optional, the host name the board uses, when a proxy
+// rewrites the Host header); LOGO_DIR (optional folder of <IATA>.bin logo files).
 package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -40,7 +45,7 @@ type app struct {
 	weather  *Weather
 	flights  *Flights
 	headline *Headlines
-	token    string
+	auth     *authenticator
 	logoDir  string // folder of <IATA>.bin logo files; empty = no logos
 	sem      chan struct{}
 }
@@ -73,13 +78,10 @@ func strParam(r *http.Request, name, def string) string {
 	return def
 }
 
-// wrap adds the common behaviour: token check, load limit, JSON output, errors without detail leaks.
+// wrap adds the common behaviour: load limit, JSON output, errors without detail leaks. The signature
+// check is not here: routes() applies it to every route registered with signed.
 func (a *app) wrap(h func(*http.Request) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if a.token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(a.token)) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or wrong token"})
-			return
-		}
 		select {
 		case a.sem <- struct{}{}:
 			defer func() { <-a.sem }()
@@ -120,8 +122,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
-	mux.HandleFunc("GET /v1/weather", a.wrap(func(r *http.Request) (any, error) {
+	// Every route is registered with one of these two, so none can be added without choosing.
+	// public ignores the signature headers completely: /healthz, and later the firmware update
+	// manifest and download, which a board whose key is refused must still be able to reach.
+	public := func(pattern string, h http.HandlerFunc) { mux.HandleFunc(pattern, h) }
+	signed := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, a.auth.require(h)) }
+	public("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	signed("GET /v1/weather", a.wrap(func(r *http.Request) (any, error) {
 		lat, err := floatParam(r, "lat", -90, 90, nil)
 		if err != nil {
 			return nil, err
@@ -132,7 +139,7 @@ func (a *app) routes() http.Handler {
 		}
 		return a.weather.Get(r.Context(), lat, lon)
 	}))
-	mux.HandleFunc("GET /v1/flights", a.wrap(func(r *http.Request) (any, error) {
+	signed("GET /v1/flights", a.wrap(func(r *http.Request) (any, error) {
 		var q FlightQuery
 		var err error
 		def15, def0, defMax := 15.0, 0.0, 60000.0
@@ -162,7 +169,7 @@ func (a *app) routes() http.Handler {
 		}
 		return a.flights.Get(r.Context(), q)
 	}))
-	mux.HandleFunc("GET /v1/headlines", a.wrap(func(r *http.Request) (any, error) {
+	signed("GET /v1/headlines", a.wrap(func(r *http.Request) (any, error) {
 		q := HeadlineQuery{
 			Q:    r.URL.Query().Get("q"),
 			HL:   strParam(r, "hl", "pt-PT"),
@@ -178,7 +185,7 @@ func (a *app) routes() http.Handler {
 		}
 		return a.headline.Get(r.Context(), q)
 	}))
-	mux.HandleFunc("GET /v1/logo/{code}", a.logoHandler)
+	signed("GET /v1/logo/{code}", a.logoHandler)
 	return logRequests(mux)
 }
 
@@ -197,21 +204,26 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
-		log.Printf("%s %s %d %dms", r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds())
+		// %q: the decoded path is attacker-controlled text (%0a would otherwise start a forged log line)
+		log.Printf("%s %q %d %dms", r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds())
 	})
 }
 
-func newApp(up *Upstream, token string) (*app, error) {
+func newApp(up *Upstream, auth *authenticator) (*app, error) {
 	cache := NewCache()
 	w, err := NewWeather(cache, up)
 	if err != nil {
 		return nil, err
 	}
-	return &app{weather: w, flights: NewFlights(cache, up), headline: NewHeadlines(cache, up), token: token, sem: make(chan struct{}, 32)}, nil
+	return &app{weather: w, flights: NewFlights(cache, up), headline: NewHeadlines(cache, up), auth: auth, sem: make(chan struct{}, 32)}, nil
 }
 
 func main() {
-	a, err := newApp(NewUpstream(), os.Getenv("API_TOKEN"))
+	auth, err := authFromEnv(os.Getenv, log.Printf)
+	if err != nil {
+		log.Fatal(err)
+	}
+	a, err := newApp(NewUpstream(), auth)
 	if err != nil {
 		log.Fatal(err)
 	}
