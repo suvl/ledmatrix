@@ -17,7 +17,9 @@ const WHITE = [255, 255, 255], AMBER = [255, 176, 0], BLUE = [40, 110, 255], GRE
 
 function glcdCode(ch) { return ch === '°' ? 248 : ch.charCodeAt(0) & 255; }
 function w6(s, size) { return s.length * 6 * (size || 1); }
-function wTT(s) { let w = 0; for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; w += g ? g[3] : 4; } return w; }
+// Pixel width of a 4x6 string, as the panel's ttWidth(): every glyph's advance, minus the empty column after the last glyph
+// (a trailing degree ring keeps its gap there, like the panel).
+function wTT(s) { let w = 0; for (const ch of s) { const g = FONTS.tt.glyphs[ch.charCodeAt(0)]; w += g ? g[3] : 4; } return s.length && s[s.length - 1] !== '°' ? w - 1 : w; }
 function drawGlcd(fb, x, y, s, c, size) {
   size = size || 1;
   for (const ch of s) {
@@ -101,6 +103,8 @@ const FLIGHTS = [
   { chip: 'United · GUA-LAX', air: 'United', route: 'GUA-LAX', type: '737 MAX 8', from: 'Guatemala Aurora', to: 'Los Angeles Intl', alt: '9812ft', spd: '367mph', trk: '279°', vr: '-7ft/s', logo: 'orb' },
   { chip: 'Pan Am · JFK>SEA', air: 'PAN AM', route: 'JFK>SEA', type: 'B787-8', from: 'John F Kennedy Intl', to: 'Seattle Tacoma Intl', alt: '12240ft', spd: '380mph', trk: '301°', vr: '+9ft/s', logo: 'globe' },
 ];
+// Example weather the three weather layouts show (same values as the panel's demo weather).
+const WX = { loc: 'HOME', temp: '18', text: 'Partly cloudy', line: 'H21 L12 10%', icon: 'part', cols: [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']] };
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
 
@@ -123,30 +127,30 @@ const flightB = (fb, t, ctx) => {
 };
 const flightC = (fb, t, ctx) => {
   const f = FLIGHTS[state.flight];
-  T6(fb, ctx, 2, 1, f.air, WHITE, 60);
-  T6(fb, ctx, 2, 9, f.route, CYAN, 60);
-  TT(fb, ctx, 2, 21, f.type, AMBER, 60);
-  TT(fb, ctx, 2, 27, f.alt + ' ' + f.spd, GREY, 60);
-  TT(fb, ctx, 2, 32, f.trk + ' ' + f.vr, GREY, 60);
+  T6(fb, ctx, 2, 0, f.air, WHITE, 60);
+  T6(fb, ctx, 2, 8, f.route, CYAN, 60);
+  TT(fb, ctx, 2, 20, f.type, AMBER, 60);
+  TT(fb, ctx, 2, 26, f.alt + ' ' + f.spd, GREY, 60);
+  TT(fb, ctx, 2, 31, f.trk + ' ' + f.vr, GREY, 60);
 };
 const wxA = (fb, t, ctx) => {
-  wxIcon(fb, 1, 2, 'part', 16);
-  T6(fb, ctx, 21, 3, '18', WHITE, 26, 2); drawGlcd(fb, 45, 3, '°', WHITE, 1); drawGlcd(fb, 51, 3, 'C', WHITE, 1);
-  TT(fb, ctx, 2, 25, 'Partly cloudy', AMBER, 60);
-  TT(fb, ctx, 2, 31, 'H21 L12 rain 10%', GREY, 60);
+  wxIcon(fb, 1, 2, WX.icon, 16);
+  T6(fb, ctx, WX.temp.length === 1 ? 27 : 21, 3, WX.temp, WHITE, 26, 2); drawGlcd(fb, 45, 3, '°', WHITE, 1); drawGlcd(fb, 51, 3, 'C', WHITE, 1);
+  TT(fb, ctx, 2, 25, WX.text, AMBER, 60);
+  TT(fb, ctx, 2, 31, WX.line, GREY, 60);
 };
 const wxB = (fb, t, ctx) => {
-  TT(fb, ctx, 2, 7, 'HOME', AMBER, 60);
-  T6(fb, ctx, centerX(w6('18°C', 2)), 10, '18°C', WHITE, 62, 2);
-  TT(fb, ctx, centerX(wTT('Partly cloudy')), 31, 'Partly cloudy', GREY, 62);
+  const big = WX.temp + '°C';
+  TT(fb, ctx, 2, 7, (WX.loc || 'WEATHER').toUpperCase(), AMBER, 60);
+  T6(fb, ctx, centerX(w6(big, 2)), 10, big, WHITE, 62, 2);
+  TT(fb, ctx, centerX(wTT(WX.text)), 30, WX.text, GREY, 62);  // baseline 30: a 'y' descender reaches the baseline row, row 31 stays black
 };
 const wxC = (fb, t, ctx) => {
-  const cols = [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']];
-  cols.forEach(([lab, ic, tmp], i) => {
-    const x0 = 2 + i * 21;
-    TT(fb, ctx, x0 + Math.floor((20 - wTT(lab)) / 2), 7, lab, AMBER, 20);  // wTT counts the last gap, the panel's ttWidth does not
+  WX.cols.forEach(([lab, ic, tmp], i) => {
+    const x0 = 2 + i * 21;  // each column is 19 px wide, so the last one ends at x=62
+    TT(fb, ctx, x0 + Math.floor((19 - wTT(lab)) / 2), 7, lab, AMBER, 19);
     wxIcon(fb, x0 + 3, 10, ic, 12);
-    TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 20);
+    TT(fb, ctx, x0 + Math.floor((19 - wTT(tmp + '°')) / 2), 29, tmp + '°', WHITE, 19);
   });
 };
 const newsA = (fb, t, ctx) => {

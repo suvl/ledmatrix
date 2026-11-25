@@ -5,6 +5,9 @@
 #include <WiFi.h>
 #include <lwip/netdb.h>
 
+#include "cycle.h"
+#include "protect.h"
+
 namespace {
 
 const uint32_t PLANE_COOLDOWN_MS = 30UL * 60 * 1000;   // a plane is shown once, then not again for this long
@@ -14,6 +17,7 @@ const uint32_t NEWS_EVERY_MS = 30UL * 60 * 1000;
 const uint32_t RETRY_WEATHER_MS = 60UL * 1000;
 const uint32_t RETRY_NEWS_MS = 5UL * 60 * 1000;
 const int QUEUE_MAX = 3;
+const uint32_t CYCLE_LIST_MAX_AGE_MS = 2UL * 60 * 1000;  // cycle mode: with no successful fetch for this long the list is dropped (a fetch is due every 30 s)
 const int PLANE_LOG_MAX = 60;  // newest planes kept in RAM for the portal (about 4 KB); lost on restart
 
 SemaphoreHandle_t mu = nullptr;
@@ -31,11 +35,9 @@ struct Status {
   char lastLogoError[56] = "";
 } st;
 
-LivePlane planeQ[QUEUE_MAX];
+LivePlane planeQ[QUEUE_MAX];  // one-shot mode: planes waiting for their turn
 int planeQn = 0;
-bool planeActive = false;
-LivePlane planeCur;
-uint32_t planeUntil = 0;
+PlaneCycle<LivePlane> pc;     // the plane on the panel (both modes) and the cycle list from the last fetch, see cycle.h
 
 LiveNews newsQ[QUEUE_MAX];
 int newsQn = 0;
@@ -368,10 +370,12 @@ void ensureLogo(const Settings &cfg, const char *ai, int &budget) {
 }
 
 bool fetchFlights(const Settings &cfg) {
+  // 10 planes fit: a plane is about 200 bytes (260 with every field at its usual longest), so 2 to 3 KB. A longer answer
+  // would be cut and fail as "unexpected answer" rather than show half a list.
   char body[4096];
   Reply r;
   String path = "/v1/flights?lat=" + String(cfg.lat, 4) + "&lon=" + String(cfg.lon, 4) + "&radius_km=" + String(cfg.radiusKm) +
-                "&alt_min=" + String(cfg.altMinFt) + "&alt_max=" + String(cfg.altMaxFt) + "&n=5";
+                "&alt_min=" + String(cfg.altMinFt) + "&alt_max=" + String(cfg.altMaxFt) + "&n=" + String(cfg.cyclePlanes ? CYCLE_MAX : 5);
   if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { setError("flights", r.error); return false; }
   JsonDocument doc;
   if (deserializeJson(doc, body)) { setError("flights", "unexpected answer"); return false; }
@@ -383,12 +387,15 @@ bool fetchFlights(const Settings &cfg) {
   lock();
   st.planesInRange = ps.size();
   cp(st.family, sizeof(st.family), r.family);
+  // Every plane in range goes into the list the cycle uses; it is kept in both modes so switching the toggle on needs no
+  // wait for the next fetch. What differs is what happens to a plane the first time it is seen (not seen for 30 minutes).
+  pc.n = 0;
   for (JsonObject p : ps) {
     const char *id = p["id"] | "";
-    if (!id[0] || !planeIsNew(id, now) || planeQn >= QUEUE_MAX) continue;
-    if (!logoResolved(p["ai"] | "")) continue;  // logo not downloaded yet: not marked seen, so the next round tries again
-    LivePlane &q = planeQ[planeQn++];
-    q = LivePlane();
+    if (!id[0]) continue;
+    if (!logoResolved(p["ai"] | "")) continue;  // logo not downloaded yet: not listed or marked seen, so the next round tries again
+    bool isNew = planeIsNew(id, now);
+    LivePlane q;
     cp(q.id, sizeof(q.id), id);
     cp(q.cs, sizeof(q.cs), p["cs"]);
     cp(q.air, sizeof(q.air), p["air"]);
@@ -399,9 +406,17 @@ bool fetchFlights(const Settings &cfg) {
     cp(q.type, sizeof(q.type), p["ty"]);
     q.at = now;
     q.alt = p["alt"] | 0; q.spd = p["spd"] | 0; q.trk = p["trk"] | 0; q.vr = p["vr"] | 0; q.dst = p["dst"] | 0.0f;
-    planeMarkSeen(id, now);
-    logPlane(q);
+    if (pc.n < CYCLE_MAX && pc.find(q.id) < 0) pc.list[pc.n++] = q;
+    if (cfg.cyclePlanes) {
+      if (isNew) logPlane(q);       // logged once, when it first enters
+      planeMarkSeen(id, now);       // while it stays in range it stays "seen" (not logged again after 30 minutes); the cooldown runs from when it leaves
+    } else if (isNew && planeQn < QUEUE_MAX) {
+      planeQ[planeQn++] = q;
+      planeMarkSeen(id, now);
+      logPlane(q);
+    }
   }
+  pc.listReplaced(cfg.cyclePlanes);
   st.flightsOkAt = now ? now : 1;
   dropError("flights");
   unlock();
@@ -500,6 +515,7 @@ void dataTask(void *) {
   char tzApplied[sizeof(first.tzPosix)];
   strlcpy(tzApplied, first.tzPosix, sizeof(tzApplied));
   uint32_t nextF = 0, nextW = 0, nextN = 0, lastKey = 0;
+  bool lastCycle = first.cyclePlanes;
   bool announcedTime = false;
   for (;;) {
     uint32_t now = millis();
@@ -522,6 +538,8 @@ void dataTask(void *) {
     }
     uint32_t key = settingsKey(cfg);
     if (key != lastKey) { lastKey = key; nextF = nextW = nextN = now; }  // settings changed: refresh straight away
+    // The cycle toggle changes how many planes are asked for (5 or 10): fetch flights again now, but not weather or headlines.
+    if (cfg.cyclePlanes != lastCycle) { lastCycle = cfg.cyclePlanes; nextF = now; }
 
     if (synced && cfg.serviceHost[0] && WiFi.status() == WL_CONNECTED) {
       if (cfg.showFlights && cfg.hasLocation && (int32_t)(now - nextF) >= 0) {
@@ -578,17 +596,18 @@ LiveView liveView(uint32_t now, const Settings &cfg) {
   if (v.timeValid) localtime_r(&t, &v.now);
   lock();
 
-  if (planeActive && (int32_t)(now - planeUntil) >= 0) planeActive = false;
-  if (!planeActive && planeQn > 0 && cfg.showFlights) {
-    planeCur = planeQ[0];
-    for (int i = 1; i < planeQn; i++) planeQ[i - 1] = planeQ[i];
-    planeQn--;
-    planeActive = true;
-    planeUntil = now + (uint32_t)cfg.dwellSec * 1000;
-  }
-  if (planeActive) {
+  // Planes (cycle.h): one-shot queue by default, the whole radar in turn when cfg.cyclePlanes. The plane on the panel always
+  // finishes its turn; planes keep priority over headlines in both modes.
+  CycleFrame cf;
+  cf.now = now;
+  cf.dwellMs = (uint32_t)cfg.dwellSec * 1000;
+  cf.showFlights = cfg.showFlights;
+  cf.cycling = cfg.cyclePlanes;
+  // signed: a fetch that finished just after this frame's `now` was taken makes the age slightly negative, which is fresh
+  cf.listFresh = pc.n == 0 || (int32_t)(now - st.flightsOkAt) <= (int32_t)CYCLE_LIST_MAX_AGE_MS;
+  if (pc.frame(cf, planeQ, planeQn)) {
     v.showPlane = true;
-    v.plane = planeCur;
+    v.plane = pc.cur;
   } else {
     if (newsActive && (int32_t)(now - newsUntil) >= 0) newsActive = false;
     if (!newsActive && newsQn > 0 && cfg.showNews) {
@@ -643,6 +662,7 @@ String liveStatusJson() {
   if (st.newsOkAt) doc["newsAgeS"] = (now - st.newsOkAt) / 1000;
   doc["planesInRange"] = st.planesInRange;
   doc["planesWaiting"] = planeQn;
+  int cycleListN = pc.n;
   doc["headlinesWaiting"] = newsQn;
   doc["family"] = st.family;
   doc["lastError"] = st.lastError;
@@ -669,6 +689,22 @@ String liveStatusJson() {
   unlock();
   // The zone the owner saved and the time it produces, so a wrong zone is obvious in the portal. Outside the live lock.
   Settings cfg = settings::get();
+  doc["cycling"] = cfg.cyclePlanes;
+  doc["cycleCount"] = cfg.cyclePlanes && cfg.showFlights ? cycleListN : 0;
+  {
+    // What the panel is doing to protect itself (protect.h); read from the render task's last frame, no live lock needed.
+    ProtectStatus ps = protectStatus();
+    JsonObject panel = doc["panel"].to<JsonObject>();
+    panel["brightness"] = ps.brightness;
+    switch (ps.mode) {
+      case PanelMode::Normal: panel["mode"] = "normal"; break;
+      case PanelMode::Dim: panel["mode"] = "dim"; break;
+      case PanelMode::Night: panel["mode"] = "night"; break;
+      case PanelMode::NightAwake: panel["mode"] = "night-awake"; break;
+    }
+    panel["dx"] = ps.dx;
+    panel["dy"] = ps.dy;
+  }
   doc["timeZone"] = cfg.tzName;
   time_t t = time(nullptr);
   if (t > 1700000000) {
