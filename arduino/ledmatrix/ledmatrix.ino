@@ -18,6 +18,7 @@
 #include <Adafruit_Protomatter.h>
 
 #include "display.h"
+#include "identity.h"
 #include "live.h"
 #include "net.h"
 #include "plane_view.h"
@@ -293,6 +294,7 @@ void setup() {
   delay(1500);
   Serial.println("\nledmatrix: slice 4, live data");
   settings::begin();  // loads the saved settings; must run before the tasks read them
+  identity::begin();  // reads this board's identity record once; must run before the net and data tasks use it
   netBegin();         // must run before the render task asks for the network state
   liveBegin();        // must run before the render task asks for the live view
   xTaskCreatePinnedToCore(renderTask, "render", 10240, nullptr, 2, nullptr, 1);

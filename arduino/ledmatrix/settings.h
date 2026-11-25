@@ -27,7 +27,6 @@ struct Settings {
   int32_t altMaxFt = 45000;
   char queries[5][41] = {};   // headline topics
   char serviceHost[64] = "";  // host name of the data service (ledmatrix-api); empty = demo screens only
-  char serviceToken[65] = ""; // access token sent as X-Token to serviceHost only; empty = no header. Never returned by toJson().
   char tzName[40] = "Europe/Lisbon";                // IANA name, shown in the portal
   char tzPosix[48] = "WET0WEST,M3.5.0/1,M10.5.0/2";  // the rule the clock actually uses
 

@@ -35,10 +35,12 @@ template <size_t N> struct Guard {
 };
 
 // ---- problemWords: which sentence did a raw text become? ----------------------------------------------------------------
-enum Tag { PASS, NEED, TOKREF, HTTPAUTH, NOTSVC, LIMIT, DOWN, ODDSTATUS, NOANSWER, DNS, CERT, HSTIMEOUT,
+enum Tag { PASS, IDMISSING, IDINVALID, IDOTHER, IDHARDWARE, SIGNFAIL, AUTHMISSING, AUTHMALFORMED, AUTHBAD, AUTHREVOKED, AUTHCLOCK,
+           HTTPAUTH, NOTSVC, LIMIT, DOWN, ODDSTATUS, NOANSWER, DNS, CERT, HSTIMEOUT,
            TIMEOUT, REFUSED, CLOSED, NOCONN, UNREADABLE, BUSY };
 static const char *tagName(Tag t) {
-  static const char *n[] = {"PASS", "NEED", "TOKREF", "HTTPAUTH", "NOTSVC", "LIMIT", "DOWN", "ODDSTATUS", "NOANSWER", "DNS",
+  static const char *n[] = {"PASS", "IDMISSING", "IDINVALID", "IDOTHER", "IDHARDWARE", "SIGNFAIL", "AUTHMISSING", "AUTHMALFORMED",
+                            "AUTHBAD", "AUTHREVOKED", "AUTHCLOCK", "HTTPAUTH", "NOTSVC", "LIMIT", "DOWN", "ODDSTATUS", "NOANSWER", "DNS",
                             "CERT", "HSTIMEOUT", "TIMEOUT", "REFUSED", "CLOSED", "NOCONN", "UNREADABLE", "BUSY"};
   return n[t];
 }
@@ -46,7 +48,11 @@ static const char *tagName(Tag t) {
 static Tag classify(const char *why) {
   struct M { const char *marker; Tag tag; };
   static const M m[] = {
-      {"needs an access token", NEED},         {"refused the access token", TOKREF}, {"refused the request", HTTPAUTH},
+      {"has no identity record", IDMISSING},   {"identity record is not valid", IDINVALID}, {"identity record is for another board", IDOTHER},
+      {"cannot use it", IDHARDWARE},           {"could not sign the request", SIGNFAIL},
+      {"did not receive a signature", AUTHMISSING}, {"could not read the signature", AUTHMALFORMED},
+      {"does not accept this board's key", AUTHBAD}, {"has revoked this board", AUTHREVOKED}, {"clock is too far off", AUTHCLOCK},
+      {"refused the request", HTTPAUTH},
       {"not the data service", NOTSVC},        {"limiting requests", LIMIT},         {"is down or had an error", DOWN},
       {"unexpected status", ODDSTATUS},        {"hung up or did not answer in time", NOANSWER},         {"(DNS)", DNS},
       {"certificate could not be checked", CERT}, {"secure handshake timed out", HSTIMEOUT},
@@ -140,13 +146,19 @@ static void testConstants() {
 
 static void testWordsBranches() {
   SECTION("problemWords: every branch");
-  // access token (the firmware's own texts from live.cpp's serviceGet)
-  EXPECT("service needs an access token (HTTP 401)", NEED);
-  EXPECT("access token refused (HTTP 401)", TOKREF);
-  EXPECT("Service Needs An Access Token", NEED);
-  EXPECT("ACCESS TOKEN REFUSED", TOKREF);
-  EXPECT("access token refused (HTTP 403)", TOKREF);
-  EXPECT("needs an access token (HTTP 403)", NEED);
+  // device authentication: the service's reasons (live.cpp's serviceGet) and the board's own identity record (identity.cpp)
+  EXPECT(PROBLEM_RAW_AUTH_MISSING, AUTHMISSING);
+  EXPECT(PROBLEM_RAW_AUTH_MALFORMED, AUTHMALFORMED);
+  EXPECT(PROBLEM_RAW_AUTH_BAD_SIGNATURE, AUTHBAD);
+  EXPECT(PROBLEM_RAW_AUTH_REVOKED, AUTHREVOKED);
+  EXPECT(PROBLEM_RAW_AUTH_CLOCK_SKEW, AUTHCLOCK);
+  EXPECT(PROBLEM_RAW_ID_MISSING, IDMISSING);
+  EXPECT(PROBLEM_RAW_ID_INVALID, IDINVALID);
+  EXPECT(PROBLEM_RAW_ID_OTHER_BOARD, IDOTHER);
+  EXPECT(PROBLEM_RAW_ID_HARDWARE_KEY, IDHARDWARE);
+  EXPECT(PROBLEM_RAW_SIGN_FAILED, SIGNFAIL);
+  EXPECT("REFUSED: BAD SIGNATURE (HTTP 401)", AUTHBAD);  // any case
+  EXPECT("No Identity Record", IDMISSING);
   // HTTP status codes
   EXPECT("HTTP 401", HTTPAUTH);
   EXPECT("HTTP 403", HTTPAUTH);
@@ -222,9 +234,15 @@ static void testWordsOrdering() {
   EXPECT("HTTP 401 token", HTTPAUTH);
   EXPECT("HTTP 401 invalid token", HTTPAUTH);
   EXPECT("token invalid, HTTP 403", HTTPAUTH);
-  EXPECT("HTTP 401 service needs an access token", NEED);
-  EXPECT("service needs an access token (HTTP 401)", NEED);
-  EXPECT("access token refused (HTTP 401)", TOKREF);
+  // a known reason beats the status and the word "refused"; an unknown one is just a refused request
+  EXPECT("refused: bad signature (HTTP 401)", AUTHBAD);
+  EXPECT("  " PROBLEM_RAW_AUTH_REVOKED, AUTHREVOKED);               // leading spaces are not part of the text
+  EXPECT("HTTP 401 " PROBLEM_RAW_AUTH_CLOCK_SKEW " (retried)", AUTHCLOCK);
+  EXPECT("refused: signature missing (HTTP 401) connection refused", AUTHMISSING);
+  EXPECT("HTTP 401 refused: something else", HTTPAUTH);
+  EXPECT("refused: rate limited (HTTP 401)", HTTPAUTH);
+  EXPECT("no identity record (HTTP 401)", IDMISSING);
+  EXPECT("The service needs an access token (HTTP 401)", HTTPAUTH);  // an older service: still only a refused request
   EXPECT("HTTP 503: connection timed out", DOWN);
   EXPECT("HTTP 404 connection refused", NOTSVC);
   EXPECT("HTTP 502 certificate expired", DOWN);
@@ -265,7 +283,8 @@ static void testWordsCaseAndStatusForms() {
   CHECK(r.why.find("502") != std::string::npos);
   r = words("HTTP 401");
   CHECK(r.why.find("HTTP 401") != std::string::npos);
-  CHECK(problemHas(r.why.c_str(), "token"));     // tells the owner where to look
+  CHECK(problemHas(r.why.c_str(), "address"));   // tells the owner where to look
+  CHECK(!problemHas(r.why.c_str(), "token"));
   r = words("HTTP 403");
   CHECK(r.why.find("HTTP 403") != std::string::npos);
   r = words("HTTP 404");
@@ -328,11 +347,25 @@ static void testWordsSentences() {
   r = words(PROBLEM_RAW_NO_ADDRESS);
   CHECK(problemHas(r.why.c_str(), "DNS"));
   CHECK(problemHas(r.why.c_str(), "address"));
-  r = words("service needs an access token (HTTP 401)");
-  CHECK(problemHas(r.why.c_str(), "Data service"));      // names the portal section
-  r = words("access token refused (HTTP 401)");
-  CHECK(problemHas(r.why.c_str(), "Data service"));
-  CHECK(problemHas(r.why.c_str(), "refused"));
+  r = words(PROBLEM_RAW_ID_MISSING);
+  CHECK(r.why == "This board has no identity record. It must be provisioned over USB.");
+  r = words(PROBLEM_RAW_ID_INVALID);
+  CHECK(problemHas(r.why.c_str(), "USB") && problemHas(r.why.c_str(), "again"));
+  r = words(PROBLEM_RAW_ID_OTHER_BOARD);
+  CHECK(problemHas(r.why.c_str(), "another board") && problemHas(r.why.c_str(), "USB"));
+  r = words(PROBLEM_RAW_ID_HARDWARE_KEY);
+  CHECK(problemHas(r.why.c_str(), "firmware"));
+  r = words(PROBLEM_RAW_AUTH_BAD_SIGNATURE);
+  CHECK(problemHas(r.why.c_str(), "The service does not accept this board's key."));
+  CHECK(problemHas(r.why.c_str(), "USB"));
+  r = words(PROBLEM_RAW_AUTH_REVOKED);
+  CHECK(problemHas(r.why.c_str(), "revoked") && problemHas(r.why.c_str(), "owner"));
+  r = words(PROBLEM_RAW_AUTH_CLOCK_SKEW);
+  CHECK(problemHas(r.why.c_str(), "clock"));
+  r = words(PROBLEM_RAW_AUTH_MISSING);
+  CHECK(problemHas(r.why.c_str(), "signature"));
+  r = words(PROBLEM_RAW_AUTH_MALFORMED);
+  CHECK(problemHas(r.why.c_str(), "signature"));
   r = words("HTTP 502");
   CHECK(problemHas(r.why.c_str(), "down"));
   r = words("HTTP 429");
@@ -340,10 +373,60 @@ static void testWordsSentences() {
   // sentences start with a capital letter
   for (const char *raw : {"HTTP 502", PROBLEM_RAW_NO_ADDRESS, PROBLEM_RAW_NO_ANSWER, "SSL - The operation timed out", "connection refused",
                           "SSL - The connection indicated an EOF", "v4 connect failed: ", PROBLEM_RAW_UNEXPECTED, PROBLEM_RAW_BUSY,
-                          "service needs an access token (HTTP 401)", "X509 - Certificate verification failed"}) {
+                          PROBLEM_RAW_ID_MISSING, PROBLEM_RAW_ID_INVALID, PROBLEM_RAW_ID_OTHER_BOARD, PROBLEM_RAW_ID_HARDWARE_KEY,
+                          PROBLEM_RAW_SIGN_FAILED, PROBLEM_RAW_AUTH_MISSING, PROBLEM_RAW_AUTH_MALFORMED, PROBLEM_RAW_AUTH_BAD_SIGNATURE,
+                          PROBLEM_RAW_AUTH_REVOKED, PROBLEM_RAW_AUTH_CLOCK_SKEW, "X509 - Certificate verification failed"}) {
     Words x = words(raw);
     CHECK(!x.why.empty() && x.why[0] >= 'A' && x.why[0] <= 'Z');
   }
+}
+
+static void testWordsDeviceAuth() {
+  SECTION("problemWords: device authentication (every reason and every identity problem)");
+  struct Case { const char *raw; const char *sentence; };
+  static const Case cases[] = {
+      {PROBLEM_RAW_ID_MISSING, "This board has no identity record. It must be provisioned over USB."},
+      {PROBLEM_RAW_ID_INVALID, "This board's identity record is not valid. It must be provisioned again over USB."},
+      {PROBLEM_RAW_ID_OTHER_BOARD, "This board's identity record is for another board. It must be provisioned again over USB."},
+      {PROBLEM_RAW_ID_HARDWARE_KEY, "This board's key is burned into the chip but this firmware cannot use it. Update the firmware."},
+      {PROBLEM_RAW_SIGN_FAILED, "The board could not sign the request. Restart it; if this keeps happening the firmware needs an update."},
+      {PROBLEM_RAW_AUTH_MISSING, "The service did not receive a signature on the request. Something between the board and the service may be removing it."},
+      {PROBLEM_RAW_AUTH_MALFORMED, "The service could not read the signature on the request. The board and the service may run versions that do not match."},
+      {PROBLEM_RAW_AUTH_BAD_SIGNATURE, "The service does not accept this board's key. Either the service is set up for other boards, or this board must be provisioned again over USB."},
+      {PROBLEM_RAW_AUTH_REVOKED, "The service has revoked this board. The owner of the service has to allow it again."},
+      {PROBLEM_RAW_AUTH_CLOCK_SKEW, "The service says this board's clock is too far off from its own. Check that both clocks are right."},
+  };
+  for (const Case &c : cases) {
+    Words r = words(c.raw);
+    CHECK(r.why == c.sentence);
+    CHECK(r.why.size() < 159);
+    // the technical text stays as the detail, and a sentence is never its own detail
+    CHECK(r.detail == c.raw);
+    // no sentence mentions a secret, a password or an access token: the board has none to enter
+    for (const char *w : {"secret", "password", "token", "master", "hmac", "sha"}) CHECK(!problemHas(r.why.c_str(), w));
+    // fed back in, a sentence stays itself (the portal and the connection test may pass one on)
+    CHECK(words(r.why.c_str()).why == r.why);
+  }
+  // ten raw texts, ten different sentences
+  for (size_t a = 0; a < sizeof cases / sizeof cases[0]; a++)
+    for (size_t b = a + 1; b < sizeof cases / sizeof cases[0]; b++) CHECK(strcmp(cases[a].sentence, cases[b].sentence) != 0);
+  // a refusal the board cannot read stays a plain refused request (an older service, or a proxy in front of it)
+  Words u = words("HTTP 401");
+  CHECK(u.tag == HTTPAUTH && u.detail == "");
+  CHECK(!problemHas(u.why.c_str(), "token") && problemHas(u.why.c_str(), "address"));
+  // the raw texts are what live.cpp reports and identity.cpp returns: short, no secrets, no HTML
+  for (const Case &c : cases) CHECK(strlen(c.raw) < 70 && !strchr(c.raw, '<'));
+  // in the problem list they are separate lines, each with its own count
+  ProblemLog l;
+  auto note = [&](const char *raw, uint32_t unixNow, uint32_t upS) {  // what live.cpp's noteProblem does
+    char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+    problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+    l.record(ProblemKind::Flights, why, detail, unixNow, upS);
+  };
+  for (const Case &c : cases) note(c.raw, 1000, 10);
+  CHECK(l.n == 10);
+  note(PROBLEM_RAW_AUTH_BAD_SIGNATURE, 1015, 25);
+  CHECK(l.n == 10 && l.e[0].count == 2 && strcmp(l.e[0].why, cases[7].sentence) == 0);
 }
 
 static void testWordsDetail() {
@@ -401,7 +484,9 @@ static void testWordsIdempotent() {
   SECTION("problemWords: a plain sentence fed back in stays itself");
   // The portal's connection test already words these; if one ever reaches problemWords again it must not turn into
   // a different sentence.
-  for (const char *raw : {"service needs an access token (HTTP 401)", "access token refused (HTTP 401)", "HTTP 401", "HTTP 403", "HTTP 404",
+  for (const char *raw : {PROBLEM_RAW_ID_MISSING, PROBLEM_RAW_ID_INVALID, PROBLEM_RAW_ID_OTHER_BOARD, PROBLEM_RAW_ID_HARDWARE_KEY,
+                          PROBLEM_RAW_SIGN_FAILED, PROBLEM_RAW_AUTH_MISSING, PROBLEM_RAW_AUTH_MALFORMED, PROBLEM_RAW_AUTH_BAD_SIGNATURE,
+                          PROBLEM_RAW_AUTH_REVOKED, PROBLEM_RAW_AUTH_CLOCK_SKEW, "HTTP 401", "HTTP 403", "HTTP 404",
                           "HTTP 429", "HTTP 502", "HTTP 418", "HTTP 0", PROBLEM_RAW_NO_ADDRESS, PROBLEM_RAW_NO_ANSWER,
                           "The certificate validity has expired", "X509 - Certificate verification failed", "handshake timeout",
                           "SSL - The operation timed out", "connection refused", "SSL - The connection indicated an EOF",
@@ -411,9 +496,12 @@ static void testWordsIdempotent() {
     checks++;
     if (a.why != b.why) { fails++; printf("    FAIL: \"%s\" -> \"%s\" -> \"%s\"\n", raw, a.why.c_str(), b.why.c_str()); }
   }
-  // the portal's own wording for a refused or missing token
-  EXPECT("The service refused the access token. Check the token in the Data service section.", TOKREF);
-  EXPECT("The service needs an access token. Enter it in the Data service section.", NEED);
+  // the sentences themselves, as the portal's connection test and the portal's own identity note word them
+  EXPECT("This board has no identity record. It must be provisioned over USB.", IDMISSING);
+  EXPECT("This board's identity record is not valid. It must be provisioned again over USB.", IDINVALID);
+  EXPECT("This board's identity record is for another board. It must be provisioned again over USB.", IDOTHER);
+  EXPECT("The service does not accept this board's key. Either the service is set up for other boards, or this board must be "
+         "provisioned again over USB.", AUTHBAD);
 }
 
 static void testWordsBounds() {
@@ -459,7 +547,7 @@ static void testWordsBounds() {
   }
   // a cap of 0 means no room: that buffer is left alone (and the other one still works); null buffers are fine too
   for (const char *raw : {"HTTP 502", "x509 certificate", "weird failure", "", PROBLEM_RAW_NO_ADDRESS, "HTTP 401",
-                          "access token refused (HTTP 401)", "HTTP 0"}) {
+                          PROBLEM_RAW_AUTH_BAD_SIGNATURE, PROBLEM_RAW_ID_MISSING, "HTTP 0"}) {
     {
       Guard<16> w, d;
       problemWords(raw, w.buf, 0, d.buf, 0);
@@ -1393,6 +1481,7 @@ int main() {
   testWordsCaseAndStatusForms();
   testRawMacros();
   testWordsSentences();
+  testWordsDeviceAuth();
   testWordsDetail();
   testWordsUnknown();
   testWordsIdempotent();

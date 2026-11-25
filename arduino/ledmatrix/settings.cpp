@@ -14,14 +14,6 @@ static void lock() { xSemaphoreTake(mu, portMAX_DELAY); }
 static void unlock() { xSemaphoreGive(mu); }
 
 // ---- checks shared by the portal input and by what NVS gives back, so a damaged value never reaches a header or setenv ----
-// Token: visible ASCII without space, at most 64 characters, so it can never inject a header line.
-static bool validToken(const char *s) {
-  if (strlen(s) > 64) return false;
-  for (; *s; s++)
-    if ((uint8_t)*s < 0x21 || (uint8_t)*s > 0x7E) return false;
-  return true;
-}
-
 // IANA name such as Europe/Lisbon: 1..39 characters from A-Z a-z 0-9 _ / + -
 static bool validTzName(const char *s) {
   size_t n = strlen(s);
@@ -118,8 +110,6 @@ static void loadAll() {
   }
   String host = prefs.getString("svc", "");
   strlcpy(cur.serviceHost, host.c_str(), sizeof(cur.serviceHost));
-  String tok = prefs.getString("tok", "");
-  if (validToken(tok.c_str())) strlcpy(cur.serviceToken, tok.c_str(), sizeof(cur.serviceToken));
   String tzn = prefs.getString("tzn", ""), tzp = prefs.getString("tzp", "");
   if (validTzName(tzn.c_str()) && validTzPosix(tzp.c_str())) {  // both or neither: never a name from one zone and a rule from another
     strlcpy(cur.tzName, tzn.c_str(), sizeof(cur.tzName));
@@ -167,7 +157,6 @@ static void saveAll(const Settings &s) {
     prefs.putString(key.c_str(), s.queries[i]);
   }
   prefs.putString("svc", s.serviceHost);
-  prefs.putString("tok", s.serviceToken);
   prefs.putString("tzn", s.tzName);
   prefs.putString("tzp", s.tzPosix);
   prefs.putBool("drift", s.drift);
@@ -183,11 +172,27 @@ static void saveAll(const Settings &s) {
   prefs.end();
 }
 
+// Ticket 39: the access token is gone, the board signs its requests instead (shared/device-auth.md). An older build saved the token
+// under "tok": remove it, once, so it does not stay in the saved settings. (NVS marks the entry erased; the bytes leave the flash
+// page when NVS next cleans that page up.)
+static void dropOldToken() {
+  if (!prefs.begin(NS, true)) return;  // no namespace yet: nothing was ever saved
+  bool had = prefs.isKey("tok");
+  prefs.end();
+  if (!had) return;
+  if (prefs.begin(NS, false)) {
+    prefs.remove("tok");
+    prefs.end();
+    Serial.println("SETTINGS removed the access token an older version saved");
+  }
+}
+
 void begin() {
   if (mu) return;
   mu = xSemaphoreCreateMutex();
   lock();
   loadAll();
+  dropOldToken();
   unlock();
 }
 
@@ -346,22 +351,7 @@ bool setFromJson(const char *json, size_t len, String &error) {
       ok = isalnum((unsigned char)c) || c == '.' || c == '-';
     }
     if (!ok) { error = "The service address must be a host name such as apis.example.com."; return false; }
-    // A saved token belongs to the host it was entered for: a different host never inherits it (a token typed in the same save still applies below).
-    if (strcmp(n.serviceHost, h.c_str()) != 0) n.serviceToken[0] = 0;
     strlcpy(n.serviceHost, h.c_str(), sizeof(n.serviceHost));
-  }
-
-  if (!svc.isNull()) {
-    // The token is write-only: a non-empty string replaces it, an empty or missing one leaves it, clearToken removes it.
-    // Nothing here prints the token or puts it in an error message.
-    if (svc["clearToken"] | false) n.serviceToken[0] = 0;
-    if (svc["token"].is<const char *>()) {
-      String t = trimmed(svc["token"]);  // a pasted token often carries a stray newline or space at the edge
-      if (t.length()) {
-        if (!validToken(t.c_str())) { error = "The access token can be at most 64 characters: visible characters only, no spaces."; return false; }
-        strlcpy(n.serviceToken, t.c_str(), sizeof(n.serviceToken));
-      }
-    }
   }
 
   JsonObject tz = doc["timezone"];
@@ -422,7 +412,6 @@ String toJson() {
   JsonArray qs = doc["queries"].to<JsonArray>();
   for (int i = 0; i < 5; i++) qs.add(s.queries[i]);
   doc["service"]["host"] = s.serviceHost;
-  doc["service"]["tokenSet"] = s.serviceToken[0] != 0;  // the token itself is never sent back
   doc["timezone"]["name"] = s.tzName;
   doc["timezone"]["posix"] = s.tzPosix;
   String out;

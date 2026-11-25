@@ -48,6 +48,18 @@ inline const char *problemKindName(ProblemKind k) {
 #define PROBLEM_RAW_UNEXPECTED "unexpected answer"                               // the body could not be read
 #define PROBLEM_RAW_BUSY "busy with another request"                            // the one-request-at-a-time lock was not freed in time
 #define PROBLEM_RAW_NO_ADDRESS "no address found for the host name"             // the name lookup returned nothing
+// Device authentication (tickets 37 and 39, shared/device-auth.md). The service's 401 reasons, as live.cpp reports them:
+#define PROBLEM_RAW_AUTH_MISSING "refused: signature missing (HTTP 401)"
+#define PROBLEM_RAW_AUTH_MALFORMED "refused: signature malformed (HTTP 401)"
+#define PROBLEM_RAW_AUTH_BAD_SIGNATURE "refused: bad signature (HTTP 401)"
+#define PROBLEM_RAW_AUTH_REVOKED "refused: device revoked (HTTP 401)"
+#define PROBLEM_RAW_AUTH_CLOCK_SKEW "refused: clock skew (HTTP 401)"
+// ...and the board's own identity record (identity.cpp), which is checked before anything is sent:
+#define PROBLEM_RAW_ID_MISSING "no identity record"
+#define PROBLEM_RAW_ID_INVALID "identity record is not valid"
+#define PROBLEM_RAW_ID_OTHER_BOARD "identity record is for another board"
+#define PROBLEM_RAW_ID_HARDWARE_KEY "key is burned into the chip but this firmware cannot use it"
+#define PROBLEM_RAW_SIGN_FAILED "could not sign the request"  // the request itself was not valid, or the signer failed
 
 inline const char *problemFind(const char *hay, const char *needle) {  // case-insensitive substring; where it starts, or nullptr
   size_t n = strlen(needle);
@@ -87,12 +99,32 @@ inline void problemWords(const char *raw, char *why, size_t whyCap, char *detail
   if (h) http = atoi(h + 5);
   const char *s = nullptr;  // a sentence without a number in it; the HTTP ones are worded below because they carry the status
 
-  if (problemHas(raw, "needs an access token")) {
-    s = "The service needs an access token. Enter it in the Data service section.";
-  } else if (problemHas(raw, "access token refused") || problemHas(raw, "refused the access token")) {
-    s = "The service refused the access token. Check the token in the Data service section.";
+  // Device authentication first: the raw texts of a refusal carry "HTTP 401" and "refused", which the branches below would take.
+  // Each sentence also holds a phrase of its own, so a sentence fed back in is recognised as itself.
+  if (problemHas(raw, PROBLEM_RAW_ID_MISSING)) {
+    s = "This board has no identity record. It must be provisioned over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_ID_INVALID)) {
+    s = "This board's identity record is not valid. It must be provisioned again over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_ID_OTHER_BOARD)) {
+    s = "This board's identity record is for another board. It must be provisioned again over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_ID_HARDWARE_KEY)) {
+    s = "This board's key is burned into the chip but this firmware cannot use it. Update the firmware.";
+  } else if (problemHas(raw, PROBLEM_RAW_SIGN_FAILED) || problemHas(raw, "could not sign")) {
+    s = "The board could not sign the request. Restart it; if this keeps happening the firmware needs an update.";
+  } else if (problemHas(raw, PROBLEM_RAW_AUTH_MISSING) || problemHas(raw, "did not receive a signature")) {
+    s = "The service did not receive a signature on the request. Something between the board and the service may be removing it.";
+  } else if (problemHas(raw, PROBLEM_RAW_AUTH_MALFORMED) || problemHas(raw, "could not read the signature")) {
+    s = "The service could not read the signature on the request. The board and the service may run versions that do not match.";
+  } else if (problemHas(raw, PROBLEM_RAW_AUTH_BAD_SIGNATURE) || problemHas(raw, "does not accept this board's key")) {
+    s = "The service does not accept this board's key. Either the service is set up for other boards, or this board must be "
+        "provisioned again over USB.";
+  } else if (problemHas(raw, PROBLEM_RAW_AUTH_REVOKED) || problemHas(raw, "has revoked this board")) {
+    s = "The service has revoked this board. The owner of the service has to allow it again.";
+  } else if (problemHas(raw, PROBLEM_RAW_AUTH_CLOCK_SKEW) || problemHas(raw, "clock is too far off")) {
+    s = "The service says this board's clock is too far off from its own. Check that both clocks are right.";
   } else if (http == 401 || http == 403) {
-    snprintf(why, whyCap, "The service refused the request (HTTP %d). Check the access token in the Data service section.", http);
+    // a refusal this device cannot read: not one of the reasons above (an older service, or something in front of it)
+    snprintf(why, whyCap, "The service refused the request (HTTP %d) without a reason this device knows. Check the service address.", http);
   } else if (http == 404) {
     snprintf(why, whyCap, "The address answered, but it is not the data service (HTTP 404). Check the service address.");
   } else if (http == 429) {

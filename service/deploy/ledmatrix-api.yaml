@@ -3,11 +3,15 @@
 #   API_HOST=apis.your-domain.example IMAGE=ghcr.io/suvl/ledmatrix-api:latest PULL_POLICY=Always \
 #     envsubst '${API_HOST} ${IMAGE} ${PULL_POLICY}' < service/deploy/ledmatrix-api.yaml | kubectl apply -f -
 # For an image loaded onto the node by hand use IMAGE=ledmatrix-api:local PULL_POLICY=Never.
-# Access token (create it BEFORE deploying; anything reachable from the internet must have one):
-#   openssl rand -hex 24 | tr -d '\n' | kubectl create secret generic ledmatrix-api --from-file=token=/dev/stdin
-# The pod does not start without that secret, so the API is never left open by accident. For a service that
-# only your own network can reach you may delete the API_TOKEN block below. The display sends the token in
-# the X-Token header: type the same value into the portal's "Service access token" field.
+# Master secret (create it BEFORE deploying; the display signs every request with a key derived from it, see
+# shared/device-auth.md). Make one and keep an OFFLINE BACKUP: after the display's chip key is burned a lost master
+# secret cannot be recovered, and the display would be locked out of this service for good.
+#   (umask 077; openssl rand -hex 32 | tr -d '\n' > ~/ledmatrix-master-secret)   # 64 characters; the file stays outside the repository
+#   kubectl create secret generic ledmatrix-api --from-file=master-secret=$HOME/ledmatrix-master-secret
+# The pod does not start without that secret (the service also refuses to start without MASTER_SECRET), so the API is
+# never left open by accident. Optional settings, as plain env entries below: REVOKED_DEVICES (comma-separated device
+# IDs the service refuses) and PUBLIC_HOST (the name the display uses, if a proxy rewrites the Host header).
+# AUTH_OFF=1 exists for running the service on your own computer; do not use it here.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,9 +46,11 @@ spec:
           env:
             - {name: LISTEN, value: ":8080"}
             - {name: LOGO_DIR, value: /logos}
-            - name: API_TOKEN
+            - name: MASTER_SECRET
               valueFrom:
-                secretKeyRef: {name: ledmatrix-api, key: token}
+                secretKeyRef: {name: ledmatrix-api, key: master-secret}
+            # - {name: REVOKED_DEVICES, value: "aabbccddeeff"}
+            # - {name: PUBLIC_HOST, value: "ledmatrix.example.com"}
           volumeMounts:
             - {name: logos, mountPath: /logos, readOnly: true}
           resources:

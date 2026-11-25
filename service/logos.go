@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,10 +27,6 @@ func validLogoCode(c string) bool {
 
 // logoHandler serves GET /v1/logo/{code}. The code is checked before it is used as a file name.
 func (a *app) logoHandler(w http.ResponseWriter, r *http.Request) {
-	if a.token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(a.token)) != 1 {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or wrong token"})
-		return
-	}
 	code := strings.ToUpper(r.PathValue("code"))
 	if a.logoDir == "" || !validLogoCode(code) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no logo"})
