@@ -1,6 +1,7 @@
 // ledmatrix-api answers the LedMatrix display in small JSON: nearby planes with their route,
-// weather (IPMA inside Portugal, Open-Meteo elsewhere), and news headlines. It exists so the display makes one cheap request instead of
-// fetching and parsing large responses from several servers.
+// weather (IPMA inside Portugal, Open-Meteo elsewhere), and news headlines. It exists so the
+// display makes one cheap request instead of fetching and parsing large responses from several
+// servers.
 //
 //	GET /healthz
 //	GET /v1/weather?lat=&lon=
