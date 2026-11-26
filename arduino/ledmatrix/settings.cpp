@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
+#include "editions.h"
 #include "swapstore.h"
 
 namespace settings {
@@ -117,6 +118,8 @@ static void loadAll() {
     String v = prefs.getString(key.c_str(), "");
     strlcpy(cur.queries[i], v.c_str(), sizeof(cur.queries[i]));
   }
+  int ed = prefs.getUChar("hled", editions::DEFAULT_INDEX);  // an index that is not in the list (a downgraded board) keeps the default
+  if (editions::valid(ed)) cur.headlineEdition = ed;
   String host = prefs.getString("svc", "");
   strlcpy(cur.serviceHost, host.c_str(), sizeof(cur.serviceHost));
   String dn = prefs.getString("dn", "");
@@ -167,6 +170,7 @@ static void saveAll(const Settings &s) {
     String key = "q" + String(i);
     prefs.putString(key.c_str(), s.queries[i]);
   }
+  prefs.putUChar("hled", s.headlineEdition);
   prefs.putString("svc", s.serviceHost);
   prefs.putString("dn", s.deviceName);
   prefs.putString("tzn", s.tzName);
@@ -347,6 +351,11 @@ static bool buildFromJson(const char *json, size_t len, Settings &n, String &err
     }
   }
 
+  // The headline edition is an index into the list in editions.h; anything else (a string, a fraction, out of the list) refuses the save.
+  int edition = n.headlineEdition;
+  if (!readOptInt(doc["headlineEdition"], edition) || !editions::valid(edition)) { error = "Pick the headlines language and region from the list."; return false; }
+  n.headlineEdition = edition;
+
   JsonObject svc = doc["service"];
   if (!svc.isNull() && svc["host"].is<const char *>()) {
     // accept a pasted address: drop the scheme and anything after the host name
@@ -437,6 +446,7 @@ String toJson() {
   loc["altMaxFt"] = s.altMaxFt;
   JsonArray qs = doc["queries"].to<JsonArray>();
   for (int i = 0; i < 5; i++) qs.add(s.queries[i]);
+  doc["headlineEdition"] = s.headlineEdition;
   doc["service"]["host"] = s.serviceHost;
   doc["timezone"]["name"] = s.tzName;
   doc["timezone"]["posix"] = s.tzPosix;

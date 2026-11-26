@@ -19,6 +19,7 @@ p.lede{color:var(--muted);margin:0 0 24px}
 section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
 label{display:block;font-size:14px;color:var(--muted);margin:12px 0 4px}
 input[type=text],input[type=number],input[type=search],input[type=time]{width:100%;font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#0f1216;color:var(--text)}
+select{width:100%;font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#0f1216;color:var(--text)}
 input[type=range]{width:100%;accent-color:var(--amber)}
 input:disabled{opacity:.45}
 input[aria-invalid=true]{border-color:var(--warn)}
@@ -76,6 +77,7 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <h2>What to show</h2>
 <label class="switch"><input type="checkbox" id="showFlights"> Nearby flights</label>
 <label class="switch"><input type="checkbox" id="showWeather"> Weather</label>
+<p class="note" id="wxCredit">Weather works anywhere in the world. In Portugal the data is from <a href="https://www.ipma.pt" target="_blank" rel="noopener noreferrer">IPMA</a>; elsewhere it is <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Weather data by Open-Meteo.com</a> (CC BY 4.0), rounded and shown as four icons. Snow shows as rain for now.</p>
 <label class="switch"><input type="checkbox" id="showNews"> Headlines</label>
 <label for="dwell">Show each new plane for <b id="dwellVal">10</b> seconds</label>
 <input type="range" id="dwell" min="3" max="60" step="1" value="10">
@@ -239,6 +241,9 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <h2>Headline topics</h2>
 <p class="note">Up to five searches, one per line. Leave empty for none.</p>
 <div id="queries"></div>
+<label for="edition">Headlines language and region</label>
+<select id="edition"><option value="0">Portuguese (Portugal)</option><option value="1">Portuguese (Brazil)</option><option value="2">English (United Kingdom)</option><option value="3">English (United States)</option><option value="4">English (Australia)</option><option value="5">English (Canada)</option><option value="6">Spanish (Spain)</option><option value="7">Spanish (Mexico)</option><option value="8">French (France)</option><option value="9">German (Germany)</option><option value="10">Italian (Italy)</option><option value="11">Dutch (Netherlands)</option></select>
+<p class="note">Which Google News edition the headlines come from. Your topics are searched in that edition, so write them in its language. The panel&rsquo;s fonts have no accented letters: they show as odd characters or are left out.</p>
 </section>
 
 <section>
@@ -680,6 +685,8 @@ const nowifi = (fb, t, ctx) => {
       const inp = document.createElement('input'); inp.type = 'text'; inp.maxLength = 40; inp.id = 'query' + i; inp.setAttribute('aria-label', 'Headline topic ' + (i + 1));
       inp.value = c.queries[i] || ''; inp.style.marginBottom = '8px'; qs.append(inp);
     }
+    $('edition').value = String(Number.isInteger(c.headlineEdition) ? c.headlineEdition : 0);  // the index in the board's list; an unknown one shows the first
+    if ($('edition').selectedIndex < 0) $('edition').value = '0';
     refreshGroups();
   }
   /* ---- panel protection: defaults are the device defaults, used when the board does not send a group ---- */
@@ -790,6 +797,7 @@ const nowifi = (fb, t, ctx) => {
         rotate: { on: $('rotateOn').checked, everyMin: +$('rotateEvery').value },
       },
       queries: q,
+      headlineEdition: +$('edition').value,
       service: serviceBlock(),
       timezone: { name: tz.name, posix: tz.posix },
     };

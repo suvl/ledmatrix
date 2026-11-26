@@ -215,7 +215,9 @@ What the licence does **not** cover:
 
 ## Credits
 
-- Weather data: Instituto Português do Mar e da Atmosfera (IPMA), https://www.ipma.pt
+- Weather data in Portugal: Instituto Português do Mar e da Atmosfera (IPMA), https://www.ipma.pt
+- Weather data elsewhere: [Weather data by Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0), used outside Portugal;
+  rounded and shown as four icons. Open-Meteo's free API is for non-commercial use.
 - Aircraft positions: adsb.fi open data, https://adsb.fi (personal, non-commercial use)
 - Routes and airlines: adsbdb, https://www.adsbdb.com
 - Headlines: Google News

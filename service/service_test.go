@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,8 +25,23 @@ type stub struct {
 	routeHits  atomic.Int32
 	newsHits   atomic.Int32
 	newsBody   atomic.Value // string
+	newsQuery  atomic.Value // string; the raw query of the last news request
 	aggHits    atomic.Int32
+	aggStatus  atomic.Int32 // IPMA forecast status; 200 by default
 	adsbStatus atomic.Int32
+	omBody     atomic.Value // string; Open-Meteo body, openmeteo_madrid.json by default
+	omStatus   atomic.Int32
+	omHits     atomic.Int32
+	omMu       sync.Mutex
+	omQueries  []string // raw query of every Open-Meteo request
+	omAgents   []string // User-Agent of every Open-Meteo request
+}
+
+// omQueryLog returns what the stub saw: the raw queries and user agents of the Open-Meteo requests.
+func (s *stub) omQueryLog() (queries, agents []string) {
+	s.omMu.Lock()
+	defer s.omMu.Unlock()
+	return append([]string(nil), s.omQueries...), append([]string(nil), s.omAgents...)
 }
 
 func read(t *testing.T, name string) string {
@@ -42,11 +58,31 @@ func newStub(t *testing.T) *stub {
 	s.obsBody.Store(read(t, "observations_sample.json"))
 	s.obsStatus.Store(200)
 	s.adsbStatus.Store(200)
+	s.aggStatus.Store(200)
+	s.omStatus.Store(200)
+	s.omBody.Store(read(t, "openmeteo_madrid.json"))
 	s.newsBody.Store(rssFixture)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/public-data/forecast/aggregate/1110600.json", func(w http.ResponseWriter, r *http.Request) {
+	// every IPMA place gets the Lisbon forecast (the tests that care about the numbers use Lisbon)
+	mux.HandleFunc("/public-data/forecast/aggregate/", func(w http.ResponseWriter, r *http.Request) {
 		s.aggHits.Add(1)
+		if c := int(s.aggStatus.Load()); c != 200 {
+			http.Error(w, "boom", c)
+			return
+		}
 		w.Write([]byte(read(t, "ipma_aggregate_1110600.json")))
+	})
+	mux.HandleFunc("/v1/forecast", func(w http.ResponseWriter, r *http.Request) {
+		s.omHits.Add(1)
+		s.omMu.Lock()
+		s.omQueries = append(s.omQueries, r.URL.RawQuery)
+		s.omAgents = append(s.omAgents, r.Header.Get("User-Agent"))
+		s.omMu.Unlock()
+		if c := int(s.omStatus.Load()); c != 200 {
+			http.Error(w, "boom", c)
+			return
+		}
+		w.Write([]byte(s.omBody.Load().(string)))
 	})
 	mux.HandleFunc("/open-data/observation/meteorology/stations/observations.json", func(w http.ResponseWriter, r *http.Request) {
 		if c := int(s.obsStatus.Load()); c != 200 {
@@ -74,6 +110,7 @@ func newStub(t *testing.T) *stub {
 	})
 	mux.HandleFunc("/rss/search", func(w http.ResponseWriter, r *http.Request) {
 		s.newsHits.Add(1)
+		s.newsQuery.Store(r.URL.RawQuery)
 		w.Write([]byte(s.newsBody.Load().(string)))
 	})
 	s.srv = httptest.NewServer(mux)
@@ -89,7 +126,7 @@ func (s *stub) app(t *testing.T, now time.Time) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.base, w.now = s.srv.URL, func() time.Time { return now }
+	w.base, w.omBase, w.now = s.srv.URL, s.srv.URL, func() time.Time { return now }
 	f := NewFlights(cache, up)
 	f.adsb, f.db = s.srv.URL, s.srv.URL
 	h := NewHeadlines(cache, up)
@@ -179,10 +216,15 @@ func TestWeatherFallsBackToForecastWhenObservationsFail(t *testing.T) {
 	}
 }
 
-func TestWeatherOutsideCoverage(t *testing.T) {
-	a := newStub(t).app(t, lisbonNoon(t))
-	if _, err := a.weather.Get(context.Background(), 40.4168, -3.7038); !errors.Is(err, errOutsideCoverage) {
-		t.Fatalf("Madrid should be outside IPMA coverage, got %v", err)
+func TestWeatherOutsideIPMACoverage(t *testing.T) {
+	s := newStub(t)
+	a := s.app(t, lisbonNoon(t))
+	out, err := a.weather.Get(context.Background(), 40.4168, -3.7038)
+	if err != nil {
+		t.Fatalf("Madrid is outside IPMA's coverage and must be answered by Open-Meteo: %v", err)
+	}
+	if out.Src != "Open-Meteo" || out.Loc != "" || s.aggHits.Load() != 0 || s.omHits.Load() != 1 {
+		t.Fatalf("got %+v, IPMA hits %d, Open-Meteo hits %d", out, s.aggHits.Load(), s.omHits.Load())
 	}
 }
 
@@ -364,10 +406,10 @@ func TestHTTPLayer(t *testing.T) {
 	if code, _ := get("/healthz", false); code != 200 {
 		t.Fatalf("healthz: %d", code)
 	}
-	if code, _ := get("/v1/weather?lat=38.7&lon=-9.1", false); code != 401 {
+	if code, _ := get("/v1/weather?lat=38.72&lon=-9.14", false); code != 401 {
 		t.Fatalf("unsigned: %d", code)
 	}
-	if code, body := get("/v1/weather?lat=38.7&lon=-9.1", true); code != 200 || !strings.Contains(body, `"loc":"Lisboa"`) {
+	if code, body := get("/v1/weather?lat=38.72&lon=-9.14", true); code != 200 || !strings.Contains(body, `"loc":"Lisboa"`) {
 		t.Fatalf("weather: %d %s", code, body)
 	}
 	for _, bad := range []string{"/v1/weather?lat=abc&lon=1", "/v1/weather?lat=95&lon=1", "/v1/weather?lat=1", "/v1/flights?lat=1&lon=1&radius_km=999", "/v1/flights?lat=1&lon=1&alt_min=5000&alt_max=100", "/v1/headlines?q=", "/v1/headlines?q=x&n=99"} {
@@ -375,8 +417,8 @@ func TestHTTPLayer(t *testing.T) {
 			t.Errorf("%s: want 400 with an error, got %d %s", bad, code, body)
 		}
 	}
-	if code, _ := get("/v1/weather?lat=40.4168&lon=-3.7038", true); code != 422 {
-		t.Errorf("outside coverage should be 422, got %d", code)
+	if code, body := get("/v1/weather?lat=40.4168&lon=-3.7038", true); code != 200 || !strings.Contains(body, `"src":"Open-Meteo"`) {
+		t.Errorf("a location outside Portugal is answered by Open-Meteo, got %d %s", code, body)
 	}
 	if code, body := get("/v1/flights?lat=48.38&lon=8.27&radius_km=15", true); code != 200 || !strings.Contains(body, `"planes"`) {
 		t.Errorf("flights: %d %s", code, body)
