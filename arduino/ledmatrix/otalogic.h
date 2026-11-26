@@ -5,7 +5,8 @@
 // What is in here:
 //   Version        three numbers, digits only; compare; "is this version offered" (strictly newer, and newer than any version that
 //                  already failed on this board)
-//   Manifest       the service's answer, parsed and checked exactly as the contract says (the same rules as the service's own check)
+//   Manifest       the service's answer, parsed and checked exactly as the contract says (the same rules as the service's own check); the
+//                  two signature fields it may carry are only shaped here (strict hex), the check itself is updatesig.h
 //   CodeAuth       the 6-digit code shown on the panel: random from an injected source, 3 minutes, 3 tries, constant-time compare,
 //                  one pending at a time, and the throttle after a code is used up by wrong tries
 //   Flow           the update state machine (idle ... probation) and which portal calls are legal in which state
@@ -96,6 +97,15 @@ static const uint32_t IMAGE_MAX_BYTES = 2097152;     // one app slot
 static const size_t NOTES_MAX_CHARS = 200;           // characters, not bytes
 static const size_t NOTES_MAX_BYTES = 4 * NOTES_MAX_CHARS;
 
+// The signature fields of a manifest (shared/manifest-signing.md, 5.1 step 3). `Absent`: neither "keyid" nor "sig" (a null counts as absent).
+// `Present`: both, each a string of exactly the right length in lowercase hex. `Malformed`: anything else (one of the two, a number, a wrong
+// length, upper case, a character that is not hex). parseManifest never refuses a manifest for this: whether it matters is the policy's
+// business (updatesig.h): a development build ignores the fields, a signing build refuses `Absent` and `Malformed`.
+enum class SigFields : uint8_t { Absent, Present, Malformed };
+static const size_t KEYID_HEX_LEN = 8;     // the first 4 bytes of SHA-256 of the public key, as lowercase hex
+static const size_t SIG_RAW_LEN = 64;      // r then s, 32 bytes each, big endian
+static const size_t SIG_HEX_LEN = 128;     // ...as lowercase hex on the wire
+
 struct Manifest {
   char version[VERSION_TEXT_MAX + 2] = "";   // as the service wrote it
   Version v;
@@ -103,9 +113,12 @@ struct Manifest {
   uint32_t size = 0;
   char sha256[65] = "";                      // 64 lowercase hex
   char notes[NOTES_MAX_BYTES + 1] = "";
+  SigFields sigFields = SigFields::Absent;
+  char keyid[KEYID_HEX_LEN + 1] = "";        // 8 lowercase hex, only when sigFields is Present
+  uint8_t sig[SIG_RAW_LEN] = {};             // decoded from the 128 hex characters, only when sigFields is Present
 };
 
-enum class ManifestError : uint8_t { None, TooLong, NotJson, NotObject, Version, File, Size, Sha256, Notes };
+enum class ManifestError : uint8_t { None, TooLong, NotJson, NotObject, Version, File, Size, Sha256, Notes, NotesControl };
 
 // One short phrase per reason, at most 46 characters, so "firmware manifest is not valid: <reason>" fits the problem list's detail.
 inline const char *manifestErrorText(ManifestError e) {
@@ -119,14 +132,32 @@ inline const char *manifestErrorText(ManifestError e) {
     case ManifestError::Size: return "size is missing or out of range";
     case ManifestError::Sha256: return "sha256 is missing or not 64 lowercase hex";
     case ManifestError::Notes: return "notes are not text or are over 200 characters";
+    case ManifestError::NotesControl: return "notes hold a control character";
   }
   return "";
 }
 
-inline bool isLowerHex64(const char *s, size_t n) {
-  if (n != 64) return false;
+// Exactly n characters, each 0-9 or a-f. Upper case is not hex here: every value on the wire has one spelling (manifest-signing.md, section 1).
+inline bool isLowerHex(const char *s, size_t n) {
+  if (!s) return false;
   for (size_t i = 0; i < n; i++)
     if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
+  return true;
+}
+inline bool isLowerHex64(const char *s, size_t n) { return n == 64 && isLowerHex(s, n); }
+
+// Strict hex decoding: n must be even, n / 2 must fit in outCap, every character lowercase hex (so no upper case, no "0x", no space, no sign,
+// no NUL). `out` is only complete when true comes back.
+inline bool hexDecodeLower(const char *s, size_t n, uint8_t *out, size_t outCap) {
+  if (!s || !out || n % 2 != 0 || n / 2 > outCap || !isLowerHex(s, n)) return false;
+  for (size_t i = 0; i < n / 2; i++) {
+    uint8_t v[2];
+    for (int k = 0; k < 2; k++) {
+      char c = s[2 * i + k];
+      v[k] = (uint8_t)(c <= '9' ? c - '0' : c - 'a' + 10);
+    }
+    out[i] = (uint8_t)(v[0] << 4 | v[1]);
+  }
   return true;
 }
 
@@ -136,7 +167,8 @@ inline bool isLowerHex64(const char *s, size_t n) {
 //   size     a whole number above 100 KB (102400) and at most 2,097,152
 //   sha256   64 lowercase hex characters
 //   notes    text of at most 200 characters (a missing or null "notes" is the empty text, as the service reads it); a number, a
-//            list or an object is rejected
+//            list or an object is rejected; no control character (no byte below 0x20, no 0x7F): the notes are signed and shown
+//   keyid, sig   the signature fields, see SigFields: shaped here, never a reason to refuse the manifest (a development build ignores them)
 // A field of the wrong type is as wrong as a missing one. Keys this firmware does not know are ignored, so a later service can add a
 // field without locking older boards out of the update that would fix them. `out` is only complete when None comes back.
 inline ManifestError parseManifest(const char *body, size_t len, Manifest &out) {
@@ -193,8 +225,30 @@ inline ManifestError parseManifest(const char *body, size_t len, Manifest &out) 
     for (size_t i = 0; i < s.size(); i++)
       if (((uint8_t)s.c_str()[i] & 0xC0) != 0x80) chars++;  // every byte that is not a UTF-8 continuation byte starts a character
     if (chars > NOTES_MAX_CHARS) return ManifestError::Notes;
+    for (size_t i = 0; i < s.size(); i++) {
+      uint8_t b = (uint8_t)s.c_str()[i];
+      if (b < 0x20 || b == 0x7F) return ManifestError::NotesControl;  // the notes are signed and shown: no line feed, no escape, nothing that is not text
+    }
     memcpy(m.notes, s.c_str(), s.size());
     m.notes[s.size()] = 0;
+  }
+
+  // The signature fields: both or neither, each in its one valid spelling. A null is as good as absent (the contract's rule for both fields).
+  {
+    JsonVariantConst kid = obj["keyid"], sg = obj["sig"];
+    bool haveKid = !kid.isNull(), haveSig = !sg.isNull();
+    if (haveKid || haveSig) {
+      m.sigFields = SigFields::Malformed;
+      if (haveKid && haveSig && kid.is<const char *>() && sg.is<const char *>()) {
+        JsonString k = kid.as<JsonString>(), g = sg.as<JsonString>();
+        if (k.size() == KEYID_HEX_LEN && g.size() == SIG_HEX_LEN && k.size() == strlen(k.c_str()) && g.size() == strlen(g.c_str()) &&
+            isLowerHex(k.c_str(), k.size()) && hexDecodeLower(g.c_str(), g.size(), m.sig, sizeof(m.sig))) {
+          memcpy(m.keyid, k.c_str(), KEYID_HEX_LEN);
+          m.keyid[KEYID_HEX_LEN] = 0;
+          m.sigFields = SigFields::Present;
+        }
+      }
+    }
   }
   out = m;
   return ManifestError::None;
@@ -263,7 +317,14 @@ enum class Fail : uint8_t {
   RolledBack,
   CannotRollBack,    // the new image failed its probation and there is no previous image to go back to
   CannotConfirm,     // the new image passed its probation but the board could not record it
+  // The signed manifest (shared/manifest-signing.md, updatesig.h): a refusal is soft, nothing is downloaded or written. A manifest whose
+  // signature fields are malformed is ManifestInvalid with SIGNATURE_FIELDS_MALFORMED as the detail.
+  Unsigned,                // no keyid and no sig, and this build requires a signature
+  UnknownKey,              // keyid is not one of the pinned keys
+  BadSignature,            // a pinned key, and the signature does not verify
+  SignatureCheckFailed,    // the check could not run (out of memory, an internal error): not an attack, tried again at the next check
 };
+static const char SIGNATURE_FIELDS_MALFORMED[] = "the signature fields are malformed";  // the detail after PROBLEM_RAW_UPDATE_MANIFEST_INVALID
 
 // The raw text (problems.h) whose plain sentence says this. A detail may be appended after ": " by the caller.
 inline const char *failRaw(Fail f) {
@@ -286,6 +347,10 @@ inline const char *failRaw(Fail f) {
     case Fail::RolledBack: return PROBLEM_RAW_UPDATE_ROLLED_BACK;
     case Fail::CannotRollBack: return PROBLEM_RAW_UPDATE_NO_ROLLBACK;
     case Fail::CannotConfirm: return PROBLEM_RAW_UPDATE_NOT_CONFIRMED;
+    case Fail::Unsigned: return PROBLEM_RAW_UPDATE_UNSIGNED;
+    case Fail::UnknownKey: return PROBLEM_RAW_UPDATE_UNKNOWN_KEY;
+    case Fail::BadSignature: return PROBLEM_RAW_UPDATE_BAD_SIGNATURE;
+    case Fail::SignatureCheckFailed: return PROBLEM_RAW_UPDATE_CHECK_FAILED;
   }
   return "";
 }

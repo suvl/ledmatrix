@@ -39,13 +39,14 @@ enum Tag { PASS, IDMISSING, IDINVALID, IDOTHER, IDHARDWARE, IDHARDWAREUNPROT, SI
            HTTPAUTH, NOTSVC, LIMIT, DOWN, ODDSTATUS, NOANSWER, DNS, CERT, HSTIMEOUT,
            TIMEOUT, REFUSED, CLOSED, NOCONN, UNREADABLE, BUSY,
            UPD_NOFW, UPD_MANIFEST, UPD_NOSVC, UPD_NOCLOCK, UPD_DOWNLOAD, UPD_UPLOAD, UPD_SIZE, UPD_SUM, UPD_IMAGE, UPD_BIG, UPD_FLASH, UPD_CODE,
-           UPD_EXPIRED, UPD_ROLLED, UPD_NOROLL, UPD_NOTCONF, UPD_VERSION };
+           UPD_EXPIRED, UPD_ROLLED, UPD_NOROLL, UPD_NOTCONF, UPD_VERSION, UPD_UNSIGNED, UPD_UNKNOWNKEY, UPD_BADSIG, UPD_CHECKFAILED };
 static const char *tagName(Tag t) {
   static const char *n[] = {"PASS", "IDMISSING", "IDINVALID", "IDOTHER", "IDHARDWARE", "IDHARDWAREUNPROT", "SIGNERMISMATCH", "SIGNERUNPROT", "SIGNFAIL", "AUTHMISSING", "AUTHMALFORMED",
                             "AUTHBAD", "AUTHREVOKED", "AUTHCLOCK", "HTTPAUTH", "NOTSVC", "LIMIT", "DOWN", "ODDSTATUS", "NOANSWER", "DNS",
                             "CERT", "HSTIMEOUT", "TIMEOUT", "REFUSED", "CLOSED", "NOCONN", "UNREADABLE", "BUSY",
                             "UPD_NOFW", "UPD_MANIFEST", "UPD_NOSVC", "UPD_NOCLOCK", "UPD_DOWNLOAD", "UPD_UPLOAD", "UPD_SIZE", "UPD_SUM", "UPD_IMAGE",
-                            "UPD_BIG", "UPD_FLASH", "UPD_CODE", "UPD_EXPIRED", "UPD_ROLLED", "UPD_NOROLL", "UPD_NOTCONF", "UPD_VERSION"};
+                            "UPD_BIG", "UPD_FLASH", "UPD_CODE", "UPD_EXPIRED", "UPD_ROLLED", "UPD_NOROLL", "UPD_NOTCONF", "UPD_VERSION",
+                            "UPD_UNSIGNED", "UPD_UNKNOWNKEY", "UPD_BADSIG", "UPD_CHECKFAILED"};
   return n[t];
 }
 // One marker per sentence (case-sensitive, taken from the sentences' own wording). PASS = none of them: the text was passed through.
@@ -72,6 +73,8 @@ static Tag classify(const char *why) {
       {"typed wrong three times", UPD_CODE}, {"code on the panel ran out of time", UPD_EXPIRED}, {"went back to the previous firmware", UPD_ROLLED},
       {"no previous firmware to go back to", UPD_NOROLL}, {"board could not record that", UPD_NOTCONF},
       {"different version from the one the service announced", UPD_VERSION},
+      {"update that is not signed", UPD_UNSIGNED}, {"signed with a key this board does not know", UPD_UNKNOWNKEY},
+      {"signature on the firmware update does not check out", UPD_BADSIG}, {"could not check the signature on the firmware update", UPD_CHECKFAILED},
   };
   for (const M &x : m) if (strstr(why, x.marker)) return x.tag;
   return PASS;
@@ -477,6 +480,11 @@ static void testWordsUpdate() {
       {PROBLEM_RAW_UPDATE_NO_ROLLBACK, UPD_NOROLL, "The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running."},
       {PROBLEM_RAW_UPDATE_WRONG_VERSION, UPD_VERSION, "The downloaded firmware is a different version from the one the service announced, so it was not installed. Nothing was changed."},
       {PROBLEM_RAW_UPDATE_NOT_CONFIRMED, UPD_NOTCONF, "The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts."},
+      // the signed manifest (ticket 50, shared/manifest-signing.md section 5.2): the exact sentences of the contract, each at most 159 characters
+      {PROBLEM_RAW_UPDATE_UNSIGNED, UPD_UNSIGNED, "The service offers a firmware update that is not signed, so it was not offered. This board accepts only updates signed with the key built into it."},
+      {PROBLEM_RAW_UPDATE_UNKNOWN_KEY, UPD_UNKNOWNKEY, "The firmware update is signed with a key this board does not know, so it was refused and nothing was changed. A USB flash may be needed."},
+      {PROBLEM_RAW_UPDATE_BAD_SIGNATURE, UPD_BADSIG, "The signature on the firmware update does not check out, so it was refused and nothing was changed. Check that the service address is yours."},
+      {PROBLEM_RAW_UPDATE_CHECK_FAILED, UPD_CHECKFAILED, "The board could not check the signature on the firmware update (it ran short of memory). Nothing was changed. It tries again at the next check."},
   };
   for (const Case &c : cases) {
     EXPECT(c.raw, c.tag);
@@ -518,6 +526,20 @@ static void testWordsUpdate() {
   CHECK(r.tag == UPD_FLASH);
   r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": The panel did not draw 100 frames within 3 minutes of starting.");
   CHECK(r.tag == UPD_ROLLED);
+  // a manifest whose signature fields are malformed is the existing "not valid" sentence with the detail (contract 5.2), not a sentence of its own
+  r = words(PROBLEM_RAW_UPDATE_MANIFEST_INVALID ": the signature fields are malformed");
+  CHECK(r.tag == UPD_MANIFEST && r.why == cases[1].sentence && r.detail == PROBLEM_RAW_UPDATE_MANIFEST_INVALID ": the signature fields are malformed");
+  // the four recognising phrases of the contract are recognised on their own, in any case
+  EXPECT("update that is not signed", UPD_UNSIGNED);
+  EXPECT("Signed with a key this board does not know", UPD_UNKNOWNKEY);
+  EXPECT("signature on the firmware update does not check out", UPD_BADSIG);
+  EXPECT("COULD NOT CHECK THE SIGNATURE ON THE FIREWARE UPDATE", PASS);   // a typo is not recognised: shown as it came
+  EXPECT("could not check the signature on the firmware update", UPD_CHECKFAILED);
+  // ...and the words near them keep their meaning: a request signature problem of the device key is not a firmware signature problem
+  EXPECT(PROBLEM_RAW_SIGN_FAILED, SIGNFAIL);
+  EXPECT(PROBLEM_RAW_AUTH_BAD_SIGNATURE, AUTHBAD);
+  EXPECT("firmware download failed", UPD_DOWNLOAD);
+  EXPECT("the signature is fine", PASS);
   // a long reason is cut in the detail, never in the sentence
   std::string longReason = std::string(PROBLEM_RAW_UPDATE_DOWNLOAD_FAILED ": ") + std::string(500, 'x');
   r = words(longReason.c_str());
