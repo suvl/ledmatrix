@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <esp_timer.h>
 
 #include <vector>
 
@@ -209,11 +210,13 @@ void registerStationRoutes() {
     server.send(200, "application/json", liveSelfTestJson(settings::get()));
   });
   server.on("/status", HTTP_GET, []() {
-    char buf[780];
+    char buf[780];  // the longest answer is about 500 bytes (every field at its maximum, IPv6 addresses as 45 characters), so there is room for more fields
+    // uptime_s counts from esp_timer, 64 bits: millis() / 1000 would wrap to zero after about 49 days.
+    unsigned long long uptimeS = (unsigned long long)(esp_timer_get_time() / 1000000);
     snprintf(buf, sizeof(buf),
-             "{\"version\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
+             "{\"version\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
              ota::version(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
-             WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
+             WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), uptimeS, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
              (unsigned long)gFrames, (unsigned long)gFrameMaxMs, (unsigned long)gFramesOver1s, identity::deviceId(), identity::statusName(),
              identity::signerName(), identity::signerCheckName());
     server.send(200, "application/json", buf);
