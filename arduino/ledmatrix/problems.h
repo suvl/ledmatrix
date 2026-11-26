@@ -85,6 +85,12 @@ inline const char *problemKindName(ProblemKind k) {
 #define PROBLEM_RAW_UPDATE_ROLLED_BACK "update rolled back"                                  // the new image failed its probation
 #define PROBLEM_RAW_UPDATE_NO_ROLLBACK "no previous firmware to go back to"                  // it failed its probation and there is nothing to return to
 #define PROBLEM_RAW_UPDATE_NOT_CONFIRMED "could not record that the new firmware is good"    // the otadata write that ends the probation failed
+// The signed manifest (shared/manifest-signing.md, 5.2). All four are refusals before anything is downloaded; a manifest whose signature fields
+// are malformed is PROBLEM_RAW_UPDATE_MANIFEST_INVALID with the detail "the signature fields are malformed".
+#define PROBLEM_RAW_UPDATE_UNSIGNED "firmware manifest is not signed"                        // no keyid and no sig, and this build requires a signature
+#define PROBLEM_RAW_UPDATE_UNKNOWN_KEY "firmware signed with an unknown key"                 // keyid is not one of the keys built into the firmware
+#define PROBLEM_RAW_UPDATE_BAD_SIGNATURE "firmware signature is not valid"                   // a known key, and the signature does not verify
+#define PROBLEM_RAW_UPDATE_CHECK_FAILED "could not check the firmware signature"             // the check could not run (memory): not an attack
 
 // A rollback that happened on this board (ticket 47): PROBLEM_RAW_UPDATE_ROLLED_BACK ": " <x.y.z> ": " <reason>, built by problemRolledBackRaw
 // below. The sentence names the version; the reason becomes the entry's detail. The macro alone, or followed by anything that does not start with
@@ -203,6 +209,14 @@ inline void problemWords(const char *raw, char *why, size_t whyCap, char *detail
     s = "The service answered, but it has no firmware published to offer.";
   } else if (problemHas(raw, PROBLEM_RAW_UPDATE_MANIFEST_INVALID) || problemHas(raw, "firmware details from the service are not valid")) {
     s = "The firmware details from the service are not valid, so no update is offered.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_UNSIGNED) || problemHas(raw, "update that is not signed")) {
+    s = "The service offers a firmware update that is not signed, so it was not offered. This board accepts only updates signed with the key built into it.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_UNKNOWN_KEY) || problemHas(raw, "signed with a key this board does not know")) {
+    s = "The firmware update is signed with a key this board does not know, so it was refused and nothing was changed. A USB flash may be needed.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_BAD_SIGNATURE) || problemHas(raw, "signature on the firmware update does not check out")) {
+    s = "The signature on the firmware update does not check out, so it was refused and nothing was changed. Check that the service address is yours.";
+  } else if (problemHas(raw, PROBLEM_RAW_UPDATE_CHECK_FAILED) || problemHas(raw, "could not check the signature on the firmware update")) {
+    s = "The board could not check the signature on the firmware update (it ran short of memory). Nothing was changed. It tries again at the next check.";
   } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_SERVICE) || problemHas(raw, "no service address is saved")) {
     s = "No service address is saved, so there is nothing to check for updates.";
   } else if (problemHas(raw, PROBLEM_RAW_UPDATE_NO_CLOCK) || problemHas(raw, "clock is not set yet")) {

@@ -288,11 +288,11 @@ void registerStationRoutes() {
     // uptime_s counts from esp_timer, 64 bits: millis() / 1000 would wrap to zero after about 49 days.
     unsigned long long uptimeS = (unsigned long long)(esp_timer_get_time() / 1000000);
     snprintf(buf, sizeof(buf),
-             "{\"version\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\"}",
+             "{\"version\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\",\"ip6_link_local\":\"%s\",\"ip6_global\":\"%s\",\"rssi\":%d,\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"frames\":%lu,\"frame_max_ms\":%lu,\"frames_over_1s\":%lu,\"device\":\"%s\",\"identity\":\"%s\",\"signer\":\"%s\",\"signer_check\":\"%s\",\"updateSigning\":\"%s\"}",
              ota::version(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.linkLocalIPv6().toString().c_str(),
              WiFi.globalIPv6().toString().c_str(), WiFi.RSSI(), uptimeS, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
              (unsigned long)gFrames, (unsigned long)gFrameMaxMs, (unsigned long)gFramesOver1s, identity::deviceId(), identity::statusName(),
-             identity::signerName(), identity::signerCheckName());
+             identity::signerName(), identity::signerCheckName(), ota::signingMode());
     server.send(200, "application/json", buf);
   });
   // Firmware updates (shared/firmware-update.md): every answer is the same JSON, built by ota.cpp. No answer ever holds the code.

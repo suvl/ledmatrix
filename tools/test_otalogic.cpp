@@ -272,13 +272,58 @@ static void testManifestNotes() {
   // bytes that start no valid character cannot sneak a longer text into the buffer
   std::string junk(801, '\xF8');
   CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, ("\"" + junk + "\"").c_str())) == ManifestError::Notes);
-  // escapes: a new line and a quote are one character each
-  CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, "\"line one\\nline \\\"two\\\"\""), &m) == ManifestError::None && strcmp(m.notes, "line one\nline \"two\"") == 0);
+  // escapes: a quote and a backslash are one character each. A new line is a control character, which the signed notes may not hold
+  // (manifest-signing.md section 2: the signer folds them to spaces, so a manifest that has one is not the maintainer's)
+  CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, "\"line one, line \\\"two\\\" and a backslash \\\\ \""), &m) == ManifestError::None && strcmp(m.notes, "line one, line \"two\" and a backslash \\ ") == 0);
+  CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, "\"line one\\nline two\"")) == ManifestError::NotesControl);
+  for (const char *bad : {"\"a\\tb\"", "\"a\\rb\"", "\"a\\u0001b\"", "\"a\\u001fb\"", "\"a\\u007fb\"", "\"\\u001b[31m\"", "\"\\n\""})
+    CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, bad)) == ManifestError::NotesControl);
+  for (const char *good : {"\"a b\"", "\"~ and space\"", "\"caf\\u00e9\"", "\"\\u2713 done\""}) CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, good)) == ManifestError::None);
+  CHECK(strcmp(manifestErrorText(ManifestError::NotesControl), "notes hold a control character") == 0);
   CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, "\"a\\u0000b\"")) == ManifestError::Notes);  // an embedded NUL
   // the wrong type
   for (const char *bad : {"5", "true", "[\"a\"]", "{\"a\":1}", "1.5"}) CHECK(parse(manifest("1.0.0", nullptr, "200000", SHA, bad)) == ManifestError::Notes);
   // the notes are copied whole, with a terminator
   CHECK(m.notes[strlen(m.notes)] == 0);
+}
+
+// The two signature fields (ticket 50, manifest-signing.md section 3): shaped by parseManifest, never a reason to refuse a manifest (the policy in
+// updatesig.h decides; tools/test_updatesig.cpp runs every vector and every wrong shape through it).
+static void testManifestSignatureFields() {
+  SECTION("manifest: the signature fields are shaped, not judged");
+  const std::string sig = "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4";
+  auto withFields = [&](const std::string &fields) { std::string s = manifest("0.11.0"); s.pop_back(); return s + fields + "}"; };
+  Manifest m;
+  CHECK(parse(manifest(), &m) == ManifestError::None && m.sigFields == SigFields::Absent && m.keyid[0] == 0);
+  CHECK(parse(withFields(",\"keyid\":\"f864ea3b\",\"sig\":\"" + sig + "\""), &m) == ManifestError::None && m.sigFields == SigFields::Present);
+  CHECK(strcmp(m.keyid, "f864ea3b") == 0 && m.sig[0] == 0xd2 && m.sig[1] == 0x9a && m.sig[31] == 0x0e && m.sig[32] == 0x39 && m.sig[63] == 0xc4);
+  CHECK(parse(withFields(",\"keyid\":null,\"sig\":null"), &m) == ManifestError::None && m.sigFields == SigFields::Absent);   // null is absent
+  CHECK(parse(withFields(",\"keyid\":\"f864ea3b\""), &m) == ManifestError::None && m.sigFields == SigFields::Malformed);      // one of the two
+  CHECK(parse(withFields(",\"sig\":\"" + sig + "\""), &m) == ManifestError::None && m.sigFields == SigFields::Malformed);
+  CHECK(parse(withFields(",\"keyid\":\"F864EA3B\",\"sig\":\"" + sig + "\""), &m) == ManifestError::None && m.sigFields == SigFields::Malformed);  // upper case
+  CHECK(parse(withFields(",\"keyid\":\"f864ea3b\",\"sig\":12345"), &m) == ManifestError::None && m.sigFields == SigFields::Malformed);          // not text
+  CHECK(parse(withFields(",\"keyid\":\"f864ea3b\",\"sig\":\"" + sig.substr(2) + "\""), &m) == ManifestError::None && m.sigFields == SigFields::Malformed);  // short
+  // a malformed or absent signature changes nothing else: the other fields are read as before
+  CHECK(strcmp(m.version, "0.11.0") == 0 && m.size == 1412537 && strcmp(m.file, "ledmatrix-0.11.0.bin") == 0);
+  // a refused manifest leaves the caller's copy alone
+  Manifest before;
+  before.sigFields = SigFields::Present;
+  strcpy(before.keyid, "marker00");
+  CHECK(parseManifest("{\"version\":\"1.0.0\"}", 19, before) == ManifestError::File && before.sigFields == SigFields::Present && strcmp(before.keyid, "marker00") == 0);
+  // the wire sizes the contract fixes
+  CHECK(KEYID_HEX_LEN == 8 && SIG_RAW_LEN == 64 && SIG_HEX_LEN == 128 && sizeof(m.sig) == 64 && sizeof(m.keyid) == 9);
+  // the fields are part of the 2,048-byte answer: the longest signed manifest (200 four-byte characters of notes) is far below it
+  std::string f200;
+  for (int i = 0; i < 200; i++) f200 += "\xF0\x9F\x98\x80";
+  std::string longest = "{\"version\":\"9999.9999.9999\",\"file\":\"ledmatrix-9999.9999.9999.bin\",\"size\":2097152,\"sha256\":\"" + std::string(SHA) + "\",\"notes\":\"" + f200 +
+                        "\",\"keyid\":\"f864ea3b\",\"sig\":\"" + sig + "\"}";
+  CHECK(longest.size() < 1300 && parse(longest, &m) == ManifestError::None && m.sigFields == SigFields::Present);
+  // hex helpers: lower case only
+  uint8_t out[4];
+  CHECK(isLowerHex("0a9f", 4) && !isLowerHex("0A9f", 4) && !isLowerHex("0a9g", 4) && isLowerHex("", 0) && !isLowerHex(nullptr, 1));
+  CHECK(hexDecodeLower("0a9fFF", 6, out, sizeof out) == false && hexDecodeLower("0a9f", 4, out, sizeof out) && out[0] == 0x0a && out[1] == 0x9f);
+  CHECK(!hexDecodeLower("0a9", 3, out, sizeof out) && !hexDecodeLower("0a9f0a9f00", 10, out, sizeof out));
+  CHECK(isLowerHex64(SHA, 64) && !isLowerHex64(SHA, 63) && !isLowerHex64("", 0));  // the old helper keeps its meaning
 }
 
 static void testManifestShape() {
@@ -319,7 +364,7 @@ static void testManifestShape() {
   CHECK(parseManifest("{\"version\":\"1.0.0\"}", 19, before) == ManifestError::File && strcmp(before.version, "marker") == 0);
   // every reason has a short text that fits the problem list's detail
   for (ManifestError e : {ManifestError::TooLong, ManifestError::NotJson, ManifestError::NotObject, ManifestError::Version, ManifestError::File,
-                          ManifestError::Size, ManifestError::Sha256, ManifestError::Notes}) {
+                          ManifestError::Size, ManifestError::Sha256, ManifestError::Notes, ManifestError::NotesControl}) {
     CHECK(strlen(manifestErrorText(e)) > 0 && strlen(manifestErrorText(e)) <= 47);
     std::string raw = std::string(PROBLEM_RAW_UPDATE_MANIFEST_INVALID) + ": " + manifestErrorText(e);
     CHECK(raw.size() < 79);  // the whole text fits the detail (80 bytes with the terminator)
@@ -1781,7 +1826,7 @@ static void testAnswers() {
 static void testFailWords() {
   SECTION("fail: every way to fail has its own plain sentence");
   std::vector<std::string> sentences;
-  for (int i = (int)Fail::NoFirmware; i <= (int)Fail::CannotConfirm; i++) {
+  for (int i = (int)Fail::NoFirmware; i <= (int)Fail::SignatureCheckFailed; i++) {
     Fail f = (Fail)i;
     const char *raw = failRaw(f);
     CHECK(raw && strlen(raw) > 5);
@@ -1802,7 +1847,7 @@ static void testFailWords() {
     for (const std::string &other : sentences) CHECK(other != why);
     sentences.push_back(why);
   }
-  CHECK(sentences.size() == 17);
+  CHECK(sentences.size() == 21);  // the four signature refusals (ticket 50) each have a sentence of their own
   CHECK(strlen(failRaw(Fail::None)) == 0);
 }
 
@@ -1829,6 +1874,7 @@ int main(int argc, char **argv) {
   testManifestSize();
   testManifestSha();
   testManifestNotes();
+  testManifestSignatureFields();
   testManifestShape();
   testImageHeader();
   testCodesEqual();
