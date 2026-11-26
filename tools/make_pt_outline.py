@@ -262,7 +262,8 @@ def main(argv=None):
         version = z.read(STEM + ".VERSION.txt").decode("ascii").strip()
         d = z.getinfo(STEM + ".shp").date_time
     file_date = "%04d-%02d-%02d" % d[:3]
-    sha = hashlib.sha256(open(a.zip, "rb").read()).hexdigest()
+    with open(a.zip, "rb") as f:
+        sha = hashlib.sha256(f.read()).hexdigest()
     text = render(simple, boxes, left, len(main_ring), a.tolerance, version, file_date, a.fetched, sha)
     with open(a.out, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)

@@ -158,6 +158,13 @@ func TestWeatherFallsThroughWhenIPMAFails(t *testing.T) {
 	}
 }
 
+func tempStr(p *int) string {
+	if p == nil {
+		return "none"
+	}
+	return fmt.Sprint(*p)
+}
+
 // The current temperature comes from an observation station only when it is within 50 km.
 func TestIPMAObservationStationCap(t *testing.T) {
 	s := newStub(t)
@@ -171,17 +178,17 @@ func TestIPMAObservationStationCap(t *testing.T) {
 	}
 	a.weather.maxStationKm = d + 1
 	if out := getWeather(t, a, 38.7223, -9.1393); out.T == nil || *out.T != 7 {
-		t.Fatalf("station %.1f km away, cap %.1f km: got %v, want the reading 7", d, a.weather.maxStationKm, out.T)
+		t.Fatalf("station %.1f km away, cap %.1f km: got %s, want the reading 7", d, a.weather.maxStationKm, tempStr(out.T))
 	}
 	a = s.app(t, lisbonNoon(t))
 	a.weather.maxStationKm = d - 0.01
 	if out := getWeather(t, a, 38.7223, -9.1393); out.T == nil || *out.T != forecast {
-		t.Fatalf("station %.1f km away, cap %.2f km: got %v, want the forecast %d", d, a.weather.maxStationKm, out.T, forecast)
+		t.Fatalf("station %.1f km away, cap %.2f km: got %s, want the forecast %d", d, a.weather.maxStationKm, tempStr(out.T), forecast)
 	}
 	// the stations are tried nearest first and the cap ends the search: a far station is never used, a near one still is
 	a = s.app(t, lisbonNoon(t))
 	if out := getWeather(t, a, 38.7223, -9.1393); out.T == nil || *out.T != 7 || d > 50 {
-		t.Fatalf("default cap: %v (station %.1f km away)", out.T, d)
+		t.Fatalf("default cap: %s (station %.1f km away)", tempStr(out.T), d)
 	}
 }
 
