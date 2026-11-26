@@ -57,9 +57,10 @@ Reply uploadFinish();
 
 // ---- probation (rollback) ---------------------------------------------------------------------------------------------------
 // The board's bootloader does not roll back (bench test, shared/firmware-update.md), so the application does, with the OTA state record
-// (esp_ota_get_state_partition) and a boot counter in RTC no-init memory. The pure decisions are in otalogic.h (probationStep, Health).
+// (esp_ota_get_state_partition) and a boot counter in NVS (kept only while an image is on probation, and carrying the image's identity, so a
+// power cut cannot defeat it). The pure decisions are in otalogic.h (probationStep, Health).
 // Every image also defines verifyRollbackLater() as true (ota.cpp), so the core does not mark it valid before setup().
-void probationBoot();               // FIRST THING in setup(): on probation? which boot? crashed more than 3 times -> rollbackNow.
+void probationBoot();               // FIRST THING in setup(): on probation? which boot (counted in NVS)? more than 3 -> rollbackNow.
                                     // Then, on probation, it starts the probation task (priority above the data task, 6 KB of stack):
                                     // the checklist runs there and reaches its verdict at 3 minutes even if nothing else ever runs.
 bool probationActive();             // this image is on probation and has not been marked good

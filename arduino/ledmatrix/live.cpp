@@ -102,10 +102,22 @@ void noteProblem(ProblemKind kind, const char *raw) {
   uint32_t now = millis();
   time_t t = time(nullptr);
   lock();
-  plog.record(kind, why, detail, t > 1700000000 ? (uint32_t)t : 0, now / 1000);
-  pwatch.failed(kind, now);
+  problemNote(plog, pwatch, kind, why, detail, true, t > 1700000000 ? (uint32_t)t : 0, now);
   unlock();
   Serial.printf("PROBLEM %s: %s\n", problemKindName(kind), why);
+}
+
+// Something happened that the owner should read in the portal's list but that is not a source of data failing (an update was rolled back):
+// the list only. It does NOT feed the one-hour rule, so it can never put the PROBLEM message on the panel. Lock free, like noteProblem.
+void noteEvent(ProblemKind kind, const char *raw) {
+  char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+  problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+  uint32_t now = millis();
+  time_t t = time(nullptr);
+  lock();
+  problemNote(plog, pwatch, kind, why, detail, false, t > 1700000000 ? (uint32_t)t : 0, now);
+  unlock();
+  Serial.printf("EVENT %s: %s\n", problemKindName(kind), why);
 }
 
 // This kind of data works again (the service answered): its hour of failure starts over. Lock free, like noteProblem.
@@ -808,6 +820,7 @@ bool liveHttpsStream(const char *host, const char *path, size_t chunk, int64_t e
 
 void liveNoteProblem(ProblemKind kind, const char *raw) { noteProblem(kind, raw); }
 void liveNoteWorking(ProblemKind kind) { noteWorking(kind); }
+void liveNoteEvent(ProblemKind kind, const char *raw) { noteEvent(kind, raw); }
 
 bool liveServiceAnswered() { return serviceAnswered; }
 bool liveStarted() { return mu != nullptr; }

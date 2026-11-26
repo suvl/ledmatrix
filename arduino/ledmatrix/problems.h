@@ -10,6 +10,8 @@
 //                 failed for one hour with no success in between, AND it is still failing now (a failure within the last
 //                 10 minutes). Without the second part, one logo that failed an hour ago and was never asked for again
 //                 would keep the message up for ever.
+// A third thing is a line that is not a failure: an EVENT (an update was rolled back, ticket 47). It goes into the list through
+// problemNote(..., failure = false) and never into the one-hour rule, so it cannot put the PROBLEM message on the panel.
 #pragma once
 #include <ctype.h>
 #include <stdint.h>
@@ -84,6 +86,10 @@ inline const char *problemKindName(ProblemKind k) {
 #define PROBLEM_RAW_UPDATE_NO_ROLLBACK "no previous firmware to go back to"                  // it failed its probation and there is nothing to return to
 #define PROBLEM_RAW_UPDATE_NOT_CONFIRMED "could not record that the new firmware is good"    // the otadata write that ends the probation failed
 
+// A rollback that happened on this board (ticket 47): PROBLEM_RAW_UPDATE_ROLLED_BACK ": " <x.y.z> ": " <reason>, built by problemRolledBackRaw
+// below. The sentence names the version; the reason becomes the entry's detail. The macro alone, or followed by anything that does not start with
+// a version, keeps the older sentence (which names no version).
+
 inline const char *problemFind(const char *hay, const char *needle) {  // case-insensitive substring; where it starts, or nullptr
   size_t n = strlen(needle);
   if (!n) return hay;
@@ -108,6 +114,64 @@ inline bool problemHasWord(const char *hay, const char *needle) {
   return false;
 }
 
+// ---- a rollback, with the version and the reason ----------------------------------------------------------------------------
+// Length of the x.y.z at the start of `s` (three numbers of 1 to 4 digits, digits and dots only), or 0 when `s` does not start with one.
+inline size_t problemVersionLen(const char *s) {
+  size_t i = 0;
+  for (int part = 0; part < 3; part++) {
+    if (part > 0) {
+      if (s[i] != '.') return 0;
+      i++;
+    }
+    size_t digits = 0;
+    while (s[i] >= '0' && s[i] <= '9') { i++; digits++; }
+    if (digits < 1 || digits > 4) return 0;
+  }
+  if (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) return 0;  // a fourth number, or a fifth digit: not a version
+  return i;
+}
+
+// Copies `src` (at most srcLen bytes) into out as plain printable text: a control character, DEL or a byte above 127 becomes a space (the
+// reasons are plain English sentences), the ends are trimmed. Always NUL-terminated when cap > 0; cut to fit.
+inline void problemPlainText(const char *src, size_t srcLen, char *out, size_t cap) {
+  if (cap == 0) return;
+  size_t n = 0;
+  for (size_t i = 0; i < srcLen && src[i] && n + 1 < cap; i++) {
+    unsigned char c = (unsigned char)src[i];
+    out[n++] = (c < 0x20 || c > 0x7E) ? ' ' : (char)c;
+  }
+  while (n > 0 && out[n - 1] == ' ') n--;
+  out[n] = 0;
+  size_t lead = 0;
+  while (out[lead] == ' ') lead++;
+  if (lead) memmove(out, out + lead, n - lead + 1);
+}
+
+// The raw text of "version x.y.z was rolled back, and why" (the record the failed update left in the board's memory). `version` is used only
+// when it is a clean x.y.z; `reason` is one plain sentence, cleaned of anything that is not printable text. Fits in `cap` (cut, never overrun).
+inline void problemRolledBackRaw(const char *version, const char *reason, char *out, size_t cap) {
+  if (cap == 0) return;
+  char clean[160];
+  problemPlainText(reason ? reason : "", reason ? strlen(reason) : 0, clean, sizeof(clean));
+  bool haveVersion = version && problemVersionLen(version) > 0 && problemVersionLen(version) == strlen(version);
+  if (haveVersion) snprintf(out, cap, "%s: %s%s%s", PROBLEM_RAW_UPDATE_ROLLED_BACK, version, clean[0] ? ": " : "", clean);
+  else snprintf(out, cap, "%s%s%s", PROBLEM_RAW_UPDATE_ROLLED_BACK, clean[0] ? ": " : "", clean);
+}
+
+// Is `raw` a rollback with a version? Then `version` gets it and `*reason` points at what follows (inside raw; "" when there is none).
+inline bool problemRolledBackParts(const char *raw, char *version, size_t versionCap, const char **reason) {
+  size_t m = strlen(PROBLEM_RAW_UPDATE_ROLLED_BACK);
+  if (problemFind(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK) != raw || raw[m] != ':' || raw[m + 1] != ' ') return false;
+  const char *v = raw + m + 2;
+  size_t n = problemVersionLen(v);
+  if (n == 0 || n + 1 > versionCap) return false;
+  if (v[n] != 0 && !(v[n] == ':' && v[n + 1] == ' ')) return false;
+  memcpy(version, v, n);
+  version[n] = 0;
+  *reason = v[n] ? v + n + 2 : v + n;
+  return true;
+}
+
 // Turns what the connection code reports (an mbedTLS text, "HTTP 502", the PROBLEM_RAW_* texts, the firmware's own
 // sentences) into a sentence an owner can act on. `why` gets the sentence. `detail` gets the technical text
 // it came from (cut to fit), or "" when the sentence already says everything. A text it does not know is passed through
@@ -117,6 +181,17 @@ inline void problemWords(const char *raw, char *why, size_t whyCap, char *detail
   if (!detail) detailCap = 0;
   if (!raw) raw = "";
   while (*raw == ' ') raw++;
+  // A rollback that names its version (ticket 47) is worded before anything else: its reason is free text that the branches below could take
+  // for something else. The version in the sentence is digits and dots only (problemVersionLen); the reason, cleaned, is the detail.
+  {
+    char rbVersion[16];
+    const char *rbReason = nullptr;
+    if (problemRolledBackParts(raw, rbVersion, sizeof(rbVersion), &rbReason)) {
+      snprintf(why, whyCap, "The new firmware (version %s) did not pass its start-up check, so the board went back to the previous firmware.", rbVersion);
+      if (detailCap) problemPlainText(rbReason, strlen(rbReason), detail, detailCap);
+      return;
+    }
+  }
   int http = 0;
   const char *h = problemFind(raw, "HTTP ");  // any case: "http 502" is a status too
   if (h) http = atoi(h + 5);
@@ -321,6 +396,15 @@ struct ProblemWatch {
     return false;
   }
 };
+
+// What live.cpp's noteProblem and noteEvent do with a worded problem, in one place so that the difference between them is tested: a failure
+// of a source of data goes into the list AND the one-hour rule (which, after an hour, puts the PROBLEM message on the panel); an event (an update
+// was rolled back) goes into the list only, for the owner to read in the portal, and never makes the panel say PROBLEM.
+inline void problemNote(ProblemLog &log, ProblemWatch &watch, ProblemKind kind, const char *why, const char *detail, bool failure,
+                        uint32_t unixNow, uint32_t nowMs) {
+  log.record(kind, why, detail, unixNow, nowMs / 1000);
+  if (failure) watch.failed(kind, nowMs);
+}
 
 // The panel message shows for 5 seconds at the start of every minute while a long failure lasts. (Free-running on
 // uptime; the glitch when millis() wraps after 49 days is one shorter or longer window, nothing more.)
