@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1033,6 +1034,9 @@ func (c *logCapture) all() []string {
 
 var refusalLine = regexp.MustCompile(`^auth refused: device=([0-9a-f]{12}|-) reason=(missing|malformed|bad_signature|revoked|clock_skew|body_too_large)$`)
 
+// seenLine is the only line an accepted request ever causes: the word, then the validated device ID.
+var seenLine = regexp.MustCompile(`^device seen [0-9a-f]{12}$`)
+
 func TestRefusalLogShowsOnlyDeviceAndReason(t *testing.T) {
 	v := loadVectors(t)
 	h, a := realMux(t)
@@ -1062,7 +1066,7 @@ func TestRefusalLogShowsOnlyDeviceAndReason(t *testing.T) {
 	// revoked and clock_skew
 	serve(h, signWith(testMaster, "112233445566", testHost, "GET", weatherURI, r.Timestamp, ""))
 	serve(h, signedRequest(t, "GET", weatherURI, r.Timestamp-500, ""))
-	// accepted: no line
+	// accepted: no refusal line, only the one "device seen" line (see TestSeenLog...)
 	serve(h, signedRequest(t, "GET", weatherURI, r.Timestamp, ""))
 
 	want := []string{
@@ -1071,6 +1075,7 @@ func TestRefusalLogShowsOnlyDeviceAndReason(t *testing.T) {
 		"auth refused: device=aabbccddeeff reason=bad_signature",
 		"auth refused: device=112233445566 reason=revoked",
 		"auth refused: device=aabbccddeeff reason=clock_skew",
+		"device seen aabbccddeeff",
 	}
 	lines := logged.all()
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
@@ -1084,7 +1089,7 @@ func TestRefusalLogShowsOnlyDeviceAndReason(t *testing.T) {
 		}
 	}
 	for _, l := range lines {
-		if !refusalLine.MatchString(l) {
+		if !refusalLine.MatchString(l) && !seenLine.MatchString(l) {
 			t.Errorf("unexpected log line %q", l)
 		}
 	}
@@ -1173,7 +1178,321 @@ func TestConcurrentRequests(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
-	if n := len(logged.all()); n > refusalBudget {
-		t.Errorf("%d refusal lines, budget %d", n, refusalBudget)
+	refused, seen := 0, 0
+	for _, l := range logged.all() {
+		switch {
+		case strings.HasPrefix(l, "auth refused: "):
+			refused++
+		case l == "device seen "+testDevice:
+			seen++
+		default:
+			t.Errorf("unexpected log line %q", l)
+		}
+	}
+	if refused > refusalBudget {
+		t.Errorf("%d refusal lines, budget %d", refused, refusalBudget)
+	}
+	if seen != 1 { // 800 accepted requests from 8 goroutines at once: one line
+		t.Errorf("%d 'device seen' lines for one device, want 1", seen)
+	}
+}
+
+// ---- "device seen" ---------------------------------------------------------------------------------------
+
+// seenSetup is an authenticator, a log and a handler that accepts what is signed; accept sends a good
+// request for a device with the service's clock and the request's timestamp both at unix.
+func seenSetup(t *testing.T) (au *authenticator, logged *logCapture, accept func(device string, unix int64)) {
+	t.Helper()
+	au = testAuthenticator(t)
+	logged = &logCapture{}
+	au.logf = logged.logf
+	h := echoMux(au)
+	accept = func(device string, unix int64) {
+		t.Helper()
+		au.now = fixedClock(unix)
+		wantAccepted(t, "device "+device, serve(h, signWith(testMaster, device, testHost, "GET", weatherURI, unix, "")))
+	}
+	return au, logged, accept
+}
+
+func seenDevices(t *testing.T, c *logCapture) []string {
+	t.Helper()
+	var out []string
+	for _, l := range c.all() {
+		if strings.HasPrefix(l, "device seen: ") || strings.HasPrefix(l, "auth refused: ") { // the notice, a refusal: not device lines
+			continue
+		}
+		if !seenLine.MatchString(l) {
+			t.Errorf("unexpected log line %q", l)
+		}
+		out = append(out, strings.TrimPrefix(l, "device seen "))
+	}
+	return out
+}
+
+func seenNotices(c *logCapture) (n int) {
+	for _, l := range c.all() {
+		if strings.HasPrefix(l, "device seen: ") {
+			n++
+		}
+	}
+	return n
+}
+
+func seenMapSize(au *authenticator) int {
+	au.seen.mu.Lock()
+	defer au.seen.mu.Unlock()
+	return len(au.seen.last)
+}
+
+func TestSeenLogOncePerDevicePerHour(t *testing.T) {
+	_, logged, accept := seenSetup(t)
+	accept(testDevice, testNow)
+	if got := logged.all(); len(got) != 1 || got[0] != "device seen "+testDevice {
+		t.Fatalf("the first accepted request must log exactly 'device seen %s': %q", testDevice, got)
+	}
+	// within the hour: silence, however often the display asks
+	for _, dt := range []int64{1, 60, 1800, 3599} {
+		accept(testDevice, testNow+dt)
+	}
+	if n := len(logged.all()); n != 1 {
+		t.Fatalf("requests within the hour must not log again: %d lines", n)
+	}
+	// the hour runs from the line that was logged, not from the last request
+	accept(testDevice, testNow+3600)
+	if n := len(logged.all()); n != 2 {
+		t.Fatalf("after the hour the device is logged again: %d lines", n)
+	}
+	accept(testDevice, testNow+3601)
+	accept(testDevice, testNow+7199)
+	if n := len(logged.all()); n != 2 {
+		t.Fatalf("one line per hour: %d lines", n)
+	}
+	accept(testDevice, testNow+7200)
+	if n := len(logged.all()); n != 3 {
+		t.Fatalf("the third hour: %d lines", n)
+	}
+}
+
+func TestSeenLogTwoDevices(t *testing.T) {
+	const other = "112233445566"
+	_, logged, accept := seenSetup(t)
+	accept(testDevice, testNow)
+	accept(other, testNow+10)
+	accept(testDevice, testNow+20)
+	accept(other, testNow+30)
+	if got := strings.Join(seenDevices(t, logged), ","); got != testDevice+","+other {
+		t.Fatalf("each device is logged once, by its own ID: %q", got)
+	}
+	// each device keeps its own hour: the first one is due at +3600, the second not before +3610
+	accept(testDevice, testNow+3605)
+	accept(other, testNow+3605)
+	if got := strings.Join(seenDevices(t, logged), ","); got != testDevice+","+other+","+testDevice {
+		t.Fatalf("the hours are per device: %q", got)
+	}
+	accept(other, testNow+3610)
+	if n := len(seenDevices(t, logged)); n != 4 {
+		t.Fatalf("the second device is due after its own hour: %d lines", n)
+	}
+}
+
+func TestSeenLogIsBounded(t *testing.T) {
+	au, logged, accept := seenSetup(t)
+	dev := func(i int) string { return fmt.Sprintf("%012x", i+1) }
+
+	// more distinct devices than the cap, within one hour: the cap's worth of lines, one notice, the memory at the cap
+	for i := 0; i < seenCap+300; i++ {
+		accept(dev(i), testNow)
+	}
+	if n := len(seenDevices(t, logged)); n != seenCap {
+		t.Fatalf("%d device lines, want the cap of %d", n, seenCap)
+	}
+	if n := seenNotices(logged); n != 1 {
+		t.Fatalf("%d notices that the list is full, want 1", n)
+	}
+	if n := seenMapSize(au); n != seenCap {
+		t.Fatalf("the list holds %d devices, the cap is %d", n, seenCap)
+	}
+	// a device that is remembered stays quiet; a device that was dropped is not remembered
+	before := len(logged.all())
+	accept(dev(0), testNow+1)
+	accept(dev(seenCap+10), testNow+1)
+	if n := len(logged.all()); n != before || seenMapSize(au) != seenCap {
+		t.Fatalf("a full list must not log or grow: %d lines (was %d), %d devices", len(logged.all()), before, seenMapSize(au))
+	}
+
+	// after the hour the old entries are dropped and a new device is logged again
+	accept(dev(10000), testNow+3600)
+	if got := seenDevices(t, logged); len(got) != seenCap+1 || got[seenCap] != dev(10000) {
+		t.Fatalf("a new device after the hour must be logged: %d lines", len(got))
+	}
+	if n := seenMapSize(au); n != 1 {
+		t.Fatalf("expired entries must be dropped: the list holds %d devices", n)
+	}
+	// the next time the list fills, the notice comes again
+	for i := 0; i < seenCap+5; i++ {
+		accept(dev(20000+i), testNow+3600)
+	}
+	if n, nn := len(seenDevices(t, logged)), seenNotices(logged); n != 2*seenCap || nn != 2 {
+		t.Fatalf("second round: %d device lines (want %d) and %d notices (want 2)", n, 2*seenCap, nn)
+	}
+
+	// many hours of rotating IDs: the memory never passes the cap, the log never passes the cap per hour
+	for w := 2; w < 40; w++ {
+		unix := testNow + int64(w)*3600
+		before := len(logged.all())
+		for i := 0; i < 400; i++ {
+			accept(dev(w*1000+i), unix)
+		}
+		if n := seenMapSize(au); n > seenCap {
+			t.Fatalf("the list holds %d devices, the cap is %d", n, seenCap)
+		}
+		if n := len(logged.all()) - before; n > seenCap+1 {
+			t.Fatalf("hour %d logged %d lines, at most %d expected", w, n, seenCap+1)
+		}
+	}
+}
+
+func TestSeenLogClockGoingBackwards(t *testing.T) {
+	var l seenLog
+	var logged logCapture
+	t0 := time.Unix(testNow, 0)
+	l.note(t0, logged.logf, testDevice)
+	l.note(t0.Add(-time.Minute), logged.logf, testDevice) // an entry from the future counts as expired, as in the refusal log
+	l.note(t0.Add(-time.Minute), logged.logf, testDevice)
+	if got := logged.all(); len(got) != 2 {
+		t.Fatalf("after the clock went back the device is logged once more, then quiet: %q", got)
+	}
+}
+
+func TestSeenLogIgnoresRefusedRequests(t *testing.T) {
+	au, logged, accept := seenSetup(t)
+	au.revoked = map[string]bool{"112233445566": true}
+	h := echoMux(au)
+	au.now = fixedClock(testNow)
+
+	serve(h, signWith("a-different-master-secret-0123456789", testDevice, testHost, "GET", weatherURI, testNow, "")) // bad signature
+	serve(h, signWith(testMaster, "112233445566", testHost, "GET", weatherURI, testNow, ""))                         // revoked, signed correctly
+	serve(h, signWith(testMaster, testDevice, testHost, "GET", weatherURI, testNow-500, ""))                         // clock skew, signed correctly
+	serve(h, signWith(testMaster, testDevice, testHost, "POST", "/v1/x", testNow, strings.Repeat("a", maxSignedBody+1)))
+	malformed := signedRequest(t, "GET", weatherURI, testNow, "")
+	malformed.Header.Set("X-Signature", "v1=zz")
+	serve(h, malformed)
+	serve(h, httptest.NewRequest("GET", weatherURI, nil)) // not signed at all
+
+	lines := logged.all()
+	if len(lines) == 0 {
+		t.Fatal("the refusals must still be logged")
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "seen") || !refusalLine.MatchString(l) {
+			t.Errorf("a refused request logged %q", l)
+		}
+	}
+	// a refusal must not use up the device's hour: the first good request still logs
+	accept(testDevice, testNow)
+	if got := seenDevices(t, logged); len(got) != 1 || got[0] != testDevice {
+		t.Fatalf("the first accepted request after refusals must log: %q", got)
+	}
+}
+
+func TestSeenLogShowsOnlyTheDeviceID(t *testing.T) {
+	h, a := realMux(t)
+	var logged logCapture
+	a.auth.logf = logged.logf
+
+	trouble := "attacker-header-value"
+	uri := weatherURI + "&secret=" + trouble
+	req := signedRequest(t, "GET", uri, testNow, "")
+	req.Header.Set("User-Agent", trouble)
+	req.Header.Set("Authorization", "Bearer "+trouble)
+	req.Header.Set("Cookie", "session="+trouble)
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	sig := req.Header.Get("X-Signature")
+	serve(h, req)
+
+	lines := logged.all()
+	if len(lines) != 1 || lines[0] != "device seen "+testDevice {
+		t.Fatalf("log lines: %q", lines)
+	}
+	secrets := []string{testMaster, hex.EncodeToString(deviceKey([]byte(testMaster), testDevice)), sig, strings.TrimPrefix(sig, "v1="), "v1=",
+		trouble, "203.0.113.9", "192.0.2.1", testHost, strconv.FormatInt(testNow, 10), "/v1/weather", "lat=", "lon=", "38.7", "-9.1", "GET"}
+	for _, s := range secrets {
+		if strings.Contains(lines[0], s) {
+			t.Errorf("the line contains %q", s)
+		}
+	}
+}
+
+func TestSeenLogNotWrittenWhenAuthIsOff(t *testing.T) {
+	var logged logCapture
+	au, err := authFromEnv(envMap{"AUTH_OFF": "1"}.get, logged.logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := echoMux(au)
+	serve(h, signedRequest(t, "GET", weatherURI, testNow, ""))
+	serve(h, signedRequest(t, "GET", weatherURI, testNow, ""))
+	for _, l := range logged.all() {
+		if strings.Contains(l, "seen") {
+			t.Errorf("no device is validated with AUTH_OFF=1, yet %q", l)
+		}
+	}
+}
+
+// logWriter collects what the standard logger writes.
+type logWriter struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *logWriter) text() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+// The access log is another log with another job: method, decoded path, status, duration. It still
+// quotes the path (never the query) and the new line sits next to it in the same stream.
+func TestAccessLogStillQuotesPathsBesideDeviceSeen(t *testing.T) {
+	var out logWriter
+	oldOut, oldFlags := log.Writer(), log.Flags()
+	log.SetOutput(&out)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(oldOut); log.SetFlags(oldFlags) })
+
+	h, a := realMux(t)
+	a.auth.logf = log.Printf // as main() wires it
+
+	serve(h, signedRequest(t, "GET", weatherURI, testNow, ""))
+	serve(h, signedRequest(t, "GET", weatherURI, testNow, ""))
+	serve(h, httptest.NewRequest("GET", "/v1/x%0aevil", nil)) // a forged line in the path
+	serve(h, httptest.NewRequest("GET", weatherURI, nil))     // refused
+
+	want := []string{
+		"device seen " + testDevice, // once, before the answer to the first request is logged
+		`GET "/v1/weather" 200 `,
+		`GET "/v1/weather" 200 `, // the access log has a line for every request
+		`GET "/v1/x\nevil" 404 `, // quoted: no second log line starts inside it
+		"auth refused: device=- reason=missing",
+		`GET "/v1/weather" 401 `,
+	}
+	lines := strings.Split(strings.TrimSuffix(out.text(), "\n"), "\n")
+	if len(lines) != len(want) {
+		t.Fatalf("log:\n%s\nwant %d lines", out.text(), len(want))
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(lines[i], w) {
+			t.Errorf("line %d = %q, want it to start with %q", i+1, lines[i], w)
+		}
+	}
+	if strings.Contains(out.text(), "lat=") || strings.Contains(out.text(), "38.7") {
+		t.Errorf("the query must stay out of the log:\n%s", out.text())
 	}
 }

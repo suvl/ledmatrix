@@ -42,6 +42,12 @@ const (
 	refusalWindow = time.Minute
 	refusalBudget = 30
 	refusalCap    = 256 // hard limit on remembered (device, reason) pairs
+
+	// An accepted request is logged as "device seen <id>" at most once per device per window, so the
+	// owner can tell which displays use the service (and notice an ID that is not one of theirs), and
+	// the log still stays small and holds nothing of what a display asks for.
+	seenWindow = time.Hour
+	seenCap    = 256 // hard limit on remembered devices
 )
 
 var refusalText = map[string]string{
@@ -60,6 +66,7 @@ type authenticator struct {
 	now        func() time.Time
 	logf       func(format string, args ...any)
 	refusals   refusalLog
+	seen       seenLog
 }
 
 // authFromEnv reads and checks the configuration. It refuses (returns an error) rather than guess:
@@ -340,40 +347,41 @@ func (au *authenticator) host(r *http.Request) string {
 }
 
 // verify runs the checks in the contract's order: shape, signature, revoked, time window. It
-// returns nil when the request is accepted. Nothing later in the order is revealed earlier: a
-// caller who cannot sign learns neither the server time nor whether a device is revoked.
-func (au *authenticator) verify(w http.ResponseWriter, r *http.Request) *refusal {
+// returns the validated device ID and nil when the request is accepted, else "" and the refusal.
+// Nothing later in the order is revealed earlier: a caller who cannot sign learns neither the
+// server time nor whether a device is revoked.
+func (au *authenticator) verify(w http.ResponseWriter, r *http.Request) (string, *refusal) {
 	h, f := readSignedHeaders(r)
 	if f != nil {
-		return f
+		return "", f
 	}
 	// The board sends only GET. A GET or HEAD with a body is refused without reading a byte of it,
 	// so many half-open connections with a large Content-Length cost no memory.
 	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && hasBody(r) {
 		f := refuse(h.device, reasonMalformed)
 		f.closeConn = true
-		return f
+		return "", f
 	}
 	body, err := readBody(w, r)
 	if err != nil {
-		return bodyRefusal(h.device, err)
+		return "", bodyRefusal(h.device, err)
 	}
 	sum := sha256.Sum256(body)
 	canonical := canonicalString(r.Method, au.host(r), r.RequestURI, h.timestamp, hex.EncodeToString(sum[:]))
 	if !hmac.Equal(h.sig, hmacSHA256(deviceKey(au.master, h.device), []byte(canonical))) {
-		return refuse(h.device, reasonBadSignature)
+		return "", refuse(h.device, reasonBadSignature)
 	}
 	if au.revoked[h.device] {
-		return refuse(h.device, reasonRevoked)
+		return "", refuse(h.device, reasonRevoked)
 	}
 	now := au.now().Unix()
 	ts, _ := strconv.ParseInt(h.timestamp, 10, 64) // at most 12 digits: cannot overflow
 	if d := now - ts; d > maxSkewSeconds || d < -maxSkewSeconds {
 		f := refuse(h.device, reasonClockSkew)
 		f.serverTime = &now
-		return f
+		return "", f
 	}
-	return nil
+	return h.device, nil
 }
 
 // require wraps a handler so that it only runs for a request with a valid signature. A nil
@@ -386,7 +394,8 @@ func (au *authenticator) require(next http.Handler) http.Handler {
 		case au.off:
 			next.ServeHTTP(w, r)
 		default:
-			if f := au.verify(w, r); f != nil {
+			device, f := au.verify(w, r)
+			if f != nil {
 				au.refusals.note(au.now(), au.logf, f.device, f.code)
 				if f.closeConn {
 					w.Header().Set("Connection", "close")
@@ -394,6 +403,7 @@ func (au *authenticator) require(next http.Handler) http.Handler {
 				writeJSON(w, f.status, f.body())
 				return
 			}
+			au.seen.note(au.now(), au.logf, device)
 			next.ServeHTTP(w, r)
 		}
 	})
@@ -439,3 +449,45 @@ func (l *refusalLog) note(now time.Time, logf func(string, ...any), device, code
 	l.lines++
 	logf("auth refused: device=%s reason=%s", device, code)
 }
+
+// seenLog logs the first accepted request of each device in every window. Like refusalLog it is
+// bounded, and the only thing it ever logs is a device ID that passed the shape check and the
+// signature check: never the path, the query, the signature or any other header value.
+type seenLog struct {
+	mu   sync.Mutex
+	last map[string]time.Time // device ID -> when it was last logged
+	full bool                 // the "list is full" line has been logged and the list has not shrunk since
+}
+
+func (l *seenLog) note(now time.Time, logf func(string, ...any), device string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last == nil {
+		l.last = map[string]time.Time{}
+	}
+	t, known := l.last[device]
+	if known && seenFresh(now, t) {
+		return // already logged this hour
+	}
+	if !known && len(l.last) >= seenCap {
+		for k, t := range l.last {
+			if !seenFresh(now, t) {
+				delete(l.last, k)
+			}
+		}
+		if len(l.last) >= seenCap {
+			if !l.full { // once, not once per request: a flood of new IDs must not become a flood of lines
+				l.full = true
+				logf("device seen: more than %d devices in the last hour, new ones are not logged until older ones expire", seenCap)
+			}
+			return
+		}
+	}
+	l.full = false
+	l.last[device] = now
+	logf("device seen %s", device)
+}
+
+// seenFresh reports whether a device logged at t is still within its window at now (a clock that
+// went backwards counts as expired, as in refusalLog).
+func seenFresh(now, t time.Time) bool { return now.Sub(t) < seenWindow && !now.Before(t) }
