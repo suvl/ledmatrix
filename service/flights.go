@@ -153,7 +153,7 @@ type dbFlightRoute struct {
 
 var callsignShape = regexp.MustCompile(`^[A-Z]{3}[0-9][0-9A-Z]{0,3}$`)
 
-// route looks a callsign up. Unknown callsigns are remembered for an hour so they are not asked again.
+// route looks a callsign up. Every answer is cached for 12 hours, an unknown callsign included (it is stored as "no route"), so it is not asked again.
 func (f *Flights) route(ctx context.Context, callsign string) *route {
 	if !callsignShape.MatchString(callsign) {
 		return nil
