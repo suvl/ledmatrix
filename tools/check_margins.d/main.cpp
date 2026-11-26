@@ -134,9 +134,37 @@ static void idle(const UiState &ui) {
         }
 }
 
+// Display names (devicename.h: a-z, 0-9 and hyphens, 1 to 24 characters, no hyphen at either end): every length of the widest letters,
+// with a narrow digit or a descender at either end and hyphens inside, then random ones.
+static std::vector<std::string> deviceNames() {
+  std::vector<std::string> v = {"ledmatrix"};
+  for (int n = 1; n <= 24; n++)
+    for (char c : {'w', 'm', '0', 'q'}) {
+      std::string w(n, c);
+      v.push_back(w);
+      v.push_back(w.substr(1) + "1");
+      v.push_back("1" + w.substr(1));
+      v.push_back(w.substr(1) + "y");
+      if (n >= 3) v.push_back(std::string(1, c) + std::string(n - 2, '-') + std::string(1, c));
+    }
+  for (int i = 0; i < 3000; i++) {
+    std::string s = rstr(1, 24, "abcdefghijklmnopqrstuvwxyz0123456789-");
+    if (s.front() == '-') s.front() = 'a';
+    if (s.back() == '-') s.back() = 'z';
+    v.push_back(s);
+  }
+  return v;
+}
+
 // The problem message is fixed text that replaces weather or the clock, so it drifts like them. Twice, for two animation times.
+// It shows the display name as "<name>.local", so every kind of name is tried: a long one is cut and must not reach column 63.
 static void problem(const UiState &ui) {
   for (int phase = 0; phase < 2; phase++) run("Problem msg", "problem message", Screen::Problem, 0, ui, 0, phase ? 500 : 0);
+  for (const std::string &name : deviceNames()) {
+    UiState u = ui;
+    u.deviceName = name.c_str();
+    for (int phase = 0; phase < 2; phase++) run("Problem msg", "problem message, display name " + name, Screen::Problem, 0, u, 0, phase ? 500 : 0);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -188,6 +216,23 @@ int main(int argc, char **argv) {
     for (int l = 0; l < 3; l++) { matrix.clear(); drawScreen(Screen::Weather, l, 0, 0, ui); dump(std::string("weather") + LAYOUT[l]); }
     matrix.clear(); drawScreen(Screen::Idle, 0, 0, 0, ui); dump("idleA");
     matrix.clear(); drawScreen(Screen::Problem, 0, 0, 0, ui); dump("problem");
+    // The screens that show the display name: with the default name and with names that are cut (Connected, problem) or move to two small
+    // lines (setup). Dumped with the example values renderer.js uses (the setup password and the two addresses).
+    UiState d = ui;
+    d.apPass = "7K3PQ9XM"; d.apIp = "192.168.4.1"; d.staIp = "192.168.1.100";
+    struct Named { const char *tag, *name; };
+    for (Named nm : {Named{"", "ledmatrix"}, Named{"Mid", "kitchen"}, Named{"Fifteen", "kitchen-display"}, Named{"Max", "living-room-display-two"}}) {
+      d.deviceName = nm.name; d.apSsid = nm.name;
+      matrix.clear(); drawScreen(Screen::Connected, 0, 0, 0, d); dump(std::string("connected") + nm.tag);
+      matrix.clear(); drawScreen(Screen::Problem, 0, 0, 0, d); dump(std::string("problemName") + nm.tag);
+      matrix.clear(); drawScreen(Screen::Setup, 0, 0, 0, d); dump(std::string("setup") + nm.tag);
+    }
+    // the names right around the setup screen's limits: 10 characters are drawn big, 11 small, 15 fill one line, 16 need two
+    for (int n : {10, 11, 14, 15, 16, 24}) {
+      std::string nm(n, 'm');
+      d.deviceName = d.apSsid = nm.c_str();
+      matrix.clear(); drawScreen(Screen::Setup, 0, 0, 0, d); dump("setupLen" + std::to_string(n));
+    }
     return 0;
   }
 

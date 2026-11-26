@@ -101,12 +101,12 @@ figcaption strong { display: block; color: var(--text); font-weight: 500; font-s
   </section>
 
   <section id="setup">
-    <header><h2>Setup mode</h2><p>After a long press on UP. The password is generated each time and shown here.</p></header>
+    <header><h2>Setup mode</h2><p>After a long press on UP. The password is generated each time and shown here. The network name is the display name (&ldquo;ledmatrix&rdquo; until you choose another): up to 10 characters it is drawn big, a longer one in small letters on up to two lines.</p></header>
     <div class="grid" id="setup-grid"></div>
   </section>
 
   <section id="status">
-    <header><h2>Status screens</h2><p>Boot, connected, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
+    <header><h2>Status screens</h2><p>Boot, connected, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night). Connected and the problem message show the display name as <code>&lt;name&gt;.local</code>; a long name is cut to the width.</p></header>
     <div class="grid" id="status-grid"></div>
   </section>
 
@@ -179,10 +179,16 @@ addPanel('idle-grid', 'B · Radar sweep', FT, idleB, true);
 addPanel('idle-grid', 'C · Three pulsing dots', 'pixels only', idleC, true);
 addPanel('setup-grid', 'A · All on one screen', FT, setupA);
 addPanel('setup-grid', 'B · Static, big password (in use)', FB6, setupB);
+// A display name is the setup network's name and the host name in the addresses: each panel sets its own example name for the drawing.
+const withName = (name, fn) => (fb, t, ctx) => { const keep = DEVICE.name; DEVICE.name = name; fn(fb, t, ctx); DEVICE.name = keep; };
+addPanel('setup-grid', 'B · Display name of 15 characters', FT, withName('kitchen-display', setupB));
+addPanel('setup-grid', 'B · Display name of 24 characters', FT, withName('living-room-display-two', setupB));
 addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
 addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
 addPanel('status-grid', 'Problem message', FB6, problemMsg);
+addPanel('status-grid', 'Connected, display name of 15 characters (cut)', FT, withName('kitchen-display', connected));
+addPanel('status-grid', 'Problem message, display name of 15 characters (cut)', FB6, withName('kitchen-display', problemMsg));
 // The update screens read their data from UPD (the panel's UpdateView): each panel sets its own example for the drawing.
 const withUpd = (data, fn) => (fb, t, ctx) => { const keep = Object.assign({}, UPD); Object.assign(UPD, data); fn(fb, t, ctx); Object.assign(UPD, keep); };
 addPanel('update-grid', 'Code, 150 s left', '6×8, 4×6 and 4×6 doubled', withUpd({ code: '012345', secondsLeft: 150 }, updateCode));
