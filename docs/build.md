@@ -197,13 +197,13 @@ Do not use `--output-dir` instead of `--build-path`: Tested, it also creates a `
 A good result, after about 76 to 92 seconds the first time (the first build also compiles the whole ESP32 support code; 145 seconds in the emulated Ubuntu container; **12 seconds** if you run the same command again with nothing changed):
 
 ```
-Sketch uses 1498117 bytes (71%) of program storage space. Maximum is 2097152 bytes.
-Global variables use 106168 bytes (32%) of dynamic memory, leaving 221512 bytes for local variables. Maximum is 327680 bytes.
+Sketch uses 1505005 bytes (71%) of program storage space. Maximum is 2097152 bytes.
+Global variables use 106280 bytes (32%) of dynamic memory, leaving 221400 bytes for local variables. Maximum is 327680 bytes.
 ```
 
-The first line is the flash room the program takes: 71 percent of one 2 MB program slot (firmware 0.10.1 on 26 Nov 2026). The second is RAM: 32 percent. An update has to fit in one slot, so watch the first number if you add code. The numbers move a little with the code and with the machine (on 25 Nov the same code gave 1479637 bytes on the Mac, 1479301 in the Ubuntu container and 1479317 in the project's own build); a few hundred bytes of difference between machines is normal.
+The first line is the flash room the program takes: 71 percent of one 2 MB program slot (firmware 0.11.0 on 26 Nov 2026). The second is RAM: 32 percent. An update has to fit in one slot, so watch the first number if you add code. The numbers move a little with the code and with the machine (on 25 Nov the same code gave 1479637 bytes on the Mac, 1479301 in the Ubuntu container and 1479317 in the project's own build); a few hundred bytes of difference between machines is normal.
 
-The file you will flash is `~/ledmatrix-build/firmware/ledmatrix.ino.bin` (about 1.5 MB, 1,498,272 bytes on 26 Nov 2026): the firmware image. The build folder holds other files too (the start-up program, the partition table, a debugging file, a single 8 MB file with everything joined); you do not need to touch them. [development.md](development.md), "Inside a build", says what each one is. If the compile fails, the last lines say why: see "If something goes wrong" below.
+The file you will flash is `~/ledmatrix-build/firmware/ledmatrix.ino.bin` (about 1.5 MB, 1,505,152 bytes on 26 Nov 2026): the firmware image. The build folder holds other files too (the start-up program, the partition table, a debugging file, a single 8 MB file with everything joined); you do not need to touch them. [development.md](development.md), "Inside a build", says what each one is. If the compile fails, the last lines say why: see "If something goes wrong" below.
 
 ## 5. Check the partition table
 
@@ -228,10 +228,12 @@ If it prints nothing, the build did not use the project's layout: compile the wh
 The firmware's version number is written in one place, `arduino/ledmatrix/version.h`:
 
 ```
-#define FIRMWARE_VERSION "0.10.1"
+#define FIRMWARE_VERSION "0.11.0"
 ```
 
 The board shows it in the portal. **Leave it as it is** unless you publish releases of your own: a display offers an update only when the published version is strictly newer than its own, and the rules for changing it are in [development.md](development.md), "Releasing".
+
+One more file next to it matters if you ever publish your own releases: `arduino/ledmatrix/update_keys.h`. It holds the **public keys** that a firmware update must be signed with before the display installs it. The file in the repository holds the maintainer's two public keys, so a firmware you build from it accepts the updates the maintainer signs and publishes in the public image, and **you do not change it**. If you build your own firmware *and* your own service image, a display will refuse your updates ("signed with a key this board does not know") until you put your own key in this file and flash every display once over USB: see [development.md](development.md), "Releasing". Flashing over USB, as in [install.md](install.md), never needs a signature. A build with no key at all in this file does not compile (checked in a copy of the repository: the compile stops with a plain message).
 
 ## 7. Find the serial port
 
@@ -275,7 +277,7 @@ If a problem is not in this table, or a fix does not work, open an issue at <htt
 
 ## What was run
 
-On an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Python 3.15.2 (and the system Python 3.9.6), arduino-cli 1.6.0. Rows dated 25 Nov 2026 were run on the repository as committed at `1f9b6a5`; the row dated 26 Nov 2026 was run on a snapshot of `main` at `0789a98` (firmware version 0.10.1 in both). "Ubuntu" is an Ubuntu 24.04.5 x86_64 container, emulated on that Mac. Everything after the tools was run in a separate throw-away arduino-cli setup, so the result does not depend on what was already on the Mac.
+On an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Python 3.15.2 (and the system Python 3.9.6), arduino-cli 1.6.0. Rows dated 25 Nov 2026 were run on the repository as committed at `1f9b6a5` (firmware 0.10.1); rows dated 26 Nov 2026 were run on snapshots of `main` at `0789a98` (firmware 0.10.1) and at `1929bf2` (firmware 0.11.0). "Ubuntu" is an Ubuntu 24.04.5 x86_64 container, emulated on that Mac. Everything after the tools was run in a separate throw-away arduino-cli setup, so the result does not depend on what was already on the Mac.
 
 | What | Where | Result |
 | --- | --- | --- |
@@ -283,7 +285,10 @@ On an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Python 3.15.2 (and the s
 | Install from an empty setup: `core update-index` 6 s, `core install esp32:esp32@3.3.13` 68 s, `lib update-index` 2 s, four `lib install --no-deps` 1 to 2 s each; `core list` and `lib list` as in step 3 | Mac | about 85 s in total; 3.9 GB data, 1.1 GB downloads, 5 MB libraries |
 | The same install, in a container | Ubuntu | worked; core install 70 s |
 | The arduino-cli install script as a normal user, with and without the `BINDIR` folder existing | Ubuntu | as in the Linux text |
-| `arduino-cli compile` from the snapshot of `main`, as in step 4, 26 Nov | Mac | 92 s (other jobs were running); `Sketch uses 1498117 bytes (71%) ...`, `Global variables use 106168 bytes (32%) ...`; `ledmatrix.ino.bin` 1,498,272 bytes; the `ident` line was present |
+| `arduino-cli compile` from the snapshot of `main` at `1929bf2`, as in step 4, 26 Nov | Mac | 86 s; `Sketch uses 1505005 bytes (71%) ...`, `Global variables use 106280 bytes (32%) ...`; `ledmatrix.ino.bin` 1,505,152 bytes; the `ident` line was present; the version marker said `0.11.0` and the signing marker `required` (the two markers are explained in [development.md](development.md), "Inside a build") |
+| The same compile at `0789a98`, 26 Nov | Mac | 92 s (other jobs were running); `Sketch uses 1498117 bytes (71%) ...` |
+| The compile in the project's own build (GitHub's run of the release commit), 26 Nov, read from its log | CI | `Sketch uses 1504701 bytes (71%) ...`, `Global variables use 106280 bytes (32%) ...` |
+| A copy of the repository whose `update_keys.h` pins no key, 26 Nov | Mac | the compile stopped with `static assertion failed: a build that requires signed updates needs at least one public key in update_keys.h ...` |
 | `arduino-cli compile` (25 Nov): cold 86 s (default build folder), cold with `--build-path` 76 s, again 12 s; from a fresh `git clone` 77 s (with `--output-dir`) and 79 s (as in step 4); in the container 145 s | Mac, Ubuntu | each ended `Sketch uses 1479637 bytes (70%) ...` on the Mac, `Global variables use 106064 bytes (32%) ...`; `ledmatrix.ino.bin` 1,479,792 bytes |
 | Compile of a copy of the sketch without `partitions.csv`; of a copy in a renamed folder; with no board package; with no libraries; a misspelt library name | Mac | the messages quoted above (the first compiles silently with the stock layout) |
 | `grep '^ident'` on both builds | Mac | one `ident` line with the project's layout; nothing without it |

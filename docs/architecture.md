@@ -33,7 +33,8 @@ flowchart LR
   subgraph world["Other servers on the internet"]
     adsb["adsb.fi<br/>aircraft positions"]
     adsbdb["adsbdb<br/>routes and airlines"]
-    ipma["IPMA<br/>weather"]
+    ipma["IPMA<br/>weather in Portugal"]
+    om["Open-Meteo<br/>weather elsewhere"]
     gnews["Google News<br/>headlines"]
     ntp["pool.ntp.org and<br/>time.cloudflare.com<br/>the time"]
     web["OpenStreetMap, unpkg, jsDelivr<br/>map, place search, scripts"]
@@ -44,6 +45,7 @@ flowchart LR
   svc -->|"HTTPS"| adsb
   svc -->|"HTTPS"| adsbdb
   svc -->|"HTTPS"| ipma
+  svc -->|"HTTPS"| om
   svc -->|"HTTPS"| gnews
   board -.->|"NTP"| ntp
   browser -.->|"HTTPS: the browser<br/>fetches these itself"| web
@@ -55,10 +57,10 @@ Everything the board sends to the outside world passes through your router. The 
 
 | From | To | How | What it carries |
 | --- | --- | --- | --- |
-| Your browser | The board | Plain HTTP on port 80, found by the display's name: `ledmatrix.local` until you choose another name ([mDNS](glossary.md#mdns), section 2.5) | The [portal](glossary.md#portal) page and its small JSON interface. No password: it is meant for your [LAN](glossary.md#lan) only, and the board refuses requests that come from other web pages (section 8) |
-| The board | The service | HTTPS on port 443, with the server's [certificate](glossary.md#certificate) checked against the [CA bundle](glossary.md#ca-bundle) built into the firmware | Flights, weather, headlines and logos (every request signed), and the firmware [manifest](glossary.md#manifest) and image (not signed) |
+| Your browser | The board | Plain HTTP on port 80, found by the [display name](glossary.md#display-name): `ledmatrix.local` until you choose another name ([mDNS](glossary.md#mdns), section 2.5) | The [portal](glossary.md#portal) page and its small JSON interface. No password: it is meant for your [LAN](glossary.md#lan) only, and the board refuses requests that come from other web pages (section 8) |
+| The board | The service | HTTPS on port 443, with the server's [certificate](glossary.md#certificate) checked against the [CA bundle](glossary.md#ca-bundle) built into the firmware | Flights, weather, headlines and logos (every request signed), and the firmware [manifest](glossary.md#manifest) and image (these two requests carry no device signature; the manifest itself is signed, section 6) |
 | The [reverse proxy](glossary.md#reverse-proxy) | The service | Plain HTTP, port 8080 by default (`LISTEN`) | The same requests, after the proxy has handled [TLS](glossary.md#tls) |
-| The service | adsb.fi, adsbdb, IPMA, Google News | HTTPS | Positions, routes, weather files, an RSS feed |
+| The service | adsb.fi, adsbdb, IPMA, Open-Meteo, Google News | HTTPS | Positions, routes, weather (IPMA in Portugal, Open-Meteo elsewhere), an RSS feed |
 | The board | Time servers | NTP, the standard time protocol (UDP port 123) | The current time. Unauthenticated |
 | Your browser | unpkg.com, cdn.jsdelivr.net, OpenStreetMap | HTTPS | The map, the time zone lookup library, place search. This is the browser, not the board |
 | Your phone | The board, in [setup mode](glossary.md#setup-mode) | The board's own Wi-Fi network, named after the display (`ledmatrix` on a first start; a random password is shown on the panel), HTTP on `192.168.4.1` | The form where you pick your home Wi-Fi and type its password |
@@ -76,7 +78,7 @@ Sources: `arduino/ledmatrix/live.cpp` (port 443, host names, `configTzTime`), `a
 | `arduino/ledmatrix/` | The firmware, its [partition](glossary.md#partition) table (`partitions.csv`) and the generated `portal_page.h` |
 | `service/` | The Go service, its tests, its Dockerfile, the example Kubernetes manifest |
 | `portal/`, `preview/` | The page templates. `preview/index.html` is generated |
-| `shared/` | Things more than one part needs: the drawing code `renderer.js`, `fonts.json`, the time zone table `tz_zones.json`, and the two contracts `device-auth.md` and `firmware-update.md` |
+| `shared/` | Things more than one part needs: the drawing code `renderer.js`, `fonts.json`, the time zone table `tz_zones.json`, and the contracts `device-auth.md`, `firmware-update.md` and `manifest-signing.md` |
 | `tools/` | [Provisioning](glossary.md#provisioning) (`provision.py`), the key [burn](glossary.md#burn) sketch (`burn_key/`), the manifest writer, the zone table generator, the laptop tests, the margin check |
 | `.github/workflows/service.yml` | The workflow that tests everything, compiles the firmware and builds the service [image](glossary.md#docker-image) |
 | `wayfinder/` | The research notes behind the decisions. The decisions themselves are GitHub issues (section 9) |
@@ -97,7 +99,7 @@ flowchart TB
   end
   subgraph core0["Core 0"]
     net["net task<br/>Wi-Fi, setup network,<br/>web server, portal interface"]
-    data["data task<br/>clock, fetching from the service,<br/>firmware check and download"]
+    data["data task<br/>clock, fetching from the service,<br/>firmware check, signature check, download"]
   end
   loop["loop task<br/>the two buttons"]
   prob["probation task<br/>exists only after an update"]
@@ -113,7 +115,7 @@ flowchart TB
 | --- | --- | --- | --- | --- | --- |
 | render | 1 | 2 | 10 KB | `ledmatrix.ino` | The panel. Picks the screen, draws it, applies dimming, drift and night blanking |
 | net | 0 | 1 | 12 KB | `net.cpp` | Wi-Fi (join, reconnect), the DNS guard, mDNS, the setup network and its captive page, the web server with its portal guard and every portal route, the write of an uploaded firmware file |
-| data | 0 | 1 | 16 KB | `live.cpp` | The clock (NTP), every HTTPS request to the service, the live state, the [problem list](glossary.md#problem-list), the firmware check and download |
+| data | 0 | 1 | 16 KB | `live.cpp` | The clock (NTP), every HTTPS request to the service, the live state, the [problem list](glossary.md#problem-list), the firmware check (including the signature check) and download |
 | [probation](glossary.md#probation) | not pinned | 3 | 6 KB | `ota.cpp` | Only on a freshly installed firmware: the checklist that decides whether it is kept. It deletes itself when it is done |
 | loop | Arduino default | Arduino default | Arduino default | `ledmatrix.ino` | The two buttons: UP and DOWN step the demo screens, any press wakes the panel, holding UP for 5 seconds forgets the Wi-Fi network |
 
@@ -226,7 +228,7 @@ The Protomatter library has no brightness control, so `applyBrightness()` scales
 
 Settings live in NVS, a small key-value store in the `nvs` partition of the board's flash memory. It survives restarts and firmware updates.
 
-- **Namespace `ledmatrix`** (`settings.cpp`): the Wi-Fi name and password, and every setting the portal edits: what to show, layouts, brightness, how long a plane stays, location, radius, altitude limits, up to five headline topics, the service host name, the display name, the time zone name and rule, and the protection settings.
+- **Namespace `ledmatrix`** (`settings.cpp`): the Wi-Fi name and password, and every setting the portal edits: what to show, layouts, brightness, how long a plane stays, location, radius, altitude limits, up to five headline topics, the headline edition (key `hled`, one byte), the service host name, the display name, the time zone name and rule, and the protection settings.
 - **Namespace `update`** (`ota.cpp`): the version that failed here and why, written only when a firmware is rolled back, and the probation boot counter (key `pcount`), which exists only while a new image is on probation (section 6).
 
 Values from the portal are checked before they are saved, and the time zone and the panel protection values are checked again when they are read back, so a damaged flash cannot put a bad value into a request header or the time zone setting. "Forget this Wi-Fi network" (the portal button, or holding UP for 5 seconds) removes only the Wi-Fi name and password.
@@ -285,15 +287,17 @@ flowchart TD
 | --- | --- | --- | --- |
 | `GET /healthz` | No | `ok` | |
 | `GET /v1/flights?lat=&lon=&radius_km=&alt_min=&alt_max=&n=` | Yes | Nearest planes first, up to `n` (1 to 10, default 5), each with call sign, airline, route, cities, aircraft and telemetry | adsb.fi (positions), adsbdb (routes) |
-| `GET /v1/weather?lat=&lon=` | Yes | About 155 bytes: temperature, today's high, low and rain chance, an icon now, in 3 hours and in 6 hours | IPMA |
-| `GET /v1/headlines?q=&n=` | Yes | The newest titles for one topic, no duplicates | Google News RSS |
+| `GET /v1/weather?lat=&lon=` | Yes | A small answer (the IPMA one is about 155 bytes): temperature, today's high, low and rain chance, an icon now, in 3 hours and in 6 hours | IPMA inside Portugal, Open-Meteo everywhere else |
+| `GET /v1/headlines?q=&n=&hl=&gl=&ceid=` | Yes | The newest titles for one topic, no duplicates, in the chosen Google News edition | Google News RSS |
 | `GET /v1/logo/{code}` | Yes | 512 bytes: a 16x16 picture, 2 bytes per pixel (RGB565, big-endian). 404 if there is none | Files in `LOGO_DIR` |
 | `GET /v1/firmware/manifest` | No, on purpose | The newest firmware's version, file name, size, [SHA-256](glossary.md#sha-256) (a fingerprint of the file) and notes, or 404 | The `/firmware` folder in the image |
 | `GET /v1/firmware/{file}` | No, on purpose | The image named in the manifest | The `/firmware` folder in the image |
 
-Source: `service/main.go`. Parameters are range checked: latitude -90 to 90, longitude -180 to 180, radius 1 to 250 km, altitude 0 to 60,000 ft, a headline topic 1 to 80 characters. The board never sends the optional `hl`, `gl` and `ceid` parameters of the headlines route, so the service's defaults apply: the Portuguese edition of Google News (`pt-PT`, `PT`, `PT:pt-150`). The topic words can be in any language.
+Source: `service/main.go`. Parameters are range checked: latitude -90 to 90, longitude -180 to 180, radius 1 to 250 km, altitude 0 to 60,000 ft, a headline topic 1 to 80 characters. The headlines route also takes the three parameters that choose a Google News *edition* (a language and country combination): `hl` (language, such as `pt-PT`), `gl` (country, such as `PT`) and `ceid` (country and language together, such as `PT:pt-150`). The service checks their shape and answers 400 if they are not what Google's own editions look like; a caller that sends none gets the defaults `pt-PT`, `PT`, `PT:pt-150`. The board sends them (section 4.2). The topic words can be in any language.
 
-Errors are short JSON sentences: 400 for a bad parameter, 401 for a refused signature, 422 when a weather location is outside IPMA's coverage, 502 when a source is failing and no recent answer is cached, 503 when the service is busy. **Weather covers Portugal only** (35 forecast cities, including Madeira and the Azores, and the nearest one must be within 150 km of the pin). Outside Portugal the board never receives weather, so it shows the idle screen in its place. Planes and headlines work anywhere.
+Errors are short JSON sentences: 400 for a bad parameter, 401 for a refused signature, 422 only when the weather provider answered with no value at all ("no weather data for this location", which should almost never happen), 502 when a source is failing and no recent answer is cached, 503 when the service is busy.
+
+**Weather works anywhere.** Inside Portugal the service uses IPMA, Portugal's weather institute; everywhere else it uses Open-Meteo, a free open weather data service (section 4.2). Which one answers is decided by the service, so the board does not need to know.
 
 ### Caching
 
@@ -305,13 +309,14 @@ A cache keeps answers for a while so many requests share one upstream call, and 
 | A route for a call sign | 12 hours | 48 hours |
 | An IPMA forecast for a city | 30 minutes | 6 hours |
 | IPMA station readings | 20 minutes | 3 hours |
+| An Open-Meteo answer for a point, rounded to one decimal (about 11 km) | 15 minutes | 3 hours |
 | Headlines for a topic | 15 minutes | 6 hours |
 
 Source: `service/flights.go`, `weather.go`, `headlines.go`, `cache.go`. The cache lives in memory and is lost when the service restarts.
 
 ### The firmware routes
 
-`/v1/firmware/manifest` and `/v1/firmware/{file}` answer the same with or without signature headers. That is deliberate: a board whose key is refused must still be able to fetch a fix. The service reads the folder `FIRMWARE_DIR` (default `/firmware`) and checks the manifest when it starts and at most once a minute after that. The manifest only counts if the version is three numbers, the file name is `ledmatrix-<version>.bin`, the size is above 100 KB and at most 2,097,152 bytes (one app slot), the SHA-256 matches the real file, and the notes are at most 200 characters. Otherwise the answer is "no firmware is published". The file name in a download request is compared with the manifest's, never used as a path. Downloads have 8 slots of their own so a slow board cannot starve the data routes. The service never writes to this folder.
+`/v1/firmware/manifest` and `/v1/firmware/{file}` answer the same with or without signature headers. That is deliberate: a board whose key is refused must still be able to fetch a fix. The service reads the folder `FIRMWARE_DIR` (default `/firmware`) and checks the manifest when it starts and at most once a minute after that. The manifest only counts if the version is three numbers, the file name is `ledmatrix-<version>.bin`, the size is above 100 KB and at most 2,097,152 bytes (one app slot), the SHA-256 matches the real file, and the notes are at most 200 characters with no control character. Otherwise the answer is "no firmware is published". A release may also be signed (section 6): the manifest then carries two more fields, `keyid` and `sig`, which must come as a pair and have the right shape (8 and 128 lowercase hexadecimal characters), and the whole answer must stay within 2,048 bytes. The service passes the two fields through unchanged. **It does not check the signature and holds no key**: it checks only their shapes, and the board's check is the one that counts. A manifest without them is answered exactly as before, and the service's log says whether the published release is `signed with key <id>` (the key id is public) or `not signed`. The file name in a download request is compared with the manifest's, never used as a path. Downloads have 8 slots of their own so a slow board cannot starve the data routes. The service never writes to this folder.
 
 ### What the service never stores
 
@@ -368,19 +373,24 @@ In words:
 ```mermaid
 flowchart LR
   subgraph W["Weather, every 15 minutes"]
-    w1["The board asks /v1/weather<br/>with the saved location"] --> w2["The service finds the nearest<br/>IPMA city within 150 km"]
-    w2 --> w3["IPMA forecast file (cached 30 min)<br/>and station readings (cached 20 min)"]
-    w3 --> w4["About 155 bytes: temperature,<br/>high, low, rain chance,<br/>icons now, in 3 h, in 6 h"]
+    w1["The board asks /v1/weather<br/>with the saved location"] --> w2{"Inside Portugal's outline and<br/>within 100 km of an IPMA place?"}
+    w2 -->|"yes"| w3["IPMA forecast (cached 30 min)<br/>and station readings (cached 20 min)"]
+    w2 -->|"no, or IPMA failed"| w4["Open-Meteo, location rounded<br/>to one decimal (cached 15 min)"]
+    w3 --> w5["The same small answer: temperature,<br/>high, low, rain chance,<br/>icons now, in 3 h, in 6 h"]
+    w4 --> w5
   end
   subgraph H["Headlines, every 30 minutes"]
-    h1["The board asks /v1/headlines,<br/>once per saved topic (up to 5)"] --> h2["The service asks the Google News<br/>RSS feed (cached 15 min)"]
+    h1["The board asks /v1/headlines,<br/>once per saved topic (up to 5),<br/>with its chosen edition"] --> h2["The service asks the Google News<br/>RSS feed (cached 15 min)"]
     h2 --> h3["Newest titles, no duplicates,<br/>trimmed to 3 per topic"]
     h3 --> h4["The board keeps titles it has<br/>not shown yet and shows each once"]
   end
 ```
 
-- **Weather.** The service finds the nearest of IPMA's forecast cities, reads its forecast, and takes the current temperature from the nearest of the five closest stations that has a recent reading (otherwise it uses the forecast for this hour). A failed fetch is retried after 1 minute. The temperature is rounded and the icon is one of four: sun, part, cloud, rain.
-- **Headlines.** The board asks once per topic, pausing 1.5 seconds between topics. It remembers a fingerprint (a hash) of the last 24 titles it has seen, so each title is shown once. After a restart it shows only the newest title per topic, not the backlog. How long a title stays depends on its length and layout, never more than 35 seconds. A failed fetch (or one broken topic) is retried after 5 minutes.
+- **Weather: which provider.** The service decides (`coverage.go`, `weather.go`). It uses IPMA when the point is inside Portugal's outline (the mainland, plus 1.5 km of water off its coast, plus boxes around Madeira and the Azores) and within 100 km of one of IPMA's 35 forecast cities. Everywhere else it uses Open-Meteo. The outline is generated by `tools/make_pt_outline.py` from Natural Earth map data and is coarse by about a kilometre, so a pin within a kilometre of the Spanish border may land on either side; both give a good forecast. If IPMA fails and nothing is cached, the service falls back to Open-Meteo.
+- **Weather from IPMA.** It reads the forecast of the nearest city and takes the current temperature from the nearest of the five closest stations that is within 50 km and has a recent reading (otherwise it uses the forecast for this hour).
+- **Weather from Open-Meteo.** One call returns everything the screens need: the current temperature and weather code, the next 12 hours, and today's high, low and rain chance. The location is rounded to **one decimal** (about 11 km) before it is sent and before it becomes the cache key, because Open-Meteo keeps logs with coordinates (section 8). The hours are found by their time, so an answer that is a few hours old still gives the right "in 3 hours" and "in 6 hours", and the day's high, low and rain chance are used only while the time is inside the answer's own day. Open-Meteo has no place names, so the answer has no city and weather layout B shows the word WEATHER where it would show one. It sends WMO weather codes (numeric codes for the kind of weather), which the service turns into the four icons: 0 and 1 sun, 2 part, 3 and the fog codes cloud, 50 and above rain. There is no snow icon yet, so drizzle, snow, sleet, thunderstorms and hail all show as rain.
+- **Weather in both cases.** A failed fetch is retried after 1 minute. The temperature is rounded and the icon is one of four: sun, part, cloud, rain. Open-Meteo's free service is for non-commercial use and must be credited (CC BY 4.0); see `service/README.md`.
+- **Headlines.** The board asks once per topic, pausing 1.5 seconds between topics, and adds the language and region you chose in the portal ("Headlines language and region"). That choice is a Google News edition, one of 12 listed in `editions.h` (Portuguese (Portugal) by default, then Portuguese (Brazil), four English ones, two Spanish ones, French, German, Italian and Dutch); the board saves its position in that list in NVS under the key `hled`, and the list may only ever be added to at the end so a saved choice stays valid. Japanese is not offered because the panel's fonts are ASCII only, and accented letters show as wrong characters on the panel today, Portuguese included. It remembers a fingerprint (a hash) of the last 24 titles it has seen, so each title is shown once. After a restart it shows only the newest title per topic, not the backlog. How long a title stays depends on its length and layout, never more than 35 seconds. A failed fetch (or one broken topic) is retried after 5 minutes.
 - **Which one shows.** A plane beats a headline; a headline beats weather; weather beats the idle screen (section 2.3).
 
 ## 5. Identity and trust
@@ -414,7 +424,7 @@ At every start `identity.cpp` picks the signer: hardware if the record says burn
 
 ### A signed request
 
-The board adds three headers to every data request to the service (flights, weather, headlines, logos) and to no other host. The firmware routes are the one exception: the board asks for those unsigned, on purpose. It has no code for redirects, so a signature can never follow a redirect to another site:
+The board adds three headers to every data request to the service (flights, weather, headlines, logos) and to no other host. The firmware routes are the one exception: the board asks for those without these headers, on purpose. (That is about the request. The manifest it receives is itself signed by the maintainer's key, which is a different signature: section 6.) It has no code for redirects, so a signature can never follow a redirect to another site:
 
 ```
 X-Device: aabbccddeeff
@@ -460,9 +470,9 @@ Where the detail lives: [`shared/device-auth.md`](../shared/device-auth.md) for 
 
 ## 6. Firmware updates
 
-The design (issues 21 and 37, the contract in [`shared/firmware-update.md`](../shared/firmware-update.md)) has two paths: the board **pulls** an update from your service, and you can **upload** a `.bin` file in the portal as an escape route when the normal path is broken. Both need a code that appears only on the panel, so someone must be standing at the display.
+The design (issues 21, 37 and 42, the contracts in [`shared/firmware-update.md`](../shared/firmware-update.md) and [`shared/manifest-signing.md`](../shared/manifest-signing.md)) has two paths: the board **pulls** an update from your service, and you can **upload** a `.bin` file in the portal as an escape route when the normal path is broken. Both need a code that appears only on the panel, so someone must be standing at the display. The pull path is also **signed**: a display that runs a signing build installs a service-offered update only when its manifest carries a valid signature by a key built into the firmware (the next two sections).
 
-**Who publishes a release.** On the public image (`ghcr.io/suvl/ledmatrix-api`), firmware updates arrive when the maintainer (today the project's author) publishes a release; do not press Update when nothing was announced. On your own build (you build the image or the firmware yourself) no update arrives unless you build and publish releases yourself, so you are the maintainer: see [development.md](development.md).
+**Who publishes a release.** On the public image (`ghcr.io/suvl/ledmatrix-api`), firmware updates arrive when the maintainer (today the project's author) publishes a release; do not press Update when nothing was announced. On your own build (you build the image or the firmware yourself) no update arrives unless you build and publish releases yourself, so you are the maintainer: see [development.md](development.md). The same split applies to signing: the public image carries firmware signed with the maintainer's key, and a display built with other keys refuses it; your own build pins your own keys in `update_keys.h` and signs with your own private key.
 
 ### How a release gets to the service
 
@@ -470,13 +480,49 @@ The design (issues 21 and 37, the contract in [`shared/firmware-update.md`](../s
 flowchart LR
   bump["The maintainer raises FIRMWARE_VERSION<br/>in version.h and pushes to main"] --> ci["GitHub workflow:<br/>tests, then compiles the firmware"]
   ci --> man["make_manifest.py writes<br/>manifest.json and ledmatrix-VERSION.bin"]
-  man --> img["One service image with<br/>the firmware inside, in /firmware"]
+  man --> sign["sign_manifest.py adds keyid and sig,<br/>using the private key (a CI secret)"]
+  sign --> chk["The workflow checks the signed manifest<br/>against the public keys"]
+  chk --> img["One service image with<br/>the firmware inside, in /firmware"]
   img --> reg["Image registry"]
   reg --> deploy["The service is updated<br/>to the new image"]
   deploy --> board["Boards find it on their next check"]
 ```
 
-There is no GitHub token, storage or extra secret on the way: the firmware travels inside the service image. The image is built for `linux/amd64` and tagged `latest` and with the commit hash. The workflow is `.github/workflows/service.yml`. Updating the service means running the new image; how that is done depends on where it runs (see [hosting.md](hosting.md)).
+The firmware travels inside the service image, so no GitHub token or storage is needed to carry it. The one secret on the way is the private signing key, a GitHub Actions secret called `UPDATE_SIGNING_KEY`; only the step that signs can see it. The image is built for `linux/amd64` and tagged `latest` and with the commit hash. The workflow is `.github/workflows/service.yml`. A switch at its top, `REQUIRE_SIGNING`, decides what happens while that secret does not exist yet: with `"0"` a release goes out unsigned with a loud warning (a display that enforces signatures refuses it), with `"1"` the run fails and nothing is published. See [development.md](development.md). Updating the service means running the new image; how that is done depends on where it runs (see [hosting.md](hosting.md)).
+
+### The signature on the manifest
+
+```mermaid
+flowchart TD
+  a["1. Fetch /v1/firmware/manifest<br/>(on the data task, no lock held)"] --> b["2. The usual manifest rules<br/>(and no control character in the notes)"]
+  b --> c{"3. Development build?<br/>(enforcement off)"}
+  c -->|"yes"| nc["Signature not looked at:<br/>the portal says so"]
+  c -->|"no"| d{"4. keyid and sig both present<br/>and well formed?"}
+  d -->|"none"| u["Refused: unsigned"]
+  d -->|"one, or wrong shape"| m["Refused: malformed"]
+  d -->|"both fine"| e{"5. keyid is one of the<br/>pinned keys?"}
+  e -->|"no"| k["Refused: unknown key"]
+  e -->|"yes"| f["6. Build the canonical bytes,<br/>hash them with SHA-256,<br/>verify with ECDSA"]
+  f -->|"does not verify"| bs["Refused: bad signature"]
+  f -->|"could not run"| cf["Refused: check failed,<br/>tried again at the next check"]
+  f -->|"verifies"| g["7. Newer than the running version<br/>and not one that failed here?"]
+  nc --> g
+  g -->|"yes"| o["Offer the update"]
+```
+
+A **digital signature** is a number that only the holder of a private key can produce for a given message, and that anyone with the matching **public key** can check. LedMatrix uses ECDSA (a signature method built on elliptic curves) on the curve P-256 with SHA-256, checked with the mbedTLS library that is already inside the board's core, so no new third-party code was added (`shared/manifest-signing.md`).
+
+- **What is signed.** Six lines of text built from the manifest's *values*, not from its JSON text: the fixed line `ledmatrix-update-v1`, then the version, the file name, the size, the SHA-256 of the image, and the notes. Because the image's SHA-256 is inside the signed text, a valid signature also fixes which image is acceptable.
+- **Where the signature is.** Two extra fields in `manifest.json`, `keyid` (8 hexadecimal characters) and `sig` (128, the two halves of the signature). The service passes them through and does not check them (section 3).
+- **Which keys the board trusts.** Up to two public keys are built into the firmware in `update_keys.h` (the keys are **pinned**: only these are ever accepted). The current key's private half is the CI secret. The spare's private half is kept offline and never in CI, so a lost or leaked key can be replaced by releasing a version that pins the spare and a new spare. A **key id** is the first 4 bytes of the SHA-256 of a public key; it only selects which pinned key to try, and the signature decides. The firmware derives the ids itself, so the header cannot disagree with itself, and it refuses to build with enforcement on and no key.
+- **Where the code is.** `updatesig.h` holds the pure logic (the order above, the canonical text, the verdicts and the words) and has laptop tests; `updatesig_mbedtls.h` plugs in the real verifier on mbedTLS. The check sits inside `fetchManifest()` in `ota.cpp`, so there is no path that uses an unchecked manifest: both the daily check and the fresh look that starts a download go through it. The cheap refusals (steps 4 and 5) come before any cryptography.
+- **A refusal is soft.** Nothing is downloaded, written or restarted, and nothing on the data side changes. The reason goes into the problem list under "update check" and into an "An update was refused" box in the portal, in plain words, and it never puts the panel's PROBLEM message up. "Could not check" means the library ran short of memory; it is not treated as an attack and is tried again at the next check.
+- **What the portal and `/status` show.** `GET /api/update` gains a `signing` member (whether signatures are required, the ids of the pinned keys, and the last refusal) and `available.signedBy` (the id of the key that verified the offered manifest); `/status` gains `updateSigning` (`required` or `off`).
+- **Development builds.** Building with `-DUPDATE_REQUIRE_SIGNATURE=0` switches enforcement off; the portal then says "Development build: updates are installed without checking a signature." The signing tool refuses to sign such an image, so a release can never be one.
+- **The first signed release.** Displays still on 0.10.x have no check. They read the new manifest with their old parser, which ignores the two new fields, and install the first signed release once from an unsigned check. From then on the display enforces.
+- **Not signed:** the `.bin` upload. It stays code-only (it needs the panel code and the image checks) and accepts any valid image for the chip; signing it would take away the way out when keys are lost.
+
+None of this has been tried on a real display yet (Not tested here): it is described from the code and the contract.
 
 ### The pull path
 
@@ -489,9 +535,9 @@ sequenceDiagram
   participant Panel as LED panel
   participant Data as Board data task
   participant Svc as Service
-  Data->>Svc: GET /v1/firmware/manifest (about 5 min after the clock is set, then daily, unsigned)
-  Svc-->>Data: version, file, size, SHA-256, notes
-  Data->>Data: newer than the running version and not one that failed here? Keep a notice
+  Data->>Svc: GET /v1/firmware/manifest (about 5 min after the clock is set, then daily, no device signature)
+  Svc-->>Data: version, file, size, SHA-256, notes, keyid, sig
+  Data->>Data: check the signature first, then: newer than the running version and not one that failed here? Keep a notice
   You->>Portal: open ledmatrix.local and press Update
   Portal->>Net: POST /api/update/start
   Net->>Panel: show a random 6-digit code
@@ -500,18 +546,19 @@ sequenceDiagram
   Portal->>Net: POST /api/update/confirm
   Net->>Data: the code was right, go ahead
   Data->>Svc: GET /v1/firmware/manifest again
+  Data->>Data: check the signature of the fresh manifest again
   Data->>Svc: GET /v1/firmware/ledmatrix-VERSION.bin
   loop 4 KB pieces
     Svc-->>Data: the next piece
     Data->>Data: add to the SHA-256, write to the other app slot
   end
-  Data->>Data: check size, SHA-256, image validity, version marker
+  Data->>Data: check size, the signed SHA-256, image validity, version marker
   Data->>Data: switch the boot slot and restart
 ```
 
-- **The check.** The board looks about 5 minutes after its clock is set, then every 24 hours (an hour later if a check failed), and when you press "Check now". The notice appears only if the manifest's version is strictly newer than the running one and is not a version that already failed here. The portal's notice names the host the update comes from.
+- **The check.** The board looks about 5 minutes after its clock is set, then every 24 hours (an hour later if a check failed), and when you press "Check now". The signature is checked first; only a manifest that passed it can produce a notice. The notice appears only if the manifest's version is strictly newer than the running one and is not a version that already failed here. The portal's notice names the host the update comes from, and, on a display that enforces signatures, the key that signed it.
 - **The update code.** Six random digits from the chip's hardware random number generator, shown only on the panel. It is never in a response, a log, `/status` or the serial output. It lasts 3 minutes and allows 3 wrong tries. If a code is used up by wrong tries, a new start is refused for 60 seconds, then 120, doubling up to an hour. Replacing or cancelling a code does not reset the tries or the wait. The comparison takes the same time whatever the digits.
-- **The download.** From `https://<saved service host>/v1/firmware/<file>`, no redirects. The board reads the manifest again first (you may have published since). Before it switches anything it checks: the byte count equals the manifest's, the SHA-256 computed while streaming equals the manifest's, the image passes the ESP-IDF image validation for this chip and one app slot, and the image carries a version marker (a few bytes the firmware embeds) that says it is the version the manifest announced. Any failure changes nothing: the running image stays, the half-written slot is simply unused, and a plain sentence goes into the problem list.
+- **The download.** From `https://<saved service host>/v1/firmware/<file>`, no redirects. The board reads the manifest again first (you may have published since) and checks its signature again, so the manifest that governs the download is always the one just checked. Before it switches anything it checks: the byte count equals the signed manifest's, the SHA-256 computed while streaming equals the signed one, the image passes the ESP-IDF image validation for this chip and one app slot, and the image carries a version marker (a few bytes the firmware embeds) that says it is the version the manifest announced. Any failure changes nothing: the running image stays, the half-written slot is simply unused, and a plain sentence goes into the problem list.
 - **The upload path.** The portal first calls `start` with `{"source":"upload"}` to get a code on the panel, then sends the file with the code in the same form. The code is checked before the first byte reaches flash, and the size is checked before the code is spent. There is no manifest to compare with, so the checks are the image header and validation for this chip, and the size limit of one slot.
 
 ### Two slots and a bootloader that does not roll back
@@ -543,7 +590,7 @@ An image whose slot state is `NEW` is **on probation**. An image flashed over US
 
 The verdict comes from its own task rather than the data task, so a stuck Wi-Fi join, or a start-up that hangs, still ends in a rollback at 3 minutes. If there is no previous valid image to go back to, the board stays up and says so.
 
-**Known gaps** (stated in the contract): a crash before `setup()` starts (in the core's start-up code) is not counted, because the count is made in `setup()`. Because power cuts count like crashes, four power cuts in the first minutes after an update can roll back a version that is fine; after an update, leave the display alone until the portal says the check passed. The update-code throttle lives in RAM, so a power cut resets it. The manifest is not signed (section 8).
+**Known gaps** (stated in the contract): a crash before `setup()` starts (in the core's start-up code) is not counted, because the count is made in `setup()`. Because power cuts count like crashes, four power cuts in the first minutes after an update can roll back a version that is fine; after an update, leave the display alone until the portal says the check passed. The update-code throttle lives in RAM, so a power cut resets it. The `.bin` upload is not signed, and displays still on 0.10.x do not check signatures at all (the section on the signature above, and section 8).
 
 **Bench evidence** (from the slice 10 commit message, the contract and the author's reports; not repeated here). Verified on the author's own display on 25 Nov 2026: an update through the upload path and through the real service; wrong codes refused; an image that crashes on start rolled back on the 4th boot; an image that never reaches the service rolled back at 3:00; an update while the board's key was refused. Verified on the author's own display on 26 Nov 2026: a crash-on-start update rolled back on the 4th start, with the entry in the problem list (kind "update check", the sentence with the version, the detail "The new version kept restarting.") and without the panel PROBLEM message; an update that hangs before Wi-Fi rolled back at exactly 3 minutes ("The board did not join Wi-Fi within 3 minutes of starting."). Not verified: a real power cut during probation (the counter in flash is proven by laptop tests and by the crash loop, not by pulling the plug).
 
@@ -599,7 +646,7 @@ Every claim below was checked in the source named next to it.
 
 | Goes to | When | What it learns |
 | --- | --- | --- |
-| Your service host | Flights every 30 seconds, weather every 15 minutes, headlines every 30 minutes, logos as needed, the firmware check daily | The board's public IP address, its device ID, the time, your location to 4 decimals, the radius and altitude limits, your headline topics, the airline codes of planes near you. The firmware check is unsigned: it shows the IP address and the version being asked about |
+| Your service host | Flights every 30 seconds, weather every 15 minutes, headlines every 30 minutes, logos as needed, the firmware check daily | The board's public IP address, its device ID, the time, your location to 4 decimals, the radius and altitude limits, your headline topics and edition, the airline codes of planes near you. The firmware check carries no device signature: it shows the IP address and that a manifest was asked for |
 | `pool.ntp.org`, `time.cloudflare.com` | At start-up and from time to time | The board's public IP address |
 | `api6.ipify.org`, `api64.ipify.org` | Only when you press "Test connections" in the portal | Your public IP address (that is what these services answer). Plain request, no signature |
 | Anyone else | Never | A search of the firmware sources for host names finds only the saved service host, the two time servers and the two test hosts |
@@ -610,7 +657,7 @@ The board never sends its key anywhere (only signatures made with it, and only t
 
 - It sees every request above, including your location to 4 decimals in the query string.
 - **It does not log the query string.** The access log has the method, the path, the status and the time. Refusals log the device ID and the reason, and an accepted display is noted as `device seen <id>` at most once an hour.
-- **It limits what its sources learn.** adsb.fi gets the location rounded to 2 decimals, about 1 km. adsbdb gets call signs. Google News gets your topic words (with `when:1d` added). IPMA gets only a city number and its public files, no coordinates at all. All of them see the service's IP address, not the board's.
+- **It limits what its sources learn.** adsb.fi gets the location rounded to 2 decimals, about 1 km. adsbdb gets call signs. Google News gets your topic words (with `when:1d` added) and the edition you chose. IPMA gets only a city number and its public files, no coordinates at all. Open-Meteo, which answers outside Portugal, gets the location rounded to one decimal, about 11 km, because Open-Meteo keeps request logs with coordinates for up to 90 days (according to the project's research, `wayfinder/research/worldwide-weather.md`; not checked here). All of them see the service's IP address, not the board's, and the service sends a generic User-Agent.
 - **Other logs are yours to check.** The reverse proxy or hosting platform in front of the service has its own access log, and such logs may include the full URL with the query string. This has not been checked for any particular proxy; look at its log settings (see [hosting.md](hosting.md) and [security.md](security.md)).
 
 ### The browser's side of the portal
@@ -633,8 +680,9 @@ Names the display does not own get 421, even though they point at it: router DNS
 ### Known limits, stated honestly
 
 - **The portal is plain HTTP on your LAN with no password.** A web page in a browser on your network can no longer change settings, press "Forget" or start an update, and cannot read the settings through DNS rebinding (the guard above). Anyone on your Wi-Fi who sends the requests directly (for example with `curl`) still can read and change the settings, including your location, the display name and the saved service host.
-- **The service host is also where firmware updates come from.** Someone on your LAN who sends the request directly could point the board at a server of their own (it would need a valid certificate) and offer a "newer" version. What stops a silent takeover: an update needs the code that appears only on the panel, and the portal names the host next to the Update button. A signed manifest would close this gap; it is not built (issue 21 chose "no signature for now").
-- Whoever can push to `main` or deploy the service image decides which firmware boards are offered, subject to the panel code. On the public image that is the maintainer; on your own build it is you.
+- **The service host is also where firmware updates come from, but a display that enforces signatures accepts only signed releases.** Someone on your LAN who sends the request directly could point the board at a server of their own (it would need a valid certificate), but that server could offer only releases signed by a key built into the firmware. So changing the saved service address, controlling DNS or a certificate, or deploying a doctored service image gets nothing installed except genuine, signed releases. This holds only for displays that already run a signing build: a display still on 0.10.x has no check until it installs the first signed release. The panel code and the portal's host notice still apply on top.
+- **The `.bin` upload is not signed.** It needs the panel code and the image checks and accepts any valid image for the chip, so someone who is at the panel and on your LAN can install any firmware, just as someone with a USB cable can.
+- **Whoever can sign decides what is offered.** The signing key is a GitHub secret available to the release workflow, so the maintainer's GitHub account and write access to `main` are the root of trust. A compromised service deploy or registry can no longer ship firmware to an enforcing display. What remains (`shared/manifest-signing.md`, section 10): someone who controls the service can withhold updates or show an older genuine release that is still newer than what a display runs, and a leaked key plus control of the service defeats the scheme until a rotation reaches the display. On your own build, you hold your own keys and these roles are yours.
 - The board's clock comes from unauthenticated NTP.
 - The protection of the identity key, and the limits of it, are in section 5.
 
@@ -655,7 +703,9 @@ The decisions were made by the project's author, one GitHub issue each; [issue 3
 | The portal is a page the board serves itself; the map picks the location and the time zone | [7](https://github.com/suvl/ledmatrix/issues/7), [16](https://github.com/suvl/ledmatrix/issues/16), [22](https://github.com/suvl/ledmatrix/issues/22) | No app, no account; the zone lookup runs in the browser so the board needs no internet to know its zone |
 | Burn-in protection: drift, dim, night blanking, rotation | [24](https://github.com/suvl/ledmatrix/issues/24) | The weather screen and the clock sit on the panel most of the time |
 | A problem list in the portal and a panel message after an hour of failure | [23](https://github.com/suvl/ledmatrix/issues/23) | A short outage must not nag; a long one must not be silent |
-| Updates: the board pulls, a `.bin` upload is the escape route, a code on the panel authorises, SHA-256 and image checks, probation with rollback | [21](https://github.com/suvl/ledmatrix/issues/21), amended by [37](https://github.com/suvl/ledmatrix/issues/37) | No signature for now. Images come from your service, never from GitHub, so the board talks to one host |
+| Updates: the board pulls, a `.bin` upload is the escape route, a code on the panel authorises, SHA-256 and image checks, probation with rollback | [21](https://github.com/suvl/ledmatrix/issues/21), amended by [37](https://github.com/suvl/ledmatrix/issues/37) | Images come from your service, never from GitHub, so the board talks to one host |
+| A signed manifest: ECDSA P-256 over the manifest's values, keys pinned in the firmware, a spare key for rotation | [42](https://github.com/suvl/ledmatrix/issues/42) (design), [50](https://github.com/suvl/ledmatrix/issues/50) (build) | Reopens issue 21's "no signature for now": a display accepts only updates the maintainer published, even if someone changes the saved service address |
+| Weather outside Portugal (IPMA inside, Open-Meteo elsewhere) and a headlines language and region setting | [44](https://github.com/suvl/ledmatrix/issues/44) (research: [41](https://github.com/suvl/ledmatrix/issues/41)) | The display was usable only in Portugal. The service chooses the provider, so the board does not change; the headlines edition is a setting that the board sends to the service |
 | A key per device and signed requests instead of a token | [37](https://github.com/suvl/ledmatrix/issues/37), [29](https://github.com/suvl/ledmatrix/issues/29) (replaced), [38](https://github.com/suvl/ledmatrix/issues/38), [39](https://github.com/suvl/ledmatrix/issues/39) | The credential belongs to the device. Soft failure, open firmware routes and no permanent bans mean a refusal can never strand a board |
 | Documentation: Markdown in the repository, Mermaid diagrams, for a beginner, macOS and Linux | [27](https://github.com/suvl/ledmatrix/issues/27) | No documentation site; the pages change in the same commits as the code |
 | Open issue | [36](https://github.com/suvl/ledmatrix/issues/36) | Name lookups time out for about 27 seconds after a settings change |
@@ -664,14 +714,15 @@ The decisions were made by the project's author, one GitHub issue each; [issue 3
 
 | What | Status | How |
 | --- | --- | --- |
-| The 12 Mermaid diagrams on this page | Tested on macOS on 26 Nov 2026 | Each rendered without errors with Mermaid CLI 11.17.1 in headless Google Chrome 158. GitHub's own renderer was not tried |
-| Statements about the firmware | Not tested here | Checked by reading `ledmatrix.ino`, `live.cpp`, `net.cpp`, `ota.cpp`, `identity.cpp`, `protect.cpp`, `settings.cpp`, `otalogic.h`, `deviceauth.h`, `problems.h`, `webguard.h`, `devicename.h`, `swapstore.h`, `partitions.csv` and the contracts in `shared/`. Nothing was run on a board, and no board was touched |
+| The 13 Mermaid diagrams on this page | Tested on macOS on 26 Nov 2026 | Each rendered without errors with Mermaid CLI 11.17.1 in headless Google Chrome 158. GitHub's own renderer was not tried |
+| Statements about the firmware | Not tested here | Checked by reading `ledmatrix.ino`, `live.cpp`, `net.cpp`, `ota.cpp`, `identity.cpp`, `protect.cpp`, `settings.cpp`, `otalogic.h`, `deviceauth.h`, `problems.h`, `webguard.h`, `devicename.h`, `swapstore.h`, `editions.h`, `updatesig.h`, `updatesig_mbedtls.h`, `update_keys.h`, `partitions.csv` and the contracts in `shared/`. Nothing was run on a board, and no board was touched |
 | The longest frame gap during a download from the real service (131 ms), the update through the upload path and through the real service, wrong codes refused, a crash rolled back on the 4th boot, an image that never reaches the service rolled back at 3:00, an update while the key is refused, the permanent burn with `provision.py --burned` | Verified on the author's own display on 25 Nov 2026 | Quoted from the contract and the author's report; not repeated here. The 131 ms figure is in no repository file. (The 93 ms gap in the upload test is only reported in the slice 10 commit message, so it carries no verified label) |
 | The display name through the settings API and back; the portal's Origin and Host checks; a crash-on-start update rolled back on the 4th start, with its problem-list entry; an update that hangs before Wi-Fi rolled back at 3 minutes; `/status` uptime from a 64-bit timer | Verified on the author's own display on 26 Nov 2026 | The author's report; not repeated here |
 | A real power cut during probation, the mDNS name clash (`-2`), setup mode with a long name, the cross-site browser proof page, IPv6 literal access | Not verified | No test on a real display. The boot counter in flash is covered by laptop tests and by the crash loop, not by pulling the plug |
+| Weather outside Portugal (Open-Meteo, the provider choice and the Portugal outline), the headlines language and region setting, and the signed-manifest check (section 6) | Not tested here | Described from `service/weather.go`, `worldwide.go`, `coverage.go`, `pt_outline.go`, `headlines.go`, `firmware.go`, `editions.h`, `updatesig.h`, `updatesig_mbedtls.h`, `ota.cpp` and `shared/manifest-signing.md` (repository head 81fe5ea). None of it has been tried on a real display, and the real Open-Meteo service was not called. The repository has laptop and Python tests for these parts, which were not run for this page |
 | Statements about the service | Not tested here | Checked by reading `service/*.go` and `service/README.md`, including the secret file option (`MASTER_SECRET_FILE`). The service, its tests and the host tests were not run for this page |
 | Frame timing while a settings save writes to flash (section 2.2) | Not measured | The two-lock design is read from the code; the repository has a laptop test for it (`tools/test_swapstore.cpp`), which was not run for this page. The frame counters were not recorded during a save |
 | Whether a reverse proxy or hosting platform logs query strings | Not checked | It depends on the product and its settings |
-| What adsb.fi, IPMA, Google News, OpenStreetMap and the NTP pools log or allow | Not checked | The page says only what this project sends them |
+| What adsb.fi, IPMA, Open-Meteo, Google News, OpenStreetMap and the NTP pools log or allow | Not checked | The page says only what this project sends them |
 | The one-line reasons in section 9 | Read from the issues on 25 Nov 2026 | Issues can be edited later; the issue itself is the record |
 | Linux | Not applicable | The page contains no commands |

@@ -1,6 +1,6 @@
 # Operations: running your display
 
-Checked on macOS on 25 Nov 2026, and read against the code of the `main` branch on 26 Nov 2026. What was run, and what was not, is in the table at the end of this page.
+Checked on macOS on 25 and 26 Nov 2026, and read against the code of the `main` branch on 26 Nov 2026. What was run, and what was not, is in the table at the end of this page.
 
 This page is for you if you own a working LedMatrix display and want to keep it running. It has three parts. **Day 0** is the first-install checklist: it follows the order of [install.md](install.md) and [hosting.md](hosting.md) and tells you how to know that each step worked. **Day 1** shows what normal looks like and how to change settings. **Day 2** covers everything after that: [firmware](glossary.md#firmware) updates and [rollback](glossary.md#rollback), reading problems and logs, backups, revoking and replacing a display, updating the [service](glossary.md#service), moving it to a new address, and a decision list for when things go wrong. Whoever publishes firmware releases has a short section of their own at the end.
 
@@ -46,6 +46,8 @@ It assumes the hardware exists and the parts are put together. It does not repea
   - [The USB recovery](#the-usb-recovery)
   - [Known issue: slow name lookups after a settings change](#known-issue-slow-name-lookups-after-a-settings-change)
 - [For the maintainer: publish a firmware release](#for-the-maintainer-publish-a-firmware-release)
+  - [The maintainer does this once](#the-maintainer-does-this-once)
+  - [Rotate the signing key](#rotate-the-signing-key)
 - [Background and reference](#background-and-reference)
   - [The serial log, line by line](#the-serial-log-line-by-line)
   - [The shape of `/api/problems`](#the-shape-of-apiproblems)
@@ -125,7 +127,7 @@ Do these steps in this order. Each one says how to know it worked. Do not go on 
 
 **How to know it worked.** The page titled `ledmatrix` loads, and the panel shows **example screens**: example flights, weather and headlines, whichever of the three you have switched on (the example clock shows only if all three are off). They change every few seconds. No service is needed for this. It is the first milestone: the board, the panel, the power and your Wi-Fi all work.
 
-You can set your location and time zone now; they do not need the service. Three defaults surprise newcomers: the time zone is `Europe/Lisbon` until you change it, the panel is dark from 00:00 to 06:00 (night blanking), and it dims after 2 minutes without a plane. See "Panel protection" in Day 1. The weather source covers Portugal only today: if you live elsewhere, switch "Weather" off under "What to show".
+You can set your location and time zone now; they do not need the service. Three defaults surprise newcomers: the time zone is `Europe/Lisbon` until you change it, the panel is dark from 00:00 to 06:00 (night blanking), and it dims after 2 minutes without a plane. See "Panel protection" in Day 1. Weather works anywhere: the service uses IPMA inside Portugal and Open-Meteo elsewhere (see "No weather" in Day 2).
 
 Do not save a service address yet. It comes in step 7, once the service runs. As soon as one is saved the example screens stop.
 
@@ -203,7 +205,7 @@ Good result: the first line says `401` and the body is `{"error":"The request is
    *(An illustration built from the code, not a capture.)* The other two lines reach two public test hosts: one that can only be reached over [IPv6](glossary.md#ipv6) and one that works over both. On a home network without IPv6 the IPv6-only line is expected to fail. This is reasoned from the code and Not tested here on such a network. Only the first line matters for a working display.
 3. Scroll to "Problems". Good result: `No problems since the last restart.` in green.
 4. Read the line under "Data service". After about a minute it reads `Clock synchronised. Flights 12 s ago (0 in range).` `0 in range` is fine: it means the fetch works and no plane is within your radius right now.
-5. Wait for a plane. Planes appear when one enters your radius and has not been shown in the last 30 minutes. Headlines appear when a new one arrives (the newest per topic right after a restart). Weather appears whenever nothing else is shown, if you are in Portugal.
+5. Wait for a plane. Planes appear when one enters your radius and has not been shown in the last 30 minutes. Headlines appear when a new one arrives (the newest per topic right after a restart). Weather appears whenever nothing else is shown and weather data has arrived (the service answers for any location).
 6. Write down what you have. Keep this table in your own notes (not in the repository). You will want it on day 2.
 
    | Item | Your value |
@@ -243,7 +245,7 @@ The display shows one picture at a time. This table lists every picture, what it
 | Example screens | Example flights, weather and headlines, for the screens you have switched on. The example clock (21:47) shows only if all three are off. | When no service address is saved. They change every few seconds (the "show each new plane for" setting). UP and DOWN step through them. |
 | Flight (layouts A, B, C) | Airline, route, aircraft type, altitude and speed, and the airline's logo if the service has it | When a plane is new in your radius. It stays for the "show each new plane for" time (10 seconds by default). The same plane is not shown again for 30 minutes. |
 | Headlines (layouts A, B) | One headline and its source | When a new headline has arrived and no plane is showing. Layout A scrolls it across; layout B shows it in pages. |
-| Weather (layouts A, B, C) | Temperature, icon, high and low, chance of rain; layout C shows now, +3 hours and +6 hours | Whenever nothing more urgent is showing and weather data has arrived. |
+| Weather (layouts A, B, C) | Temperature, icon, high and low, chance of rain; layout C shows now, +3 hours and +6 hours. Layout B shows the place name, or `WEATHER` when the data has none (outside Portugal). The icons are sun, part cloud, cloud and rain: snow, sleet, thunderstorms and hail all show as the rain icon, because there is no snow icon yet | Whenever nothing more urgent is showing and weather data has arrived. |
 | Idle | The clock and date, or a black screen (your choice under "Layouts") | When there is nothing else to show. |
 | Stale-data dot | A small orange square flashing in the top right corner of any live picture | When live data is old. See below. |
 | Problem message | `PROBLEM`, `Data is failing`, `See the portal:`, `<name>.local` | After one kind of data has failed for an hour and is still failing. It replaces weather or the clock for 5 seconds at the start of every minute. Never over a plane or a headline, and not while the panel is dark at night. |
@@ -285,7 +287,7 @@ The sections appear in this order. Nothing is sent to the display until you pres
 | Problems | The last 10 problems, with plain words. See "Reading the Problems section". |
 | Firmware | The running version, **Check now**, and the update notice and buttons. See "Firmware updates". |
 | Install a .bin file | The escape route for when the normal update does not work. See "The forced `.bin` upload". |
-| Headline topics | Up to five searches, one per line. |
+| Headline topics | Up to five searches, one per line, and **Headlines language and region**: which Google News edition the headlines come from (12 editions; the default is Portuguese (Portugal)). |
 | Wi-Fi and device | **Display name** (what the display is called on the network; default `ledmatrix`), the network the display is on, its signal, its addresses and how long it has been up; and **Forget this Wi-Fi network**. |
 
 The map tiles, the map library and the time zone lookup are loaded by your *browser* from public servers when you open the portal. That does not involve the display. It does mean that your browser makes requests to those servers when you use the Location section.
@@ -303,12 +305,13 @@ If a value is not allowed the bar turns orange and says why. Nothing is saved, n
 What happens next, **Checked in the code** (`settings.cpp`, `live.cpp`):
 
 - Settings are written to the board's flash straight away.
-- If you changed the service address, the screens to show, the location, the radius, the altitudes or a headline topic, the display fetches flights, weather and headlines again straight away, and the one-hour timer for the panel's problem message starts again.
+- If you changed the service address, the screens to show, the location, the radius, the altitudes, a headline topic or the headlines language and region, the display fetches flights, weather and headlines again straight away, and the one-hour timer for the panel's problem message starts again.
 - Other changes (layouts, brightness, protection, clock format, dwell time) apply on the next frame, without any fetch.
 - A time zone change applies within about half a second, without a restart.
 - A save does not pause the picture: the new settings are swapped in memory first and written to flash afterwards (**Checked in the code**: `settings.cpp`, `swapstore.h`; the picture's timing during a burst of saves was not measured on a board).
 - The service address is cleaned for you: `https://`, `http://` and anything after the host name are dropped, and it is made lower case. It can only have letters, digits, dots and hyphens, up to 63 characters. It cannot hold a port: the display always connects on port 443.
 - The **Display name** (under "Wi-Fi and device") is what the display is called on the network: the portal is at `<name>.local`, the display gives that host name to your router, and its setup Wi-Fi network has that name. Use 1 to 24 letters, digits or hyphens, with no hyphen at the start or end; capital letters become lower case. A name that breaks a rule is refused with a plain sentence and nothing is saved: `The display name cannot be empty.`, `The display name can be at most 24 characters.`, `The display name can only have letters, digits and hyphens, with no spaces.`, `The display name cannot start or end with a hyphen.` **Saving a new name restarts the display** (about 20 seconds), because the network name is set once at start-up. The portal says where the display will be and follows it: a page you opened with a `.local` name moves to the new name by itself when the display answers there, and a page you opened by IP address reloads. The settings did not change except for the name after renaming a display through the API and back, and the refusals were worded as above (**Verified on the author's own display on 26 November 2026**). The portal's following was read in its code (**Checked in the code**); **Not tested here**: the restart and the follow with two displays on one network.
+- **Headlines language and region** (under "Headline topics") picks which [Google News edition](glossary.md#google-news-edition) the headlines come from. There are 12: Portuguese (Portugal), Portuguese (Brazil), English (United Kingdom, United States, Australia, Canada), Spanish (Spain, Mexico), French (France), German (Germany), Italian (Italy) and Dutch (Netherlands). The default is Portuguese (Portugal), which is what a display that never saved this setting has always used. Your topics are searched in that edition, so write them in its language. Changing it fetches the headlines again straight away. The panel's fonts have plain letters only: an accent or a curly quote appears as an odd character pair in layout A (scrolling) and is left out in layout B (pages), as it already does with Portuguese. Japanese is not offered for that reason. (**Checked in the code**: `editions.h`, `settings.cpp`, `live.cpp`; **Not tested here**: on a real board.)
 
 **What survives a restart.**
 
@@ -381,7 +384,8 @@ The shape (placeholder values):
   "device": "aabbccddeeff",
   "identity": "ok",
   "signer": "software",
-  "signer_check": "not_run"
+  "signer_check": "not_run",
+  "updateSigning": "required"
 }
 ```
 
@@ -401,6 +405,7 @@ What each field means (**Checked in the code**: `net.cpp`, `identity.cpp`, `ledm
 | `device` | The device ID: the board's factory address as 12 lowercase characters. It is not secret. | The ID you wrote down. |
 | `identity` | Can the board sign its requests? `ok`, `missing`, `invalid`, `other_board`, `hardware_key` or `hardware_unprotected`. | `ok`. |
 | `signer` | What signs: `software` (the key saved in the `ident` partition), `hardware` (the chip's own key, after the burn) or `none` (cannot sign). | `software` before the burn, `hardware` after. |
+| `updateSigning` | Whether the display checks the signature of a firmware update: `required` (normal) or `off` (a development build, see "Signed updates"). | `required`. |
 | `signer_check` | The chip's key compared with the saved key: `not_run`, `match`, `mismatch` or `unprotected`. | `not_run` normally. `match` only appears after a burn before the saved key is removed. Anything else after a burn: see [`tools/burn_key/README.md`](../tools/burn_key/README.md). |
 
 Related pages on the display, all read-only JSON for the maintainer: `/api/problems`, `/api/update`, `/api/live`, `/api/planes`, `/api/settings` and `/api/selftest` (it takes up to about 30 seconds).
@@ -451,11 +456,17 @@ Nothing here is required by the display. It is a suggestion for keeping a small 
 
 ### Firmware updates
 
-*Labels: the update through the upload path and through the real service, wrong codes refused, the rollbacks and an update while the key is refused are Verified on the author's own display on 25 Nov 2026. The exact words and timings are Checked in the code (`ota.cpp`, `otalogic.h`, `net.cpp`, `screens.cpp`, the portal page) and in the contract [`shared/firmware-update.md`](../shared/firmware-update.md). The manifest and download routes of the service: Tested on macOS with a synthetic image.*
+*Labels: the update through the upload path and through the real service, wrong codes refused, the rollbacks and an update while the key is refused are Verified on the author's own display on 25 Nov 2026. The exact words and timings are Checked in the code (`ota.cpp`, `otalogic.h`, `net.cpp`, `screens.cpp`, the portal page) and in the contract [`shared/firmware-update.md`](../shared/firmware-update.md). The manifest and download routes of the service: Tested on macOS with a synthetic image. The signature check ("Signed updates") is Checked in the code and was not run on a real board.*
 
 **How it works in one minute.** Firmware images travel inside the service's [docker image](glossary.md#docker-image) (the packaged program, run as a [container](glossary.md#container)). When the maintainer deploys a new service image that carries a newer firmware, the service offers it. The display asks the service for the newest version's details (the [manifest](glossary.md#manifest)): about 5 minutes after its clock is set (that is also 5 minutes after every restart), then every 24 hours, and whenever you press **Check now**. A check that failed is tried again after an hour. The display offers an update only when the published version is strictly newer than the one it runs. Nothing is installed without you: you must type an [update code](glossary.md#update-code) that shows only on the panel.
 
-**Public image or your own build?** If you run the public image, an update reaches your display only after two things: the maintainer publishes a release, and you update your service to the image that carries it (see "Update the service itself"). A notice you did not expect, when you have not just updated your service, is a reason to read the `From:` line twice. If you run your own build, no updates arrive unless you publish them yourself (see "For the maintainer: publish a firmware release"). You can always flash a display over USB (see "The USB recovery").
+**Public image or your own build?** If you run the public image, an update reaches your display only after two things: the maintainer publishes a release, and you update your service to the image that carries it (see "Update the service itself"). A notice you did not expect, when you have not just updated your service, is a reason to read the `From:` line twice. If you run your own build, no updates arrive unless you publish them yourself (see "For the maintainer: publish a firmware release"). A display built with its own keys accepts only updates signed with its own key, so it refuses the public image's firmware (see "Signed updates"). You can always flash a display over USB (see "The USB recovery").
+
+**Signed updates.** A display installs an update from the service only when the manifest it has just fetched carries a valid [signature](glossary.md#signature) by one of the [public keys](glossary.md#public-key) built into its firmware. On the public build these are the maintainer's two keys, with the [key ids](glossary.md#key-id) `eb6a67ad` (current) and `dfcb5742` (spare). The check is the first thing done, before anything is downloaded. After the download, the image's [SHA-256](glossary.md#sha-256), size and version must equal the signed ones. So a changed service address, a doctored service image or a hijacked name no longer gets anything installed except a genuine, signed release. The portal's "Firmware" section says `Updates must be signed. Accepted keys: eb6a67ad, dfcb5742.` and the update notice says `Signed with key eb6a67ad.` A refusal is soft: nothing is downloaded, written or restarted, and it is explained in plain words (see "Reading the Problems section").
+
+Which displays check: only those that run a version with the check. A display still on a version from before it (0.10.x) does not verify anything. It installs the first release that has the check once, from an unsigned check (that release may even be unsigned while the maintainer's signing key is being put in place), and from then on it enforces. The forced `.bin` upload cannot be signed (there is no manifest) and stays behind the panel code. A development build (`-DUPDATE_REQUIRE_SIGNATURE=0`, for experiments on your own desk) checks nothing: the portal says `Development build: updates are installed without checking a signature.`, the notice says `Signature not checked (development build).` and `/status` shows `"updateSigning":"off"`.
+
+(**Checked in the code**: `updatesig.h`, `ota.cpp`; the contract is [`shared/manifest-signing.md`](../shared/manifest-signing.md), which also explains why ECDSA on the P-256 curve was chosen. **Not tested here**: on a real board. No display has run the check yet, and the first signed release is not published yet.)
 
 ```mermaid
 flowchart TD
@@ -473,7 +484,7 @@ flowchart TD
 
 **Before you start.** Stand where you can see the panel and the portal. Do not start while the display is still checking an earlier update (the portal says so and the buttons are greyed out).
 
-1. **Open the portal and find the notice.** If a newer version exists you see two things: an amber banner at the top, `New firmware 0.10.2 is available. See Firmware below.`, and in the "Firmware" section a highlighted box titled `New firmware available` with the version and its size, the first lines of the release notes, and an amber **Update** button.
+1. **Open the portal and find the notice.** If a newer version exists you see two things: an amber banner at the top, `New firmware 0.10.2 is available. See Firmware below.`, and in the "Firmware" section a highlighted box titled `New firmware available` with the version and its size, the key that signed it (`Signed with key eb6a67ad.`), the first lines of the release notes, and an amber **Update** button.
 
    If you see neither, press **Check now**. The line says `Checking for a new version…` and then either shows the box or says `Checked just now. You have the newest version.`
 
@@ -487,7 +498,7 @@ flowchart TD
    - After three wrong tries the code is gone. Starting again is blocked for 60 seconds, then 120, doubling up to an hour. A correct code resets that. The portal says `Too many wrong codes. Wait 60 seconds, then press Update.`
    - **Cancel** drops the code. It is refused while an image is being installed.
 
-5. **Watch the progress.** The panel shows `UPDATE`, a percentage, the new version (`v0.10.2`), a status word and a bar. The status word is first `Checking` (the display reads the manifest again), then `Downloading`. The portal shows `Downloading version 0.10.2: 512 of 1380 KB (37 %)`. The display goes on drawing and the portal keeps answering during the download. Before anything is switched, the display checks the size, the [SHA-256](glossary.md#sha-256) checksum against the manifest, that the file is a valid image for this chip, and that it says it is the version the manifest announced. Anything wrong: nothing changes, the running version stays, and a plain sentence goes into the problem list.
+5. **Watch the progress.** The panel shows `UPDATE`, a percentage, the new version (`v0.10.2`), a status word and a bar. The status word is first `Checking` (the display reads the manifest again), then `Downloading`. The portal shows `Downloading version 0.10.2: 512 of 1380 KB (37 %)`. The display goes on drawing and the portal keeps answering during the download. Before anything is requested, the display checks the signature of the manifest. Before anything is switched, it checks the size, the SHA-256 checksum against the manifest, that the file is a valid image for this chip, and that it says it is the version the manifest announced. Anything wrong: nothing changes, the running version stays, and a plain sentence goes into the problem list.
 
 6. **Installing and restarting.** The panel shows `Installing` at 100 %, then `Restarting`. The portal says `Installing version 0.10.2. Do not unplug the display.` and then `The display is restarting. This page reconnects by itself.` **Do not unplug the display while it installs.** The panel goes dark for a moment, shows the boot screen (`ledmatrix`, `connecting...`), then `WIFI OK`, then its normal pictures.
 
@@ -554,7 +565,7 @@ Where it is recorded, in two places. The **Firmware** section shows the red box 
 
 This is the escape route for when the normal update cannot work: a bad release, no connection to your service, a certificate problem on the service, a version blocked because it was rolled back, or a build of your own that you want to try.
 
-> **Be careful.** An uploaded file skips the checksum. The display checks only that the file is a valid image for this chip and fits the 2 MB program slot, not that it is the right one or a good one. Install only a file you built yourself or trust. The portal says the same in a box labelled `Read this first`.
+> **Be careful.** An uploaded file skips the checksum, and it has no signature to check. The display checks only that the file is a valid image for this chip and fits the 2 MB program slot, not that it is the right one or a good one. Install only a file you built yourself or trust. The portal says the same in a box labelled `Read this first`.
 
 **Where to get a `.bin`.**
 
@@ -643,8 +654,8 @@ The line under "Data service" (`Last problem: ...`) shows the technical text of 
 | `The service refused the request (HTTP 401) without a reason this device knows. Check the service address.` (also for 403) | A refusal that is not one of the five known reasons: an older service, or something in front of it. | Check the address and any proxy or access layer in front of the service. |
 | `The address answered, but it is not the data service (HTTP 404). Check the service address.` | The address leads to some other server. | Correct the address. |
 | `The service is limiting requests (HTTP 429). It should recover by itself.` | The service or a proxy is slowing the display down. | Wait. |
-| `The service, or the server in front of it, is down or had an error (HTTP 502).` (any 5xx) | The service or its proxy failed. | Look at the service's log and restart it if needed. |
-| `The service answered with an unexpected status (HTTP 422).` | Any other status. **422 on `weather` means you are outside Portugal**: the weather source only covers Portugal. | For 422: switch "Weather" off under "What to show". Otherwise look at the service's log. |
+| `The service, or the server in front of it, is down or had an error (HTTP 502).` (any 5xx) | The service or its proxy failed. On `weather`, 502 means the weather sources are not answering. | Look at the service's log and restart it if needed. For weather, the service needs outbound HTTPS to `api.open-meteo.com` (and to IPMA's server for Portugal): check that nothing blocks it. |
+| `The service answered with an unexpected status (HTTP 422).` | Any other status. 422 on `weather` means no weather source had any value for your location (`no weather data for this location`): this almost never happens. | For 422: check the location on the map. Otherwise look at the service's log. |
 
 **The service refuses the board's key**
 
@@ -683,6 +694,11 @@ These come from the service's 401 answer. The section "The service refuses the k
 | --- | --- | --- |
 | `The service answered, but it has no firmware published to offer.` | The manifest route answered 404. | The service image has no valid firmware: the public image always carries one, so this means an image built outside the workflow (see "For the maintainer: publish a firmware release"). Not harmful. |
 | `The firmware details from the service are not valid, so no update is offered.` | The manifest broke a rule. | Check the service's log line `firmware: nothing is published, ...`. |
+| `The service offers a firmware update that is not signed, so it was not offered. This board accepts only updates signed with the key built into it.` | The manifest has no `keyid` and no `sig`, and this display requires a signature (`signing.refused` is `unsigned`). | On the public image: your service image carries an unsigned release (one published while the maintainer's signing key was not yet in use, or an image built outside the workflow). Update your service to a signed release ("Update the service itself"). On your own build: sign the manifest ("For the maintainer"). A signed manifest ends in `"keyid":"...","sig":"..."`: look with `curl -s https://apis.example.com/v1/firmware/manifest`. |
+| `The firmware update is signed with a key this board does not know, so it was refused and nothing was changed. A USB flash may be needed.` | The manifest's `keyid` is not one of the keys built into this display (`signing.keys` in `/api/update`). Usually a display with its own keys meets the public image, or the other way round; or the display is two key rotations behind. | Compare the two ("An update was refused" in the symptom list). Run a service image and a firmware that share a key. To move a display onto the release's keys, flash a firmware that pins them over USB ("The USB recovery"). |
+| `The signature on the firmware update does not check out, so it was refused and nothing was changed. Check that the service address is yours.` | The `keyid` is known, but the signature does not verify. The manifest was changed after signing (even one letter of the notes), or it was signed by another key under this id, or something between the display and the service, or a server that is not yours, altered it. The display cannot tell a damaged signature from a signature over other values. | Check the service address in "Data service" and the `From:` line. Fetch the manifest yourself and check it ("An update was refused"). Do not force the upload unless you know where the file came from. |
+| `The board could not check the signature on the firmware update (it ran short of memory). Nothing was changed. It tries again at the next check.` | The check could not run. This is not an attack and not a bad manifest. | Press **Check now** again in a minute. If it repeats, restart the display and open a [GitHub issue](https://github.com/suvl/ledmatrix/issues). |
+| `The firmware details from the service are not valid, so no update is offered.` with the grey detail `the signature fields are malformed` | Only one of `keyid` and `sig` is there, or one has the wrong shape. The service checks the same shapes before it publishes, so something is altering the answer, or the service and the firmware do not belong together. | Fetch the manifest with `curl` and look at it. Update the service and the firmware to the same release. |
 | `No service address is saved, so there is nothing to check for updates.` | Shown in the Firmware box, not in the list. | Save the service address. |
 | `The clock is not set yet, and secure connections need the right time. Try again in a minute.` | Shown in the Firmware box, not in the list. | Wait; press Check now later. |
 | `The firmware download did not finish, so nothing was changed. Try again later.` | The transfer broke off or the server said no. | Press Update again. |
@@ -698,6 +714,8 @@ These come from the service's 401 answer. The section "The service refuses the k
 | `The new firmware (version 0.10.2) did not pass its start-up check, so the board went back to the previous firmware.` | A rollback happened. The version is the one that failed, and the grey text under the sentence is the reason. It comes back at every start until a newer version is installed, and it never triggers the panel's `PROBLEM` message. | See "Rollback". |
 | `The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running.` | A rollback was wanted and was not possible. | The display keeps running. Open a GitHub issue and plan a USB re-flash. |
 | `The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts.` | The board could not write the "good" mark. | It tries again at every start. Unplug and plug in once and wait 3 minutes. If it repeats, open a GitHub issue. |
+
+**Where the signature refusals show.** In the Problems section, as `update check` rows (the sentence, and in grey the technical text). In the portal, in the red box `An update was refused`, with the sentence. In `/api/update`, as `signing.refused` (`unsigned`, `malformed`, `unknown_key`, `bad_signature` or `check_failed`). On the serial line `OTA signature refused (<code>, N ms)`. Never on the panel: they never reach the code screen, and they never make the panel show its `PROBLEM` message, because the checks are an hour apart. A notice shown earlier is withdrawn. All of them are soft: nothing is downloaded, written or restarted, the data side is untouched, and the next check tries again (an hour after a failed one). (**Checked in the code**: `ota.cpp`, `problems.h`; **Not tested here**: on a real board.)
 
 A problem you do not find here is shown as it came. Write it down (with private values removed) and report it in a GitHub issue.
 
@@ -740,17 +758,18 @@ kubectl logs deployment/ledmatrix-api --tail=100
 docker compose logs --tail=100 api
 ```
 
-(**Not tested here**: the two commands; the names in them depend on your setup.) The first five lines below were seen in a run on macOS on 25 Nov 2026 (**Tested on macOS**); the last two, and the "not logged" line, are **Checked in the code**.
+(**Not tested here**: the two commands; the names in them depend on your setup.) The first five lines below were seen in a run on macOS on 25 Nov 2026 (**Tested on macOS**), before the service passed signatures through; the `signed with key` ending, the extra reasons, the weather line, the last two lines and the "not logged" line are **Checked in the code** (Docker did not answer on 26 Nov 2026, so the newer service was not run).
 
 | Line | Meaning |
 | --- | --- |
 | `ledmatrix-api listening on :8080` | Started. |
-| `firmware: version 0.10.2 is published (204800 bytes)` | The firmware folder is valid. Logged once per change. |
-| `firmware: nothing is published, there is no manifest.json in the firmware folder` | No valid firmware, and the reason in plain words (here: the folder has no manifest). |
+| `firmware: version 0.10.2 is published (204800 bytes), signed with key eb6a67ad` | The firmware folder is valid. Logged once per change. It ends `, not signed` for an unsigned release. The key id is public; the signature is never logged. |
+| `firmware: nothing is published, there is no manifest.json in the firmware folder` | No valid firmware, and the reason in plain words (here: the folder has no manifest). Other reasons for a signed manifest: `the keyid and the sig must be both present or both absent`, `the keyid is not 8 lowercase hex characters`, `the sig is not 128 lowercase hex characters`, `the notes hold a control character`, `the answer would be longer than 2048 bytes`. |
 | `GET "/v1/weather" 200 12ms` | Method, path, status and time. The query is never logged: it holds the display's location. |
 | `device seen aabbccddeeff` | A signed request from this display was accepted. At most once per display per hour, and nothing of what the display asked for is logged. Normal: one line per display per hour. Not logged with `AUTH_OFF=1`. After 256 different devices in an hour, one line says `device seen: more than 256 devices in the last hour, new ones are not logged until older ones expire`. An older image does not print it. |
 | `auth refused: device=aabbccddeeff reason=bad_signature` | A refusal, with the device ID and the reason. At most once per device and reason per minute, and 30 lines a minute in all. When lines are skipped, a later line says `auth refused: N more refusals in the last minute were not logged`. |
 | `upstream error: ...` | A data source (aircraft, weather, headlines) failed. The service serves the last good answer for a while. |
+| `weather: IPMA failed (...), using Open-Meteo` | Inside Portugal, IPMA did not answer and nothing was cached, so Open-Meteo answered instead (the temperature may differ by a degree or two, and the place name is empty). |
 | `WARNING: AUTH_OFF=1, ...` | The signature check is off. Never on a service others can reach. |
 
 The service never logs a key, a signature, a path, a query or the master secret.
@@ -796,7 +815,7 @@ Keep two offline copies in two places (a password manager, or paper in a safe). 
 curl -s http://ledmatrix.local/api/settings -o ~/ledmatrix-secrets/ledmatrix-settings-2026-11-25.json
 ```
 
-Good result: a file that starts `{"showFlights":true,...` and ends with the `timezone` group. It holds your layouts, protection settings, location, radius, topics, service address, time zone and display name (`deviceName`, right after `cyclePlanes`). It does **not** hold the Wi-Fi password, the key or any secret. It does hold your home coordinates, so keep it private. That is why the command writes it into `~/ledmatrix-secrets/`, the private folder you made for the master secret, and not into the current folder: if you run the command from the repository folder, the file would land next to the code, where `git add` could pick it up. Any other folder outside the repository will do.
+Good result: a file that starts `{"showFlights":true,...` and ends with the `timezone` group. It holds your layouts, protection settings, location, radius, topics, headlines language and region (`headlineEdition`, a number: the position in a list of 12 that only ever grows, so an old backup stays valid), service address, time zone and display name (`deviceName`, right after `cyclePlanes`). A backup made before the headlines setting existed leaves it as it is; a number that is not in the list is refused with `Pick the headlines language and region from the list.` It does **not** hold the Wi-Fi password, the key or any secret. It does hold your home coordinates, so keep it private. That is why the command writes it into `~/ledmatrix-secrets/`, the private folder you made for the master secret, and not into the current folder: if you run the command from the repository folder, the file would land next to the code, where `git add` could pick it up. Any other folder outside the repository will do.
 
 To restore (for example on a replacement board, after its Wi-Fi is set up):
 
@@ -954,10 +973,35 @@ You pressed Update and the version is the same, or a release was published and n
 
 1. Press **Check now** and read the line: `Checked just now. You have the newest version.` means the service offers nothing newer.
 2. Compare the two versions: `curl -s https://apis.example.com/v1/firmware/manifest` (what the service offers) and `/status` (`version`, what the display runs). If the service offers the same or an older number, the maintainer has not published a newer version, or you have not yet updated your service to it ("Update the service itself"); on your own build, the number was not bumped or the new image was not deployed ("For the maintainer: publish a firmware release").
-3. If the portal shows a red `Version ... failed on this display and was rolled back` box, or the Problems section lists the rollback, that version is not offered again until a newer one exists ("Rollback"). A display that was unplugged or restarted several times during its start-up check can roll back a good version.
+3. If the portal shows a red `An update was refused` box, see "An update was refused". If it shows a red `Version ... failed on this display and was rolled back` box, or the Problems section lists the rollback, that version is not offered again until a newer one exists ("Rollback"). A display that was unplugged or restarted several times during its start-up check can roll back a good version.
 4. If the display is still "on probation", it refuses new updates for a few minutes.
 
 If that does not help: the forced `.bin` upload.
+
+#### An update was refused
+
+The portal shows a red box titled `An update was refused`, with one of the sentences in the table "Firmware updates" (the signature check). Nothing was changed.
+
+1. Find the sentence in the table in "Reading the Problems section" and read what to do.
+2. Compare what the display accepts with what the service offers:
+
+   ```
+   curl -s http://ledmatrix.local/api/update | python3 -m json.tool
+   curl -s https://apis.example.com/v1/firmware/manifest
+   ```
+
+   In the first answer, `signing.keys` lists the key ids the display accepts and `signing.refused` says what the last refused check found. In the second, `keyid` is the key that signed the release (a manifest with no `keyid` is unsigned). If the `keyid` is not in `signing.keys`, the display and the service do not share a key.
+3. With a clone of the repository you can check a manifest yourself, with no key needed:
+
+   ```
+   curl -s https://apis.example.com/v1/firmware/manifest -o manifest.json
+   python3 -I tools/sign_manifest.py --check manifest.json --keys-header arduino/ledmatrix/update_keys.h
+   ```
+
+   `ok version=... keyid=...: the signature is valid and the key is pinned` means the manifest is genuine for the keys in your checkout. An error sentence says what is wrong. (**Tested** on macOS with a throwaway key pair.)
+4. If the cause is a service that is not yours, or an address you did not set, change the address back and read [security.md](security.md).
+
+If that does not help: open a [GitHub issue](https://github.com/suvl/ledmatrix/issues) with the sentence (private values removed).
 
 #### An update that rolled back
 
@@ -1000,8 +1044,8 @@ First, how often the display asks (**Checked in the code**, `live.cpp`):
 Then:
 
 - **No planes.** The line under "Data service" says `Flights 12 s ago (0 in range)`: the fetch works and nothing is within your radius and altitude limits. Widen them under "Location" (the defaults are 15 km, 0 to 45,000 ft). A plane is shown once, then not again for 30 minutes.
-- **No headlines.** A headline is shown only once. A quiet topic gives no new headline for long stretches. After a restart only the newest headline per topic is shown. Check that "Headlines" is on and at least one topic is filled in.
-- **No weather.** The weather source covers Portugal only (35 forecast cities, islands included). Outside it the service answers 422 and the display says `The service answered with an unexpected status (HTTP 422).` After an hour of that, the panel's `PROBLEM` message begins. Switch "Weather" off. (**Checked in the code**; not tried from outside Portugal.)
+- **No headlines.** A headline is shown only once. A quiet topic gives no new headline for long stretches. After a restart only the newest headline per topic is shown. Check that "Headlines" is on and at least one topic is filled in. Topics are searched in the edition you chose under "Headlines language and region", so a topic written in another language finds little. Accents and curly quotes look odd on the panel (see "Change a setting").
+- **No weather.** Weather works anywhere. Inside Portugal (the mainland outline plus Madeira and the Azores, within 100 km of one of IPMA's 35 forecast places) the service uses IPMA. Everywhere else it uses [Open-Meteo](glossary.md#open-meteo). If IPMA fails and has nothing cached, Open-Meteo answers instead. Open-Meteo answers have no place name, so layout B shows `WEATHER`; that is normal. Snow, sleet, thunderstorms and hail show as the rain icon. For Open-Meteo, the service rounds your coordinates to one decimal (about 11 km) before it sends them, and keeps an answer for 15 minutes (up to 3 hours when Open-Meteo is not answering). If weather is missing: a `weather` row with HTTP 502 means neither source answered, so check that the service can reach `api.open-meteo.com` over HTTPS; HTTP 422 means no value at all for the location, which almost never happens (check the location on the map). Open-Meteo's free service is for non-commercial use: a service that is run for others, or paid for by advertising, needs Open-Meteo's paid plan. Open-Meteo keeps request logs with coordinates for up to 90 days, which is why the coordinates are rounded; [security.md](security.md) lists what each data provider sees. The data must be credited as "Weather data by Open-Meteo.com" (it is in the README). (**Checked in the code**: `service/weather.go`, `service/worldwide.go`; **Not tested here**: a real display outside Portugal.) (**Checked in the code**; not tried from outside Portugal.)
 - **A plane with no logo, or no route.** Logos come from your private logo set; without one the display draws a badge with the airline code. Routes come from community data and are missing for some flights.
 - **Everything is slow or times out.** Press **Test connections**. See the known issue below if the lines take about half a minute each.
 
@@ -1079,7 +1123,7 @@ Making a release (raising the number in `arduino/ledmatrix/version.h`, pushing t
    curl -s https://apis.example.com/v1/firmware/manifest
    ```
 
-   Good result: JSON that starts `{"version":"0.10.2","file":"ledmatrix-0.10.2.bin","size":...`. Then:
+   Good result: JSON that starts `{"version":"0.10.2","file":"ledmatrix-0.10.2.bin","size":...` and, for a signed release, ends with `"keyid":"eb6a67ad","sig":"<128 hex characters>"}`. Then:
 
    ```
    curl -s "https://apis.example.com/v1/weather?lat=38.7&lon=-9.1"
@@ -1092,14 +1136,76 @@ Making a release (raising the number in `arduino/ledmatrix/version.h`, pushing t
    shasum -a 256 check.bin
    ```
 
-3. **Check that a display offers it.** In the portal's "Firmware" section press **Check now**, then follow "Update step by step". Without it the display finds the update by itself within 24 hours.
-4. **Watch the first display through its start-up check.** A good release ends with `Version 0.10.2 is running on this display.` A bad one rolls back; "Rollback: when the new version does not pass" shows what that looks like and what the portal says.
+3. **Check the signature and the logs.** The service's first log line after the deploy says `firmware: version 0.10.2 is published (N bytes), signed with key eb6a67ad` (or `..., not signed`). The workflow run's summary has the line `Signature: ok version=0.10.2 keyid=eb6a67ad`. Locally, with a clone and no key: `python3 -I tools/sign_manifest.py --check manifest.json --keys-header arduino/ledmatrix/update_keys.h` (**Tested** on macOS with throwaway keys: it passes for a good manifest and refuses one signed by a key that is not pinned).
+4. **Check that a display offers it.** In the portal's "Firmware" section press **Check now**, then follow "Update step by step". Without it the display finds the update by itself within 24 hours.
+5. **Watch the first display through its start-up check.** A good release ends with `Version 0.10.2 is running on this display.` A bad one rolls back; "Rollback: when the new version does not pass" shows what that looks like and what the portal says.
 
 **Things that can go wrong.**
 
 - *Nothing is offered.* The number was not bumped, or it is not larger than the display's, or the displays' service has not been updated to the new image. Compare the manifest's `version` with the display's `/status`.
 - *The manifest answers 404 `no firmware is published`.* The image does not carry a valid firmware: it was not built by the workflow, or the manifest does not match the image. The service's log says why, in a line starting `firmware: nothing is published,`.
 - *A release is immutable.* `tools/make_manifest.py` refuses to write a different image under a version that already has one; the reason and the rules are in [development.md](development.md). Bump the number instead.
+- *Displays say `The service offers a firmware update that is not signed`.* The release went out unsigned. See "The maintainer does this once" below.
+
+### The maintainer does this once
+
+*Labels: written from the workflow and the contract. **Not done yet**: as of 26 Nov 2026 the GitHub secret is not set and the flag below is still "0". Nothing here was run against GitHub.*
+
+Until it is done, a release goes out unsigned, with a yellow `Unsigned release` warning in the run, and a display that checks signatures refuses it. Do this before the first release that must be signed:
+
+1. Make sure both private keys exist outside the repository, mode 600, and are backed up offline in two places. The current key's private half goes to GitHub; the spare's stays offline and is never in CI. (`tools/gen_signing_key.py` made them; their public halves are pinned in `arduino/ledmatrix/update_keys.h`.)
+2. Set the secret from the current key's `.github-secret.txt` file (the key as one line of text):
+
+   ```
+   gh secret set UPDATE_SIGNING_KEY < ~/ledmatrix-keys/<the current key's .github-secret.txt file>
+   ```
+
+3. Change `REQUIRE_SIGNING: "0"` to `"1"` near the top of `.github/workflows/service.yml` and push. From then on a run without the secret fails and publishes nothing, and a signed manifest must verify. Any other value fails the run.
+4. Publish a release and read the run summary: `Signature: ok version=... keyid=...`.
+
+The secret is visible only to the step "Sign the manifest". Whoever can push to `main` can change the workflow and read the secret, so the key is as safe as write access to `main`: see [security.md](security.md).
+
+### Rotate the signing key
+
+*Labels: the tools were Tested on macOS with throwaway keys (below). The procedure is from the contract, [`shared/manifest-signing.md`](../shared/manifest-signing.md), section 9. Not tested here: against GitHub, or on a display.*
+
+The rule: **a release must be signed by a key pinned in the release before it, and by a key pinned in itself.** The tool enforces the second half; the procedure the first. The state at the start: releases pin `[A, B]`, CI signs with A, B is offline.
+
+1. Create the new spare, C, outside the repository (the tool refuses a folder inside a git work tree and never overwrites a file):
+
+   ```
+   python3 -I tools/gen_signing_key.py --out ~/ledmatrix-keys --names C
+   ```
+
+   It prints the key id and a `#define UPDATE_KEY_n "04..."` line (public key only). Back up C's files in two places.
+2. Edit `arduino/ledmatrix/update_keys.h` so it pins `[B, C]`: `UPDATE_KEY_0` is B's line, `UPDATE_KEY_1` is C's, `UPDATE_KEY_COUNT` is 2.
+3. Put B's key into CI in place of A's:
+
+   ```
+   gh secret set UPDATE_SIGNING_KEY < ~/ledmatrix-keys/<B's .github-secret.txt file>
+   ```
+
+4. Release as usual ([development.md](development.md), "Releasing"). The run signs with B, which every display already pins, and the release pins `[B, C]`. Read the summary line `Signature: ok version=... keyid=<B's id>`.
+5. Before you deploy, check the new manifest against the **previous** release's keys, because that is what the displays that run it will use. Download the workflow's `firmware` artifact (it holds `manifest.json`), save the old header, and check:
+
+   ```
+   git show <previous release commit>:arduino/ledmatrix/update_keys.h > old_update_keys.h
+   python3 -I tools/sign_manifest.py --check manifest.json --keys-header old_update_keys.h
+   ```
+
+   Good result: `ok version=... keyid=...: the signature is valid and the key is pinned`. If it says the key is not one of the pinned keys, do not deploy: displays running the previous release would refuse it. Keep the old header file outside the repository.
+6. Destroy A's copies and keep C's backup. B is now the current key (in CI), C the spare.
+
+What to do in the other situations (the contract has the full table):
+
+| Situation | What to do |
+| --- | --- |
+| A is lost (the CI secret and the offline copy are gone) | The same steps. No release can be signed by A, but B can. No USB flash is needed. |
+| A is leaked | Delete the GitHub secret at once, check the service, the registry and the GitHub account, then rotate as above. A leaked key does not let anyone attack a display that talks to your own, uncompromised service. |
+| B is lost or leaked | Release a version signed by A that pins `[A, C]`, and check that no copy of B is in CI. |
+| A and B are both lost, or a display is two rotations behind | It cannot be fixed over the air: flash a firmware with new keys over USB ("The USB recovery"). |
+
+**Your own build.** One key is enough: `python3 -I tools/gen_signing_key.py --out ~/ledmatrix-keys --names Mine`, put its public line into `update_keys.h` with `UPDATE_KEY_COUNT 1`, and sign with `--key-file` (or set the secret in your copy of the repository). The firmware build fails if signatures are required and no key is pinned. [development.md](development.md) has the details.
 
 ## Background and reference
 
@@ -1135,6 +1241,8 @@ Details for the maintainer and for people who read logs. You do not need them to
 | `TRUNC "..." -> "..."` | A text was too long for the panel and was cut. |
 | `OTA check: service has 0.10.2, newer: offered` | An update check. Others: `OTA a code is on the panel (service)` (never the code itself), `OTA downloading 0.10.2 (N bytes)`, `OTA download 40%`, `OTA installed 0.10.2`, `OTA restarting into the new firmware`, `OTA failed: ...`, `OTA this image is on probation: boot 1 of at most 3 (image 1a2b3c4d, counter kept in flash)`, `OTA probation: boot 1 of at most 3, 40 s since start, not yet marked good` (every 20 seconds while on probation), `OTA erased the boot counter that an earlier probation left`, `OTA the boot counter could not be read: counting this as boot 1`, `OTA the new firmware passed its start-up check: kept`, `OTA start-up check failed: ...`, `OTA going back to the previous firmware`. |
 | `EVENT update check: The new firmware (version 0.10.2) did not pass its start-up check, ...` | A rollback was added to the Problems list (a note, not a failure: it never starts the panel's `PROBLEM` message). |
+| `OTA updates must be signed; accepted keys: eb6a67ad dfcb5742` | At start: the key ids this display accepts (public). A development build prints `OTA DEVELOPMENT BUILD: updates are installed without checking a signature`. |
+| `OTA signature of 0.10.2 checks out (key eb6a67ad, 120 ms)` | A manifest was checked and was good. A refusal prints `OTA signature refused (bad_signature, 3 ms)` with one of the codes `unsigned`, `malformed`, `unknown_key`, `bad_signature`, `check_failed`: never the signature itself. |
 | `LIVE data task stack free N bytes` | Once a minute. For the maintainer. |
 
 ### The shape of `/api/problems`
@@ -1152,10 +1260,10 @@ Details for the maintainer and for people who read logs. You do not need them to
 `GET http://ledmatrix.local/api/update` answers the state of the update machine. It never holds the code. The shape (placeholders; the full list is in [`shared/firmware-update.md`](../shared/firmware-update.md)):
 
 ```json
-{"version":"0.10.1","available":{"version":"0.10.2","notes":"Example release notes","size":1412537,"host":"apis.example.com"},"checkedAgo":3600,"state":"idle","source":null,"progress":null,"codeSecondsLeft":null,"triesLeft":null,"error":null,"rolledBack":null}
+{"version":"0.10.1","available":{"version":"0.10.2","notes":"Example release notes","size":1412537,"host":"apis.example.com","signedBy":"eb6a67ad"},"checkedAgo":3600,"state":"idle","source":null,"progress":null,"codeSecondsLeft":null,"triesLeft":null,"error":null,"rolledBack":null,"signing":{"required":true,"keys":["eb6a67ad","dfcb5742"],"refused":null}}
 ```
 
-`state` is one of `idle`, `checking`, `waiting_code`, `downloading`, `installing`, `restarting`, `failed` and `probation`. `available` is `null` when there is nothing newer to offer. `rolledBack` holds `{"version":"...","why":"..."}` after a rollback.
+`state` is one of `idle`, `checking`, `waiting_code`, `downloading`, `installing`, `restarting`, `failed` and `probation`. `available` is `null` when there is nothing newer to offer. `rolledBack` holds `{"version":"...","why":"..."}` after a rollback. `signing.keys` lists the key ids the display accepts and `signing.refused` is `null` or the code of the last refused check; `available.signedBy` is the key that verified the offered manifest (`null` in a development build). Key ids are public; no signature or key bytes are ever returned.
 
 ## What the labels mean, and what was run
 
@@ -1186,11 +1294,13 @@ Two limits apply to the whole page. The board was not touched while writing it: 
 | The two backup commands (`curl ... -o ~/ledmatrix-secrets/...` and `curl ... --data @"$HOME/ledmatrix-secrets/..."`) against a stand-in server, with a scratch folder as the home folder | The file was written into the private folder; the POST body was the file's content with the JSON content type. This does not test the display. |
 | `python3 -I tools/provision.py --help`; `arduino-cli monitor --help` and `arduino-cli upload --help` with a scratch configuration | Options as written here. |
 | Synthetic firmware images made with the helper in `tools/test_make_manifest.py` and written with `tools/make_manifest.py` | Valid manifests for 0.10.1 and 0.10.2. They are fakes, not firmware. |
+| `tools/gen_signing_key.py --out <scratch> --names Throwaway1 Throwaway2` (and a third key), a second run, and a run with an output folder inside the repository | Key files created mode 600 in a folder mode 700, with the public key line and key id printed and nothing secret. The second run refused to overwrite; the folder inside the repository was refused. |
+| A rotation rehearsal with throwaway keys and synthetic images: a header pinning `[1, 2]` and a release signed by key 1; a header pinning `[2, 3]` and a release signed by key 2; `tools/sign_manifest.py` to sign and `--check` to verify | Each signed and verified. The newer release also verified against the older header (they share key 2). A release signed by key 3 was refused against the older header (`not one of the pinned keys`), and signing with a key that the header does not pin was refused. `--check` also works on a manifest alone, with no image next to it. |
 | The two Mermaid diagrams, parsed with mermaid 11.4.1 under Node | Both parse. |
 
 Afterwards the containers and the scratch images were removed.
 
-**Not run, and why:** anything on the board (the board was not touched; on 26 November 2026 the author's own display was not tested for: a real power cut during probation, the `-2` name clash, setup mode with a long name, a proof page in a browser on another site, the timing of a burst of settings saves, and IPv6 addresses for the portal); the service's `device seen` log line and the newer service image (Docker did not respond on 26 November 2026, so the line is Checked in the code and not Tested); `kubectl` and Docker Compose (the author's cluster was not touched, and the Compose files belong to [hosting.md](hosting.md)); Linux; the GitHub workflow; a real firmware build and update.
+**Not run, and why:** anything on the board (the board was not touched; on 26 November 2026 the author's own display was not tested for: a real power cut during probation, the `-2` name clash, setup mode with a long name, a proof page in a browser on another site, the timing of a burst of settings saves, and IPv6 addresses for the portal). Weather outside Portugal, the headlines language and region, and the signed-update check were not run on a real board either: they are written from the code and its tests; the service's `device seen` log line and the newer service image (Docker did not respond on 26 November 2026, so the line is Checked in the code and not Tested); `kubectl` and Docker Compose (the author's cluster was not touched, and the Compose files belong to [hosting.md](hosting.md)); Linux; the GitHub workflow; a real firmware build and update.
 
 ## Related pages
 
