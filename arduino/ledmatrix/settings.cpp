@@ -3,15 +3,24 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
+#include "swapstore.h"
+
 namespace settings {
 
 static Preferences prefs;
-static SemaphoreHandle_t mu = nullptr;  // guards `cur` and every NVS access
 static Settings cur;
 static const char *NS = "ledmatrix";
 
-static void lock() { xSemaphoreTake(mu, portMAX_DELAY); }
-static void unlock() { xSemaphoreGive(mu); }
+// Two locks, taken in this order when both are needed: saveMu, then stateMu (swapstore.h explains why there are two).
+//   stateMu  guards `cur`. Held only to copy it or to swap it: the render task reads the settings every frame, so this is never held across flash.
+//   saveMu   guards every NVS access (there is one Preferences object) and makes a settings save one-at-a-time. The render task never takes it.
+struct RtosMutex {
+  SemaphoreHandle_t h = nullptr;
+  void lock() { xSemaphoreTake(h, portMAX_DELAY); }
+  void unlock() { xSemaphoreGive(h); }
+};
+static RtosMutex stateMu, saveMu;
+static SwapStore<Settings, RtosMutex> store(cur, stateMu, saveMu);
 
 // ---- checks shared by the portal input and by what NVS gives back, so a damaged value never reaches a header or setenv ----
 // IANA name such as Europe/Lisbon: 1..39 characters from A-Z a-z 0-9 _ / + -
@@ -188,52 +197,50 @@ static void dropOldToken() {
 }
 
 void begin() {
-  if (mu) return;
-  mu = xSemaphoreCreateMutex();
-  lock();
+  if (stateMu.h) return;
+  stateMu.h = xSemaphoreCreateMutex();
+  saveMu.h = xSemaphoreCreateMutex();
+  saveMu.lock();
+  stateMu.lock();  // nothing else reads the settings yet (no task has started); loadAll fills `cur`
   loadAll();
+  stateMu.unlock();
   dropOldToken();
-  unlock();
+  saveMu.unlock();
 }
 
 WifiCreds loadWifi() {
   WifiCreds c;
-  lock();
+  saveMu.lock();
   if (prefs.begin(NS, true)) {
     c.ssid = prefs.getString("ssid", "");
     c.pass = prefs.getString("pass", "");
     prefs.end();
   }
-  unlock();
+  saveMu.unlock();
   return c;
 }
 
 void saveWifi(const String &ssid, const String &pass) {
-  lock();
+  saveMu.lock();
   if (prefs.begin(NS, false)) {
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
     prefs.end();
   }
-  unlock();
+  saveMu.unlock();
 }
 
 void clearWifi() {
-  lock();
+  saveMu.lock();
   if (prefs.begin(NS, false)) {
     prefs.remove("ssid");
     prefs.remove("pass");
     prefs.end();
   }
-  unlock();
+  saveMu.unlock();
 }
 
-Settings get() {
-  lock();
-  Settings s = cur;
-  unlock();
-  return s;
-}
+Settings get() { return store.get(); }
 
 static String trimmed(const char *s) {
   String t(s);
@@ -241,13 +248,14 @@ static String trimmed(const char *s) {
   return t;
 }
 
-bool setFromJson(const char *json, size_t len, String &error) {
+// Checks `json` and builds the new settings in `n`, which starts as a copy of the current ones. It touches no shared state and no
+// flash: setFromJson() below swaps the result in and then saves it.
+static bool buildFromJson(const char *json, size_t len, Settings &n, String &error) {
   JsonDocument doc;
   if (deserializeJson(doc, json, len)) {
     error = "That was not valid JSON.";
     return false;
   }
-  Settings n = get();
 
   if (doc["showFlights"].is<bool>()) n.showFlights = doc["showFlights"];
   if (doc["showWeather"].is<bool>()) n.showWeather = doc["showWeather"];
@@ -364,11 +372,14 @@ bool setFromJson(const char *json, size_t len, String &error) {
     strlcpy(n.tzPosix, posix, sizeof(n.tzPosix));
   }
 
-  lock();
-  cur = n;
-  saveAll(cur);
-  unlock();
   return true;
+}
+
+// One save at a time (the save lock). The new settings are checked and copied first, then `cur` is swapped under the state lock, and
+// only then is flash written, from the copy, with the state lock released: a frame never waits for a save, and a reader sees the old
+// settings or the new ones, never a mixture. Same answers and error texts as before.
+bool setFromJson(const char *json, size_t len, String &error) {
+  return store.update([&](Settings &n) { return buildFromJson(json, len, n, error); }, saveAll);
 }
 
 String toJson() {
