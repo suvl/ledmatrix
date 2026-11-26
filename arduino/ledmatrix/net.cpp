@@ -13,6 +13,7 @@
 #include "ota.h"
 #include "portal_page.h"
 #include "settings.h"
+#include "webguard.h"
 
 
 extern volatile uint32_t gFrames, gFrameMaxMs, gFramesOver1s;  // render task statistics (ledmatrix.ino)
@@ -164,6 +165,60 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
   }
 }
 
+// ---- portal guard ---------------------------------------------------------------------------------------------
+// Slice 14 (ticket 46; the rules and their tests are webguard.h and tools/test_webguard.cpp). One middleware in front of every route,
+// in both modes: the Host header must be the display's own name or address (station mode only), and a state-changing request that names
+// the page it came from (Origin, or Referer) must come from the display itself. Requests with no Origin and no Referer (curl) pass.
+bool portalSetupMode = false;
+
+const char *portalDeviceName() { return HOSTNAME; }  // the mDNS name; a configurable display name is read here ("ledmatrix" when none is set)
+
+webguard::Names portalOwnNames() {  // every name and address the display answers to right now
+  webguard::Names n;
+  n.addDevice(portalDeviceName());                 // <name> and <name>.local
+  n.add(WiFi.localIP().toString().c_str());        // 0.0.0.0 (not joined) is ignored
+  n.add(WiFi.linkLocalIPv6().toString().c_str());  // :: (none yet) is ignored
+  n.add(WiFi.globalIPv6().toString().c_str());
+  n.add(WiFi.softAPIP().toString().c_str());       // 192.168.4.1 while the setup network is up, 0.0.0.0 otherwise
+  return n;
+}
+
+webguard::Verdict portalVerdict() {
+  HTTPMethod m = server.method();
+  bool changing = !(m == HTTP_GET || m == HTTP_HEAD || m == HTTP_OPTIONS);
+  String host = server.header("Host"), origin = server.header("Origin"), referer = server.header("Referer");  // (hostHeader() keeps the last request's value)
+  return webguard::check(portalOwnNames(), !portalSetupMode, changing, webguard::Text(host.c_str(), host.length()),
+                         webguard::Text(origin.c_str(), origin.length()), webguard::Text(referer.c_str(), referer.length()));
+}
+
+bool portalGuard(WebServer &, Middleware::Callback next) {
+  webguard::Verdict v = portalVerdict();
+  if (webguard::allowed(v)) return next();
+  static uint32_t lastLogMs = 0;  // at most one line a second, so a flood of refused requests cannot flood the serial port
+  uint32_t now = millis();
+  if (lastLogMs == 0 || now - lastLogMs >= 1000) {
+    lastLogMs = now ? now : 1;
+    String uri = server.uri();
+    char path[48];
+    webguard::printable(uri.c_str(), uri.length(), path, sizeof(path));
+    HTTPMethod m = server.method();
+    Serial.printf("PORTAL refused %s %s: %s\n", m == HTTP_GET ? "GET" : m == HTTP_POST ? "POST" : "other", path, webguard::reason(v));  // never a header value
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  if (webguard::httpStatus(v) == 421)
+    server.send(421, "text/plain", "This display answers only to its own name (for example ledmatrix.local) or its own IP address. Open it that way.");
+  else
+    server.send(403, "application/json", "{\"error\":\"The display refused this request because it came from another web page. Use the display's own portal page.\"}");
+  return false;
+}
+
+void portalGuardInstall(bool setup) {  // before server.begin(), once
+  static const char *keys[] = {"Host", "Origin", "Referer"};
+  portalSetupMode = setup;
+  server.collectHeaders(keys, 3);
+  server.addMiddleware(portalGuard);
+}
+
 // ---- station mode ---------------------------------------------------------------------------------------------
 void sendOta(const ota::Reply &r) {
   server.sendHeader("Cache-Control", "no-store");
@@ -242,7 +297,10 @@ void registerStationRoutes() {
         }
       },
       []() {  // while the body arrives; the form fields before the file (the code) are known by the time the file starts
+        static bool blocked = false;  // the body of a request from another page or another name is read and thrown away; the guard answers it
         HTTPUpload &u = server.upload();
+        if (u.status == UPLOAD_FILE_START) blocked = !webguard::allowed(portalVerdict());
+        if (blocked) return;
         switch (u.status) {
           case UPLOAD_FILE_START: {
             String code = server.arg("code");
@@ -331,6 +389,7 @@ void ensureDns() {
 
 void netTask(void *) {
   WifiCreds c = settings::loadWifi();
+  portalGuardInstall(!c.valid());
   if (!c.valid()) runSetup();
   runStation(c);
 }
