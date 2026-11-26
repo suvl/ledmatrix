@@ -69,6 +69,8 @@ jobs:
           python3 -I tools/test_sign_manifest.py
           python3 -I tools/test_provision.py
           python3 -I tools/test_burn_key.py
+          python3 -I tools/test_make_pt_outline.py
+          python3 -I tools/test_editions_portal.py
 
       - name: Arduino settings
         id: arduino
@@ -125,6 +127,18 @@ jobs:
           "$out/test_protect"
           c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$json" tools/test_otalogic.cpp -o "$out/test_otalogic"
           "$out/test_otalogic"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_devicename.cpp -o "$out/test_devicename"
+          "$out/test_devicename"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_webguard.cpp -o "$out/test_webguard"
+          "$out/test_webguard"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_swapstore.cpp -o "$out/test_swapstore" -pthread
+          "$out/test_swapstore"
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_editions.cpp -o "$out/test_editions"
+          "$out/test_editions"
+          # The portable half of the signature checks (the manifest rules, the canonical bytes, the policy). The half that runs the
+          # board's own mbedTLS code needs a host mbedTLS 3.6 (the runner's is older): run it on a development machine, see the test's header.
+          c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$json" tools/test_updatesig.cpp -o "$out/test_updatesig"
+          "$out/test_updatesig" shared/manifest-signing-vectors.json
       - name: Compile the firmware
         run: |
           # --build-path, not --output-dir: with --output-dir this arduino-cli also writes a build/ folder into the sketch folder.
