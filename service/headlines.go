@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,29 @@ func NewHeadlines(cache *Cache, up *Upstream) *Headlines {
 type HeadlineQuery struct {
 	Q, HL, GL, CEID string
 	N               int
+}
+
+// The edition parameters go into the URL of the request to Google, so they are checked to be what Google's own
+// editions look like: hl a language tag (pt-PT, es-419, en), gl two capital letters (PT), ceid country:language
+// (PT:pt-150). At most 24 characters each, letters, digits, '-' and ':' only. The list the board offers is in
+// arduino/ledmatrix/editions.h; headlines_test.go checks that the service accepts every entry of it.
+var (
+	hlPattern   = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$`)
+	glPattern   = regexp.MustCompile(`^[A-Z]{2}$`)
+	ceidPattern = regexp.MustCompile(`^[A-Z]{2}:[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$`)
+)
+
+// validateEdition returns a sentence for the caller (a 400) when hl, gl or ceid is not acceptable.
+func (q HeadlineQuery) validateEdition() error {
+	switch {
+	case len(q.HL) > 24 || !hlPattern.MatchString(q.HL):
+		return errors.New("hl must be a language such as pt-PT, en-GB or es-419")
+	case !glPattern.MatchString(q.GL):
+		return errors.New("gl must be a country code of two capital letters such as PT")
+	case len(q.CEID) > 24 || !ceidPattern.MatchString(q.CEID):
+		return errors.New("ceid must look like PT:pt-150 or GB:en")
+	}
+	return nil
 }
 
 type Headline struct {
