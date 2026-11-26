@@ -19,6 +19,7 @@ Both routes are public: they answer the same with or without signature headers (
 ```
 GET /v1/firmware/manifest
 200 {"version":"0.10.1","file":"ledmatrix-0.10.1.bin","size":1412537,"sha256":"<64 lowercase hex>","notes":"first lines of the release notes, at most 200 characters"}
+      a signed release adds "keyid":"<8 lowercase hex>" and "sig":"<128 lowercase hex>" after "notes", passed through unchanged (shared/manifest-signing.md, section 3)
 404 {"error":"no firmware is published"}          (no manifest.json, or it is not valid)
 
 GET /v1/firmware/ledmatrix-0.10.1.bin
@@ -26,7 +27,7 @@ GET /v1/firmware/ledmatrix-0.10.1.bin
 404 {"error":"no such firmware"}                   (any other name; the name is matched against the manifest's `file`, never used as a path)
 ```
 
-The service validates the manifest when it starts and re-reads it at most once a minute (a file that does not match, wrong size or hash, is "no firmware is published", logged once). `size` must be above 100 KB and at most 2,097,152 bytes (one app slot). Caching: `Cache-Control: no-cache` for the manifest. The download is streamed, with range support from `http.ServeContent`. No signature, no token: the integrity check is the board's SHA-256 comparison against the manifest (over HTTPS with the built-in certificate store).
+The service validates the manifest when it starts and re-reads it at most once a minute (a file that does not match, wrong size or hash, is "no firmware is published", logged once). `size` must be above 100 KB and at most 2,097,152 bytes (one app slot). Caching: `Cache-Control: no-cache` for the manifest. The download is streamed, with range support from `http.ServeContent`. No token. The service does not verify anything about the signature: it only checks the shapes of `keyid` and `sig` and passes them through (shared/manifest-signing.md, section 6). The integrity check is the board's: it verifies the manifest's signature against the public keys pinned in its firmware before any download, then compares the SHA-256 of the streamed image with the signed one (over HTTPS with the built-in certificate store).
 
 ## What the board does
 
@@ -37,7 +38,7 @@ The service validates the manifest when it starts and re-reads it at most once a
 
 ## Where the update comes from (known limit)
 
-The board trusts the saved service host: the portal has no password, so anyone on the LAN could point the board at a server of their own (with a valid certificate) and publish a "newer" version. What protects the owner: the panel code (someone must be at the panel), and the portal's notice states the host the update comes from (`available.host`), shown prominently next to the Update button. The real fix is a signed manifest (a public key pinned in the firmware); decision #21 chose "no signature for now" and the flow does not change when it is added (follow-up ticket).
+The board trusts the saved service host: the portal has no password, so anyone on the LAN could point the board at a server of their own (with a valid certificate) and publish a "newer" version. What protects the owner: the panel code (someone must be at the panel), and the portal's notice states the host the update comes from (`available.host`), shown prominently next to the Update button. The fix is the signed manifest (ticket 50, `shared/manifest-signing.md`): a firmware built with signing enforced pins the maintainer's public keys and refuses an unsigned, wrongly signed or unknown-key manifest before it downloads anything, so a server of the attacker's own can no longer offer an image. Displays that run a build older than the first signed release do not check (decision #21 chose "no signature for now" at the time), and the forced `.bin` upload stays code-only.
 
 ## Authorisation
 
