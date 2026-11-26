@@ -171,11 +171,17 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
 // the page it came from (Origin, or Referer) must come from the display itself. Requests with no Origin and no Referer (curl) pass.
 bool portalSetupMode = false;
 
-const char *portalDeviceName() { return HOSTNAME; }  // the mDNS name; a configurable display name is read here ("ledmatrix" when none is set)
+// The name the display answers to: what mDNS announces right now (so a name the mDNS stack changed to avoid a clash, "<name>-2", is the one
+// accepted, and so is a configured display name without any other change here); "ledmatrix" when mDNS is not running (setup mode).
+const char *portalDeviceName(char (&buf)[MDNS_NAME_BUF_LEN]) {
+  if (mdns_hostname_get(buf) != ESP_OK || !buf[0]) strlcpy(buf, "ledmatrix", sizeof(buf));
+  return buf;
+}
 
 webguard::Names portalOwnNames() {  // every name and address the display answers to right now
   webguard::Names n;
-  n.addDevice(portalDeviceName());                 // <name> and <name>.local
+  char mdnsName[MDNS_NAME_BUF_LEN];
+  n.addDevice(portalDeviceName(mdnsName));         // <name> and <name>.local
   n.add(WiFi.localIP().toString().c_str());        // 0.0.0.0 (not joined) is ignored
   n.add(WiFi.linkLocalIPv6().toString().c_str());  // :: (none yet) is ignored
   n.add(WiFi.globalIPv6().toString().c_str());
