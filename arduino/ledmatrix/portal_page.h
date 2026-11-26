@@ -243,6 +243,13 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 
 <section>
 <h2>Wi-Fi and device</h2>
+<label for="devName">Display name</label>
+<input type="text" id="devName" maxlength="24" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ledmatrix" aria-describedby="devNameNote devNameRules devNameClash devNameChange">
+<p class="note" id="devNameNote">The display is reached at <b id="devNameHost">ledmatrix.local</b> and its setup Wi-Fi is called <b id="devNameAp">ledmatrix</b>. Change it only if you run more than one display on this network.</p>
+<p class="note" id="devNameRules">Use 1 to 24 letters, digits or hyphens, with no hyphen at the start or end. Capital letters become lower case.</p>
+<p class="note" id="devNameClash">Each display on a network needs a name of its own. If another device there already answers to the same name, the display adds <code>-2</code> to its own (for example <code>kitchen-2.local</code>). The address line on the display itself does not show that <code>-2</code>, but the IP address above it always works.</p>
+<p class="note" id="devNameChange" hidden>Saving a new name restarts the display, which takes about 20 seconds. Afterwards it is reached at <b id="devNewHost"></b> and its setup Wi-Fi is called <b id="devNewAp"></b>. This page opens the new address by itself once the display answers there.</p>
+<p class="note" id="devNameDone" role="status" aria-live="polite" hidden></p>
 <p id="wifi" class="note">Loading…</p>
 <form method="post" action="/forget" onsubmit="return confirm('Forget this Wi-Fi network and restart into setup mode?')"><button type="submit" class="ghost">Forget this Wi-Fi network</button></form>
 </section>
@@ -379,6 +386,11 @@ const FLIGHTS = [
 const WX = { loc: 'HOME', temp: '18', text: 'Partly cloudy', line: 'H21 L12 10%', icon: 'part', cols: [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']] };
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
+// The display name (the Display name setting, up to 24 characters of a-z, 0-9 and hyphens): the display is reached at <name>.local and its
+// setup Wi-Fi has the same name. The Connected screen and the problem message show "<name>.local" (screens.cpp portalHost): a long one is
+// cut by TT() like any text. The setup screen shows the name as the network name (screens.cpp setupScreen).
+const DEVICE = { name: 'ledmatrix' };
+const portalHost = () => DEVICE.name + '.local';
 
 /* ---------- screen drawings ---------- */
 const flightA = (fb, t, ctx) => {
@@ -458,15 +470,26 @@ const idleC = (fb, t) => {
 };
 const setupA = (fb, t, ctx) => {
   TT(fb, ctx, 2, 6, 'SETUP MODE', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI ledmatrix', WHITE, 62);
+  TT(fb, ctx, 2, 14, 'WIFI ' + DEVICE.name, WHITE, 62);
   TT(fb, ctx, 2, 21, 'PASS 7K3PQ9XM', WHITE, 62);
   TT(fb, ctx, 2, 28, 'OPEN 192.168.4.1', CYAN, 62);
 };
+// The layout in use (screens.cpp setupScreen). A network name of up to 10 characters is drawn big; a longer one in the 4x6 font on up to two
+// lines of 15 characters, so the whole name (up to 24) can be read, and the rest moves down a little.
 const setupB = (fb, t, ctx) => {
-  T6(fb, ctx, 2, 0, 'ledmatrix', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
-  T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
-  TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  const ssid = DEVICE.name;
+  if (ssid.length <= 10) {
+    T6(fb, ctx, 2, 0, ssid, AMBER, 62);
+    TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  } else {
+    TT(fb, ctx, 2, 5, ssid.slice(0, 15), AMBER, 62);
+    if (ssid.length > 15) TT(fb, ctx, 2, 11, ssid.slice(15, 30), AMBER, 62);
+    TT(fb, ctx, 2, 18, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 19, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 31, '192.168.4.1', CYAN, 62);
+  }
 };
 const boot = (fb, t, ctx) => {
   T6(fb, ctx, centerX(w6('ledmatrix', 1)), 7, 'ledmatrix', WHITE, 62);
@@ -474,7 +497,7 @@ const boot = (fb, t, ctx) => {
   TT(fb, ctx, 14, 24, 'connecting' + dots, GREY, 50);
 };
 const connected = (fb, t, ctx) => {
-  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, 'ledmatrix.local', CYAN, 62);
+  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, portalHost(), CYAN, 62);
 };
 // The message that points to the portal after an hour of failure (screens.cpp problemScreen). Named problemMsg because the
 // portal page shares this scope and lists problems of its own.
@@ -482,7 +505,7 @@ const problemMsg = (fb, t, ctx) => {
   T6(fb, ctx, 2, 1, 'PROBLEM', AMBER, 62);
   TT(fb, ctx, 2, 15, 'Data is failing', WHITE, 60);
   TT(fb, ctx, 2, 22, 'See the portal:', GREY, 60);
-  TT(fb, ctx, 2, 29, 'ledmatrix.local', CYAN, 60);
+  TT(fb, ctx, 2, 29, portalHost(), CYAN, 60);
 };
 // The two firmware-update screens (screens.cpp updateCodeScreen and updateProgressScreen). They are drawn instead of the normal
 // screens, never dimmed or drifted, so they may use column 63 and row 31 (the countdown bar uses row 31). UPD is the panel's
@@ -645,6 +668,7 @@ const nowifi = (fb, t, ctx) => {
     $('bright').value = c.brightness; $('brightVal').textContent = c.brightness; $('dwell').value = c.dwellSec; $('dwellVal').textContent = c.dwellSec;
     sel.flight = c.layouts.flight; sel.weather = c.layouts.weather; sel.news = c.layouts.news; sel.idle = c.layouts.idle;
     $('c24').checked = c.clock24h;
+    curName = c.deviceName || 'ledmatrix'; $('devName').value = curName; $('devName').removeAttribute('aria-invalid'); showName();
     applyProtection(c);
     $('svc').value = (c.service && c.service.host) || '';
     if (c.timezone && c.timezone.name) { tz = { name: c.timezone.name, posix: c.timezone.posix }; showZone(''); }
@@ -698,6 +722,56 @@ const nowifi = (fb, t, ctx) => {
     if (el.disabled) return bad[0][1] + ' Turn its switch on to change it.';
     el.focus(); return bad[0][1];
   }
+  /* ---- display name (the board's rules, devicename.h): what the display is called on the network ---- */
+  let curName = 'ledmatrix', boardIp = '';  // the saved name; the address the board has now (for the "not found" help)
+  const typedName = () => $('devName').value.trim().toLowerCase();
+  function nameProblem(v) {  // the same four rules and sentences as the display; '' when the name is fine
+    if (!v) return 'The display name cannot be empty.';
+    if (v.length > 24) return 'The display name can be at most 24 characters.';
+    if (!/^[a-z0-9-]+$/.test(v)) return 'The display name can only have letters, digits and hyphens, with no spaces.';
+    if (v[0] === '-' || v[v.length - 1] === '-') return 'The display name cannot start or end with a hyphen.';
+    return '';
+  }
+  function showName() {  // the saved name in the first note; the restart note appears once a different, valid name is typed
+    const v = typedName(), changed = v !== curName && !nameProblem(v);
+    setText('devNameHost', curName + '.local'); setText('devNameAp', curName);
+    $('devNameChange').hidden = !changed;
+    if (changed) { setText('devNewHost', v + '.local'); setText('devNewAp', v); }
+  }
+  $('devName').addEventListener('input', () => { $('devName').removeAttribute('aria-invalid'); showName(); });
+  function nameError() {  // a message, with the field marked and focused, or '' when all is well
+    const bad = nameProblem(typedName());
+    if (!bad) { $('devName').removeAttribute('aria-invalid'); return ''; }
+    $('devName').setAttribute('aria-invalid', 'true'); $('devName').focus(); return bad;
+  }
+  /* A new name restarts the display (about 20 seconds). Say where it will be, then try that address until the display answers and go
+     there. A page opened by an address ending in .local follows the new name; a page opened by an IP address stays on it (that
+     address does not change). The probe of another address cannot read the answer (another origin), only whether anything answered. */
+  async function answers(url, otherOrigin) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 3000);
+    try { await fetch(url, { mode: otherOrigin ? 'no-cors' : 'same-origin', cache: 'no-store', signal: ctl.signal }); return true; }
+    catch (e) { return false; } finally { clearTimeout(timer); }
+  }
+  function followRename(to) {
+    const byName = /\.local$/i.test(location.hostname), where = location.protocol + '//' + to + '.local' + (location.port ? ':' + location.port : '') + '/';
+    const box = $('devNameDone'), t0 = Date.now();
+    $('save').disabled = true; $('devNameChange').hidden = true; box.hidden = false;
+    box.textContent = 'Saved. The display is restarting to use the name ' + to + '. This takes about 20 seconds. From now on it is reached at ' + where.replace(/\/$/, '') +
+      (byName ? ', and this page opens that address by itself when the display answers there.' : ', and this page reloads by itself when the display answers again.');
+    setStatus('Saved. The display is restarting.', 'ok');
+    box.scrollIntoView({ block: 'center' });
+    const tick = async () => {
+      if (await answers(byName ? where + 'status' : '/status', byName)) { if (byName) location.href = where; else location.reload(); return; }
+      if (Date.now() - t0 > 90000) {
+        box.textContent = 'The display has not answered at ' + where.replace(/\/$/, '') + ' yet. Give it another minute, then open that address yourself. If that does not work, ' +
+          (boardIp ? 'open the display by its IP address, http://' + boardIp + '/ (the panel shows it too), or ' : '') +
+          'check that the display has power and is on your Wi-Fi. If another device already used the name ' + to + ', the display is at ' + to + '-2.local instead.';
+        $('save').disabled = false; setStatus('', ''); return;
+      }
+      setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 4000);
+  }
   function serviceBlock() { return { host: $('svc').value.trim() }; }  // the board's key is never handled here
   function collect() {
     const q = []; for (let i = 0; i < 5; i++) q.push($('query' + i).value.trim());
@@ -706,6 +780,7 @@ const nowifi = (fb, t, ctx) => {
       showFlights: $('showFlights').checked, showWeather: $('showWeather').checked, showNews: $('showNews').checked,
       layouts: { flight: sel.flight, weather: sel.weather, news: sel.news, idle: sel.idle },
       dwellSec: +$('dwell').value, cyclePlanes: $('cyclePlanes').checked, brightness: +$('bright').value, clock24h: $('c24').checked,
+      deviceName: typedName(),
       location: { set: hasLoc && !isNaN(lat) && !isNaN(lon), lat: isNaN(lat) ? 0 : lat, lon: isNaN(lon) ? 0 : lon,
         radiusKm: +$('radius').value, altMinFt: +$('altmin').value, altMaxFt: +$('altmax').value },
       protection: {
@@ -730,14 +805,16 @@ const nowifi = (fb, t, ctx) => {
   });
   $('dwell').addEventListener('input', () => { $('dwellVal').textContent = $('dwell').value; });
   $('save').addEventListener('click', async () => {
-    const bad = protectionError();
+    const bad = protectionError() || nameError();
     if (bad) { setStatus(bad, 'err'); return; }
     setStatus('Saving…');
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collect()) });
       const j = await r.json();
       if (!r.ok) { setStatus(j.error || 'Could not save.', 'err'); return; }
+      const was = curName;
       apply(j); drawMapState(false); setStatus('Saved.', 'ok');
+      if (curName !== was) followRename(curName);  // the display restarts to use the new name
     } catch (e) { setStatus('Could not reach the display.', 'err'); }
   });
 
@@ -1125,6 +1202,7 @@ const nowifi = (fb, t, ctx) => {
     hardware_unprotected: 'This board\u2019s record says the key is burned into the chip but the burned key is not fully protected, so it is not used. It must be provisioned again over USB.',
   };
   fetch('/status').then(r => r.json()).then(s => {
+    boardIp = s.ip || '';
     $('devId').textContent = s.device || 'unknown';
     $('idNote').textContent = IDENTITY[s.identity] || (s.identity ? 'Identity: ' + s.identity + '.' : 'This firmware does not report an identity status.');
     $('wifi').textContent = 'Connected to ' + s.ssid + ' (signal ' + s.rssi + ' dBm). IPv4 ' + s.ip + (s.ip6_global ? ', IPv6 ' + s.ip6_global : '') + '. Up ' + Math.round(s.uptime_s / 60) + ' min.';

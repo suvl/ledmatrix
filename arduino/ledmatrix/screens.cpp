@@ -279,13 +279,29 @@ void idleClock(float t, uint32_t ms, bool h24, const struct tm *tmv) {
   tt(centerX(tinyWidth(date)), 29, date, GREY, 62);
 }
 
+// The address the portal answers at: "<display name>.local". A name that is long for the 64 px (the 4x6 font takes 4 px a character, so a
+// name of 10 characters plus ".local" is about the most that fits) is cut by tt() like any other text; the IP address on the Connected
+// screen is then the way to reach the display.
+String portalHost(const UiState &ui) { return String(ui.deviceName && ui.deviceName[0] ? ui.deviceName : "ledmatrix") + ".local"; }
+
 // ---- setup mode, layout B -------------------------------------------------------------------------------------
 // Static on purpose: the owner has to read the password and type it on a phone, so nothing cycles.
+// The network name is the display name. Up to 10 characters it is drawn big, as ever. A longer one is drawn in the 4x6 font on
+// up to two lines of 15 characters (the longest name is 24), so the whole name can be read, and the rest moves down a little.
 void setupScreen(const UiState &ui) {
-  t6(2, 0, ui.apSsid, AMBER, 62);
-  tt(2, 14, "WIFI PASSWORD", GREY, 62);
-  t6(2, 16, ui.apPass, WHITE, 62);
-  tt(2, 30, ui.apIp, CYAN, 62);
+  String ssid = ui.apSsid;
+  if (ssid.length() <= 10) {
+    t6(2, 0, ssid, AMBER, 62);
+    tt(2, 14, "WIFI PASSWORD", GREY, 62);
+    t6(2, 16, ui.apPass, WHITE, 62);
+    tt(2, 30, ui.apIp, CYAN, 62);
+  } else {
+    tt(2, 5, ssid.substring(0, 15), AMBER, 62);
+    if (ssid.length() > 15) tt(2, 11, ssid.substring(15, 30), AMBER, 62);
+    tt(2, 18, "WIFI PASSWORD", GREY, 62);
+    t6(2, 19, ui.apPass, WHITE, 62);
+    tt(2, 31, ui.apIp, CYAN, 62);
+  }
 }
 
 // ---- status screens ---------------------------------------------------------------------------------------------
@@ -298,7 +314,7 @@ void bootScreen(float t) {
 void connectedScreen(const UiState &ui) {
   tt(2, 8, "WIFI OK", GREEN, 60);
   tt(2, 16, ui.staIp, WHITE, 62);
-  tt(2, 24, "ledmatrix.local", CYAN, 62);
+  tt(2, 24, portalHost(ui), CYAN, 62);
 }
 void noWifiScreen() {
   for (int i = 0; i < 12; i++) {
@@ -314,11 +330,11 @@ void noWifiScreen() {
 
 // The message that points the owner to the portal, after something has failed for an hour (ticket 23). Drawn instead of
 // weather or the clock for 5 s once a minute, so like them it must keep column 63 and row 31 black for the pixel drift.
-void problemScreen() {
+void problemScreen(const UiState &ui) {
   t6(2, 1, "PROBLEM", AMBER, 62);
   tt(2, 15, "Data is failing", WHITE, 60);
   tt(2, 22, "See the portal:", GREY, 60);
-  tt(2, 29, "ledmatrix.local", CYAN, 60);
+  tt(2, 29, portalHost(ui), CYAN, 60);
 }
 
 // ---- firmware update screens (ticket 33, shared/firmware-update.md) ---------------------------------------------------
@@ -434,7 +450,7 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Boot: bootScreen(t); break;
     case Screen::Connected: connectedScreen(ui); break;
     case Screen::NoWifi: noWifiScreen(); break;
-    case Screen::Problem: problemScreen(); break;
+    case Screen::Problem: problemScreen(ui); break;
     case Screen::UpdateCode: if (ui.update) updateCodeScreen(*ui.update); break;
     case Screen::UpdateProgress: if (ui.update) updateProgressScreen(*ui.update); break;
   }

@@ -2,6 +2,8 @@
 #pragma once
 #include <Arduino.h>
 
+#include "devicename.h"
+
 struct WifiCreds {
   String ssid;
   String pass;
@@ -18,6 +20,7 @@ struct Settings {
   uint8_t newsLayout = 0;     // 0..1 = A..B
   bool idleClock = true;      // false = clean black screen
   bool clock24h = true;
+  char deviceName[devicename::MAX_LEN + 1] = "ledmatrix";  // the display name (devicename.h): mDNS host name and setup Wi-Fi name; applied at the next start
   uint8_t brightness = 100;   // percent of full panel brightness, 10..100
   uint8_t dwellSec = 10;      // how long a new plane stays on screen
   bool hasLocation = false;
