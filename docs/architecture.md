@@ -420,7 +420,7 @@ The **burn** is a separate, deliberate, irreversible step (`tools/burn_key/READM
 
 At every start `identity.cpp` picks the signer: hardware if the record says burned and the chip has a protected key, software before the burn, and if both exist it first checks that they give identical answers on a set of test messages. The result is visible in `/status` as `identity`, `signer` and `signer_check`.
 
-**Back up the master secret offline.** After the burn the board's key lives in the chip and in what the master secret can derive. If you lose the master secret, the board is locked out of the service for good. Changing the master secret locks out every board provisioned with the old one. How to make it and back it up: [install.md, "Make the master secret"](install.md).
+**Back up the master secret offline.** After the burn the board's key lives in the chip and in what the master secret can derive. If you lose the master secret, the board is locked out of the service for good. Changing the master secret locks out every board provisioned with the old one. How to make it and back it up: [install.md, "Make the master secret and back it up"](install.md).
 
 ### A signed request
 

@@ -222,7 +222,7 @@ Good result: the first line says `401` and the body is `{"error":"The request is
 
 ### Step 10. The permanent burn (optional, days later)
 
-Skip this if you are unsure. You can burn at any time later. Run the display for a few days first. The permanent burn moves the key into the chip, where nobody can read it. It cannot be undone. Wait until the display has run normally and your backup of the master secret is confirmed. Then follow [install.md](install.md), "The permanent burn", and the runbook [`tools/burn_key/README.md`](../tools/burn_key/README.md).
+Skip this if you are unsure. You can burn at any time later. Run the display for a few days first. The permanent burn moves the key into the chip, where nobody can read it. It cannot be undone. Wait until the display has run normally and your backup of the master secret is confirmed. Then follow [install.md](install.md), "Optional, days later: the permanent burn", and the runbook [`tools/burn_key/README.md`](../tools/burn_key/README.md).
 
 ### Step 11. A second display
 

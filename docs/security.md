@@ -20,7 +20,7 @@ If you read nothing else, do these eight things:
 
 1. Never forward a port from your router to the display, and never put the display on the internet. The portal has no password.
 2. Give visitors the guest Wi-Fi, not your main Wi-Fi.
-3. Make the master secret as [install.md](install.md), "Make the master secret", says: one file outside the repository that only you can read, and a backup that is not on that computer. The copy that the service reads follows the rule in [hosting.md](hosting.md), "The secret file and its permissions" (section 4).
+3. Make the master secret as [install.md](install.md), "Make the master secret and back it up", says: one file outside the repository that only you can read, and a backup that is not on that computer. The copy that the service reads follows the rule in [hosting.md](hosting.md), "The secret file and its permissions" (section 4).
 4. Press **Update** only when you expect a new version: on the public image, after the maintainer has published a release and you have run the new image; on your own build, after you published one. And only when the host named in the notice is your own service (section 6.3).
 5. Write down the device ID of every display you set up, so that you can block a lost one (section 6.2).
 6. Run the monthly check in section 3.4.
@@ -239,7 +239,7 @@ These findings are dated. They will age; the method in 3.2 to 3.4 will not.
 | **Caddy** (or the reverse proxy you chose), and its DNS module | Monthly. Caddy's 2.11 line had releases on 1 and 3 Oct and on 4 and 5 Nov 2026. Immediately on an advisory | The Compose file in [hosting.md](hosting.md) builds a local Caddy image with your DNS provider's module. A plain `docker pull` does not refresh an image you built yourself: rebuild it with `docker compose build --pull caddy`, then `docker compose up -d` ([hosting.md](hosting.md), "Keep it running", "Update the service and Caddy") | [Caddy releases](https://github.com/caddyserver/caddy/releases), [Caddy advisories](https://github.com/caddyserver/caddy/security/advisories) |
 | **Kubernetes** (only if you use it; `service/deploy/ledmatrix-api.yaml` is written for k3s and an Envoy Gateway): the cluster tool, the Gateway, the cluster's own machines | Monthly for patch releases. Kubernetes supports its newest three minor versions for about a year each (1.37, 1.36 and 1.35 on 25 Nov 2026), so plan a minor upgrade at least yearly | Follow your cluster tool's upgrade guide (Not tested here) | [Kubernetes security](https://kubernetes.io/docs/reference/issues-security/security/), [Kubernetes releases](https://kubernetes.io/releases/), [k3s releases](https://github.com/k3s-io/k3s/releases), [Envoy Gateway releases](https://github.com/envoyproxy/gateway/releases) |
 | **Your HTTPS certificate** | Monthly: confirm that it renews. Caddy renews by itself while your DNS token works | `openssl s_client -connect apis.example.com:443 -servername apis.example.com </dev/null 2>/dev/null \| openssl x509 -noout -dates` prints the start and end dates. The display shows a certificate problem if it expires (3.3) | Your CA's announcements (Background) |
-| **The update signing keys** (the maintainer; on your own build, your own) | Yearly rotation, or at once on suspicion of a leak. Once a year check that the offline copies can be read | Section 4.4 and the steps in [operations.md](operations.md), "For the maintainer: publish a firmware release". The portal and `GET /api/update` show which key ids a display accepts | The maintainer's own notes; GitHub's security alerts for the repository |
+| **The update signing keys** (the maintainer; on your own build, your own) | Yearly rotation, or at once on suspicion of a leak. Once a year check that the offline copies can be read | Section 4.4 and the steps in [operations.md](operations.md), "Rotate the signing key". The portal and `GET /api/update` show which key ids a display accepts | The maintainer's own notes; GitHub's security alerts for the repository |
 | **Your router and Wi-Fi** | Every 3 months; turn on automatic updates if the router has them. Replace a router that no longer gets updates | WPA2 or WPA3 with a long password; switch off WPS and remote administration; keep a guest network for visitors | Your router maker's support page |
 | **Your [domain name](glossary.md#domain-name): the registrar and DNS provider accounts** | Review every 6 months | Two-factor sign-in, registrar lock, automatic renewal of the domain (a domain that lapses can be registered by someone else, who can then get a valid certificate for it), a CAA record (3.3), and a DNS token limited to one zone | The providers' own notices |
 | **Your GitHub account and repository** | Review every 6 months | Two-factor sign-in (passkey, security key or authenticator app); review tokens and SSH keys; Dependabot alerts; protect `main` against force pushes; sign your commits | [GitHub security advisories for your repository](https://docs.github.com/en/code-security) |
@@ -297,7 +297,7 @@ What it does: starts a throwaway container with the newest Go (the first run dow
 
 ### 4.1 The master secret
 
-**Make it and back it up** as [install.md](install.md), "Make the master secret", says. It leaves one file, `~/ledmatrix-secrets/master-secret` (64 hexadecimal characters, readable only by you), and explains the backup. This page does not repeat the recipe.
+**Make it and back it up** as [install.md](install.md), "Make the master secret and back it up", says. It leaves one file, `~/ledmatrix-secrets/master-secret` (64 hexadecimal characters, readable only by you), and explains the backup. This page does not repeat the recipe.
 
 **Keep it.**
 
@@ -363,7 +363,7 @@ How the tools treat a key (read from `tools/gen_signing_key.py`, `tools/sign_man
 
 **On your own build** generate your own key (one is enough), replace the key lines in `update_keys.h` with your public key, and sign with it ([development.md](development.md), "Releasing"). The public service image carries the maintainer's signed firmware, which a display with your key correctly refuses ("signed with a key this board does not know"). For experiments that never leave your desk, `-DUPDATE_REQUIRE_SIGNATURE=0` builds a development build that installs updates without checking, and the portal says so.
 
-**Rotation and the recovery table.** One rule keeps displays updatable: a release must be signed by a key pinned in the release before it **and** by a key pinned in itself. The signing tool enforces the second half; the procedure the first. The steps are for the maintainer ([operations.md](operations.md), "For the maintainer: publish a firmware release"). Today the releases pin the current key and the spare.
+**Rotation and the recovery table.** One rule keeps displays updatable: a release must be signed by a key pinned in the release before it **and** by a key pinned in itself. The signing tool enforces the second half; the procedure the first. The steps are for the maintainer ([operations.md](operations.md), "Rotate the signing key"). Today the releases pin the current key and the spare.
 
 | Situation | What it means | What to do |
 | --- | --- | --- |

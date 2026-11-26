@@ -13,8 +13,9 @@ weather and headline data, and the settings page (the [portal](docs/glossary.md#
 > (the free cloud path needs no domain name, but it needs a billing account with a payment card); and about a weekend.
 > Nobody has timed a first-time build, so "a weekend" is a guess.
 >
-> **Weather:** Portugal only today (it comes from IPMA, the Portuguese weather service). Headlines come from the
-> Portuguese edition of Google News, and your topic words can be in any language. Planes work anywhere.
+> **Weather and headlines:** weather works anywhere: IPMA, the Portuguese weather service, inside Portugal and
+> Open-Meteo everywhere else. Headlines come from Google News in one of 12 language and region editions (the default is
+> Portuguese (Portugal)), and your topic words can be in any language. Planes work anywhere.
 
 ![Six example screens: a flight card, the weather now, a forecast for now and the next six hours, a news headline, a clock and an idle radar](docs/images/preview.png)
 
@@ -102,11 +103,11 @@ the architecture page to build a display.
 | [README.md](README.md) | This page: what the project is, what you need, where to start, where to get help. |
 | [docs/architecture.md](docs/architecture.md) | Read it later, to understand the system: who talks to whom, how a plane gets from a radio signal to the panel, how the display proves who it is, how updates and rollback work, and why it is built this way. |
 | [docs/build.md](docs/build.md) | Build the firmware: the tools, the code, compiling, and what a good result looks like. This is all you need to build for a working display. |
-| [docs/development.md](docs/development.md) | For people who change the code or publish releases: tests, the margin check, release build and CI, local image build and run. |
+| [docs/development.md](docs/development.md) | For people who change the code or publish releases: tests, the margin check, release build and CI, signing keys, local image build and run. |
 | [docs/install.md](docs/install.md) | Install one display, start to finish: parts, wiring and power, first flash, Wi-Fi setup, first look at the portal, the master secret, provisioning, checking it all, the optional permanent key burn, a second display. |
 | [docs/hosting.md](docs/hosting.md) | Run the service: a domain name and certificate, the logo folder, and four places to run it (a home server with Docker Compose and Caddy, a small rented server, Google Cloud Run, Kubernetes), with the first deploy and the checks. |
-| [docs/security.md](docs/security.md) | What protects the display and the service, the known limits, what to keep up to date, how to look after the secrets, what is private, what to do when something goes wrong, how to report a vulnerability. |
-| [docs/operations.md](docs/operations.md) | Running your display: the Day 0 checklist for the first install, what normal looks like, firmware updates and rollback, logs, backups, revoking and replacing a display, and what to do when things go wrong. |
+| [docs/security.md](docs/security.md) | What protects the display and the service, the known limits, what to keep up to date, how to look after the secrets and the update signing keys, what is private, what to do when something goes wrong, how to report a vulnerability. |
+| [docs/operations.md](docs/operations.md) | Running your display: the Day 0 checklist for the first install, what normal looks like, firmware updates and rollback, logs, backups, revoking and replacing a display, publishing and signing a release (for the maintainer), and what to do when things go wrong. |
 | [docs/glossary.md](docs/glossary.md) | The technical words used in these pages, each explained once in plain English. |
 
 ## What is in the repository
@@ -116,8 +117,8 @@ the architecture page to build a display.
 | `arduino/ledmatrix/` | The firmware: Arduino C++ on arduino-esp32 core 3.3.13, Adafruit Protomatter and ArduinoJson 7. Screens, Wi-Fi setup, the settings portal, signed requests, updates. |
 | `service/` | `ledmatrix-api`, the Go service that gives the display compact JSON for flights, weather and headlines, and serves firmware images. |
 | `portal/`, `preview/` | The source of the settings page and of the screen preview page. |
-| `shared/` | What the portal, the preview page and the firmware share: the pixel renderer and fonts, the time zone table, and the written contracts for [signed requests](shared/device-auth.md) and [firmware updates](shared/firmware-update.md). |
-| `tools/` | Helper scripts: `build_web.py` builds the portal and preview pages, `provision.py` gives a board its key, `burn_key/` burns the key into the chip, `make_manifest.py` writes the update list, plus the tests that run on your computer. |
+| `shared/` | What the portal, the preview page and the firmware share: the pixel renderer and fonts, the time zone table, and the written contracts for [signed requests](shared/device-auth.md), [firmware updates](shared/firmware-update.md) and [signed update manifests](shared/manifest-signing.md). |
+| `tools/` | Helper scripts: `build_web.py` builds the portal and preview pages, `provision.py` gives a board its key, `burn_key/` burns the key into the chip, `make_manifest.py` writes the update list, `sign_manifest.py` and `gen_signing_key.py` sign it, plus the tests that run on your computer. |
 | `deploy/compose/` | Example files for running the service on a home or rented server: a Docker Compose file and a Caddy configuration (see [docs/hosting.md](docs/hosting.md)). |
 | `.github/` | The build workflow (tests, firmware build, service image) and the Dependabot configuration. |
 | `docs/` | The documents listed above. |
@@ -132,8 +133,8 @@ line and links to the issue that holds the detail. Wi-Fi passwords and keys are 
 
 ## Status and honesty
 
-This is a personal project that has been built and run on one board in one home. Here is what that does and does not
-mean.
+This is a personal project that has been built and run on one board in one home. The current firmware version is
+0.11.0 (`arduino/ledmatrix/version.h`). Here is what that does and does not mean.
 
 **Verified on the author's own display on 25 November 2026** (one Matrix Portal S3 with one Waveshare panel):
 
@@ -175,19 +176,28 @@ setup mode, the settings portal, live data from the service, signed requests, pa
   display name.
 - A web page on another site trying the portal in a real browser (the checks were tested with requests), the timing of
   frames while settings are saved, and reaching the portal by a raw IPv6 address.
+- Checked in the code and in tests on a computer only, not on a display: weather outside Portugal, the headline
+  edition menu, the update signature check with its refusal messages, development builds and the signing tools.
 
 **Licence:** Apache License 2.0, see [Licence](#licence) below.
 
 **Known limits** (the security ones are explained in [docs/security.md](docs/security.md)):
 
-- Weather works for Portugal only, and headlines come from the Portuguese edition of Google News.
+- Outside Portugal the weather is coarser: drizzle, snow, sleet, storms and hail all show as the rain icon, because
+  there is no snow icon yet. The panel's fonts have no accented letters, so accents and curly quotes in headlines show
+  as odd marks or are dropped.
 - The portal uses plain HTTP, on your home network, with no password. A web page in a browser cannot change the
   display's settings (the display refuses requests from other sites), but anyone on your network who sends the
   commands directly can.
 - The portal answers only to the display's own name (`<name>.local`) or its IP address. Other names, such as one from
   your router's DNS or a reverse proxy, are refused with a message.
-- That includes the address of the service, which is also where firmware updates come from. An update still needs the
-  six-digit code shown only on the panel, but a signed update list would close the gap and is not built yet.
+- The address of the service is also where firmware updates come from. A display that runs a signing build installs
+  only firmware whose manifest is signed with a key built into it, and an update still needs the six-digit code shown
+  only on the panel; the `.bin` upload in the portal is guarded by that code alone. Read
+  [docs/security.md](docs/security.md), "The update signing keys".
+- The 0.11.0 release is the first with signing, and it went out unsigned, because the maintainer has not set the GitHub
+  secret that signs releases yet. Displays on 0.10.x do not check signatures and accept it once. A display that checks
+  signatures refuses an unsigned release, so releases after 0.11.0 need that secret.
 - The automatic rollback does not catch a crash that happens before the program's `setup()` starts. Its boot counter
   is kept in flash and every start counts, so a display that is switched off and on again several times in the first
   minutes after an update can go back to the old firmware even if the new one is fine.
@@ -208,8 +218,9 @@ What the licence does **not** cover:
 - **Other people's code.** The libraries and font data this project uses keep their own licences, listed in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **The data the service fetches.** Each source has its own terms. The aircraft data from adsb.fi is for personal,
-  non-commercial use, so using this project commercially needs your own arrangement for that data. Check the terms of
-  the weather, route and headline sources as well.
+  non-commercial use, and so is the free Open-Meteo weather API that the service uses outside Portugal (a hosted or
+  ad-funded service needs Open-Meteo's paid plan). Using this project commercially needs your own arrangement for that
+  data. Check the terms of the other weather, route and headline sources as well.
 - **Airline logos and names, and product names** such as Adafruit and Waveshare. They belong to their owners. No airline
   logo is in this repository.
 

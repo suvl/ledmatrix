@@ -165,6 +165,12 @@ A GitHub service that proposes updates to the software your project depends on.
 In this project it runs weekly (on Mondays) for the workflow's GitHub Actions, the service's Go modules and its Docker base images (`.github/dependabot.yml`). It cannot see the tool versions pinned in the workflow's `env` block (arduino-cli, the board package and the libraries): check those by hand.
 Read [security.md](security.md), "What you must keep up to date" and [development.md](development.md), "Releasing".
 
+## Development build
+
+A firmware build made with `-DUPDATE_REQUIRE_SIGNATURE=0` that installs updates without checking a [signature](#signature). It is for experiments that never leave your desk.
+The portal says "Development build: updates are installed without checking a signature." Its image cannot be signed or released. Compare [signing build](#signing-build).
+Read [development.md](development.md), "Signing keys and signing a release".
+
 ## Device ID
 
 The board's factory [MAC address](#mac-address), written as 12 lowercase [hexadecimal](#hexadecimal) characters, for example `aabbccddeeff`. It is not secret.
@@ -237,6 +243,12 @@ A run that does every check and shows what it would do, but changes nothing.
 In this project the key [burn](#burn) sketch is a dry run by default, and a dry-run build does not even contain the code that writes.
 Read [install.md](install.md), "Optional, days later: the permanent burn".
 
+## ECDSA
+
+Elliptic Curve Digital Signature Algorithm: a way to sign a message with a [private key](#private-key) and check it with a [public key](#public-key).
+In this project it signs the firmware [manifest](#manifest), on the P-256 curve with [SHA-256](#sha-256). A [certificate](#certificate) can also hold an ECDSA key; see [RSA and ECDSA](#rsa-and-ecdsa).
+Read [development.md](development.md), "Signing keys and signing a release" and [security.md](security.md), "The update signing keys".
+
 ## eFuse
 
 A tiny one-time switch inside a chip. It can be set once and never cleared.
@@ -303,6 +315,12 @@ A git repository is a folder that holds all the project's files and their whole 
 After you clone this one, the top folder is your [repository root](#repository-root).
 Read [build.md](build.md), "Get the code".
 
+## Google News edition
+
+The language-and-region version of Google News that the headlines come from. The display sends it as three values, `hl`, `gl` and `ceid`.
+You choose one of 12 editions in the portal, under "Headlines language and region". The default is Portuguese (Portugal); your topic words can be in any language.
+Read [operations.md](operations.md), "Change a setting".
+
 ## Hexadecimal
 
 A way of writing numbers with the digits 0 to 9 and the letters a to f.
@@ -324,7 +342,7 @@ Read [build.md](build.md), "Terminal in 2 minutes" and [build.md](build.md), "Wh
 ## Host test
 
 A test that compiles part of the firmware's own code as an ordinary program for your computer and runs it, so you need no board.
-In this project they cover request signing, the [problem list](#problem-list), plane choice, [panel protection](#panel-protection), the update logic, the display name, the settings save and the portal's request guard. You need them only if you change the code.
+In this project they cover request signing, the [problem list](#problem-list), plane choice, [panel protection](#panel-protection), the update logic, the update signature check, the display name, the settings save and the portal's request guard. You need them only if you change the code.
 Read [development.md](development.md), "The tests".
 
 ## HTTP and HTTPS
@@ -381,6 +399,12 @@ A plain-text format for structured data, such as `{"version":"0.10.1"}`.
 In this project the service answers the display in small JSON, and the board's `/status` page is JSON too.
 Read [architecture.md](architecture.md), "The service".
 
+## Key id
+
+A short fingerprint of a [public key](#public-key): the first 4 bytes of its [SHA-256](#sha-256), written as 8 [hexadecimal](#hexadecimal) characters. It only says which [pinned key](#pinned-key) to try; the [signature](#signature) decides.
+In this project the public image's two keys have the ids `eb6a67ad` (current) and `dfcb5742` (spare). A signed manifest carries its key id as `keyid`.
+Read [security.md](security.md), "The update signing keys" and [development.md](development.md), "Signing keys and signing a release".
+
 ## Kubernetes
 
 A system for running [containers](#container) on a cluster of computers.
@@ -426,7 +450,7 @@ Read [README.md](../README.md), "Words used in these guides" and [development.md
 ## Manifest
 
 A small [JSON](#json) file, `manifest.json`, that says which firmware is the newest: its version, file name, size, [SHA-256](#sha-256) and notes.
-The display fetches it from `/v1/firmware/manifest` once a day and when you press "Check now", and offers an update only if the version is strictly newer than its own. It is not signed.
+The display fetches it from `/v1/firmware/manifest` once a day and when you press "Check now", and offers an update only if the version is strictly newer than its own. A signed release also carries `keyid` and `sig`; a display that runs a [signing build](#signing-build) installs only an update whose manifest is signed with a [pinned key](#pinned-key).
 Read [architecture.md](architecture.md), "Firmware updates" and [development.md](development.md), "Releasing".
 
 ## Master secret
@@ -488,6 +512,12 @@ The project's hard rule: once the board is online, the panel never goes more tha
 It works because slow work (network, [flash](#flash), name lookups) never runs on the drawing [task](#task).
 Read [architecture.md](architecture.md), "The one-second rule".
 
+## Open-Meteo
+
+A free weather service. In this project the [service](#service) uses it for weather outside Portugal; inside Portugal it uses IPMA.
+Its free API is for non-commercial use only. The service sends it your location rounded to one decimal (about 11 km), and Open-Meteo keeps logs with coordinates for up to 90 days. Credit: "Weather data by Open-Meteo.com".
+Read [architecture.md](architecture.md), "How data gets to the panel" and [security.md](security.md), "What is private, and what the service sees and logs".
+
 ## Origin and Host check
 
 The portal's guard against other web pages. It refuses a request that changes something (every POST) when its `Origin` (or `Referer`) names another website, with `403`. It also refuses, with `421 Misdirected Request`, any request that does not name the display itself (its `<name>.local`, its bare name or its IP address) in the `Host` header, which blunts DNS rebinding.
@@ -530,6 +560,12 @@ The first pin of a connector. A cable's red stripe marks its pin 1, and it must 
 In this project the red stripe of the [ribbon cable](#ribbon-cable) goes to pin 1 of the panel's IN socket. The sources do not say in words which end is pin 1, so use the markings on your panel and board.
 Read [install.md](install.md), "Parts, wiring and power".
 
+## Pinned key
+
+A [public key](#public-key) built into the firmware, so that no other key is ever accepted. A display carries up to two: the current key and a spare.
+It installs an update only when the [manifest](#manifest) is signed with one of them, and it checks that before it downloads anything.
+Read [development.md](development.md), "Signing keys and signing a release" and [security.md](security.md), "The update path: what is checked before the new program runs".
+
 ## Pixel drift
 
 A [panel protection](#panel-protection) feature: still pictures move one pixel every 3 minutes, in a four-step loop. Screens keep column 63 and row 31 black so that nothing falls off the edge.
@@ -557,6 +593,12 @@ Read [architecture.md](architecture.md), "Networks and time".
 
 `preview/index.html`: a web page that draws every screen of the display in your browser with example data, using the same drawing code as the panel. You need no board, so you can see every screen before you buy anything.
 Read [architecture.md](architecture.md), "The big picture".
+
+## Private key
+
+The secret half of a key pair. Whoever holds it can make signatures that the matching [public key](#public-key) accepts, so it must never leave your control.
+In this project the maintainer's current private key is the GitHub Actions secret `UPDATE_SIGNING_KEY`, and the spare is kept offline. On your own build you make your own key.
+Read [security.md](security.md), "The update signing keys".
 
 ## Probation
 
@@ -588,6 +630,12 @@ The service as a ready-made [Docker image](#docker-image), `ghcr.io/suvl/ledmatr
 You run it; you do not build it. Firmware updates reach your display when the maintainer publishes a new image and you run it.
 Read [hosting.md](hosting.md), "The image" and [README.md](../README.md), "Words used in these guides".
 
+## Public key
+
+The half of a key pair that anyone may see. It checks signatures made with the matching [private key](#private-key) and cannot make one.
+In this project the firmware holds up to two public keys, in `arduino/ledmatrix/update_keys.h`: the current key and a spare. They are [pinned keys](#pinned-key).
+Read [security.md](security.md), "The update signing keys".
+
 ## RAM
 
 The board's fast working memory. It loses its contents at a restart.
@@ -603,7 +651,7 @@ Read [hosting.md](hosting.md), "The image" and [hosting.md](hosting.md), "The lo
 ## Release
 
 A new firmware version that boards will offer to install.
-A release is a push to the `main` branch with a higher number in `version.h`; the [CI](#ci) workflow builds it. Only the [maintainer](#maintainer) does this for the [public image](#public-image).
+A release is a push to the `main` branch with a higher number in `version.h`; the [CI](#ci) workflow builds it and signs its [manifest](#manifest). Only the [maintainer](#maintainer) does this for the [public image](#public-image).
 Read [development.md](development.md), "Releasing".
 
 ## Replay
@@ -657,7 +705,7 @@ Read [install.md](install.md), "First flash".
 ## RSA and ECDSA
 
 Two kinds of key that a [certificate](#certificate) can hold.
-The display accepts both, but a certificate with an RSA key (2048 bits) lets it make its first secure connection much faster: about 0.4 seconds against about 2.3 in the project's own measurements. So ask for RSA.
+The display accepts both, but a certificate with an RSA key (2048 bits) lets it make its first secure connection much faster: about 0.4 seconds against about 2.3 in the project's own measurements. So ask for RSA. ECDSA also signs the firmware [manifest](#manifest); see [ECDSA](#ecdsa).
 Read [hosting.md](hosting.md), "What the display needs" and [hosting.md](hosting.md), "Background".
 
 ## Screw terminal
@@ -702,11 +750,22 @@ A way to turn any file into a 64-character fingerprint. A different file gives a
 In this project the [manifest](#manifest) carries the SHA-256 of the firmware image, and the display checks it before it switches to the new image.
 Read [architecture.md](architecture.md), "Firmware updates".
 
+## Signature
+
+A value that proves a message was made by someone who holds a secret and was not changed on the way. This project uses two kinds. Every request your display makes to your service carries an [HMAC](#hmac) signature made with its [device key](#device-key) (see [signed request](#signed-request)). A firmware release's [manifest](#manifest) carries an [ECDSA](#ecdsa) signature (`sig`, 128 hexadecimal characters) made by the [maintainer](#maintainer) with a [private key](#private-key); the display checks it with a [public key](#public-key) built into its firmware.
+Read [security.md](security.md), "The update signing keys" and [architecture.md](architecture.md), "Firmware updates".
+
 ## Signed request
 
 A request that carries three headers: `X-Device` (the [device ID](#device-id)), `X-Timestamp` and `X-Signature`. The signature is an [HMAC](#hmac) of the method, the host, the address and the time, made with the [device key](#device-key).
 The service answers `401` unless the signature is valid. The firmware routes are the one exception: they are open on purpose.
 Read [architecture.md](architecture.md), "Identity and trust".
+
+## Signing build
+
+A firmware build that enforces update signatures. It is the default.
+It installs an update only when the [manifest](#manifest) carries a valid [signature](#signature) by one of its [pinned keys](#pinned-key). Compare [development build](#development-build).
+Read [security.md](security.md), "The update path: what is checked before the new program runs" and [development.md](development.md), "Signing keys and signing a release".
 
 ## Sketch
 
@@ -761,6 +820,12 @@ Transport Layer Security: the encryption and identity check behind HTTPS. People
 In this project the display uses TLS to reach your service, checks the [certificate](#certificate) against its [CA bundle](#ca-bundle) and never skips the check. Because certificates have dates, the clock must be right.
 Read [architecture.md](architecture.md), "Networks and time".
 
+## Transition window
+
+The period while the flag `REQUIRE_SIGNING` at the top of `.github/workflows/service.yml` is `"0"`: if the signing secret is missing, a release goes out unsigned, with a warning.
+A display that runs a [signing build](#signing-build) refuses such a release; an older display does not check. The window ends when the [maintainer](#maintainer) sets the secret and changes the flag to `"1"`; after that an empty secret fails the run and nothing is published.
+Read [security.md](security.md), "Known limits" and [operations.md](operations.md), "The maintainer does this once".
+
 ## Two-factor sign-in
 
 A second proof besides your password, such as a code from an authenticator app or a security key.
@@ -796,6 +861,12 @@ Read [development.md](development.md), "Inside a build" and [development.md](dev
 Volts (V) measure the electrical push of a power supply, and amps (A) measure how much current it can deliver.
 The panel needs a 5 V supply that can deliver at least the current Waveshare asks for. Do not guess either number, and never use another voltage.
 Read [install.md](install.md), "Parts, wiring and power".
+
+## WMO weather code
+
+A number from the World Meteorological Organization's standard list that says what the weather is: clear, cloudy, rain, snow and so on.
+Open-Meteo reports the weather this way. The service turns it into one of four icons (sun, part, cloud, rain); drizzle, snow, sleet, storms and hail all show as rain, because there is no snow icon yet.
+Read [architecture.md](architecture.md), "How data gets to the panel".
 
 ## WPA2 and WPA3
 

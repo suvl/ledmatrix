@@ -599,7 +599,7 @@ Write `pull api`, not just `pull`: `docker compose pull` alone stops with `pull 
 | `firmware: nothing is published, there is no manifest.json in the firmware folder` | The image has no firmware inside (your own build). |
 | `firmware: nothing is published, the keyid and the sig must be both present or both absent` | A manifest made by hand with only one of the two. The other reasons are `the keyid is not 8 lowercase hex characters`, `the sig is not 128 lowercase hex characters`, `the notes hold a control character` and `the answer would be longer than 2048 bytes`. The firmware routes answer `404` until the manifest is fixed. |
 
-The maintainer's side of this (the signing step in the workflow, and rotating the key) is in [operations.md, "For the maintainer: publish a firmware release"](operations.md).
+The maintainer's side of this (the signing step in the workflow, and rotating the key) is in [operations.md, "For the maintainer: publish a firmware release"](operations.md) and, for the rotation, [operations.md, "Rotate the signing key"](operations.md).
 
 A self-built image needs a new build with the new firmware ([The image](#the-image)). After any update, run the checks of path 1, step 8; the manifest's `version` should be the new one. The display checks the manifest once a day and when you press "Check now" in the portal. An update still needs the code shown on the panel; the display checks the download and rolls back a new image that does not come up. All of that is in [operations.md](operations.md), and the trust limits (an update comes from the saved service address) are in [security.md](security.md).
 
