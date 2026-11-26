@@ -6,8 +6,10 @@
 #include "live.h"
 #include "sample_data.h"
 
-// UpdateProgress is last: ledmatrix.ino indexes a name table with these values.
-enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, Stale, NoWifi, Problem, UpdateCode, UpdateProgress };
+// UpdateProgress is last: ledmatrix.ino indexes a name table with these values, and checks at compile time that the table has
+// SCREEN_COUNT entries. A new screen goes before UpdateProgress, or SCREEN_COUNT moves with it.
+enum class Screen : uint8_t { Flight, Weather, News, Idle, Setup, Boot, Connected, NoWifi, Problem, UpdateCode, UpdateProgress };
+constexpr int SCREEN_COUNT = (int)Screen::UpdateProgress + 1;
 
 // What the two firmware-update screens show (shared/firmware-update.md). The update module fills it, the screens only draw it.
 struct UpdateView {
