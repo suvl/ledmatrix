@@ -1,8 +1,8 @@
 # Architecture
 
-Checked on macOS on 25 Nov 2026: what was run and what was not is in the table at the end of this page. You do not need this page to build your first display; read it when you want to understand how the parts fit.
+Checked on macOS on 26 Nov 2026: what was run and what was not is in the table at the end of this page. You do not need this page to build your first display; read it when you want to understand how the parts fit.
 
-This page explains how LedMatrix fits together: what runs where, who talks to whom, how a plane gets from a radio signal to the pixels on the panel, how the display proves who it is, how it updates itself, and why it was built this way. It is for a beginner who wants to understand the system before touching it. It describes the code in this repository as it was on 25 November 2026 ([firmware](glossary.md#firmware) version 0.10.1). It does not tell you how to build, install or run anything: that is in [build.md](build.md), [install.md](install.md), [hosting.md](hosting.md), [security.md](security.md) and [operations.md](operations.md).
+This page explains how LedMatrix fits together: what runs where, who talks to whom, how a plane gets from a radio signal to the pixels on the panel, how the display proves who it is, how it updates itself, and why it was built this way. It is for a beginner who wants to understand the system before touching it. It describes the code in this repository as it was on 26 November 2026 ([firmware](glossary.md#firmware) version 0.10.1). It does not tell you how to build, install or run anything: that is in [build.md](build.md), [install.md](install.md), [hosting.md](hosting.md), [security.md](security.md) and [operations.md](operations.md).
 
 ## Before you start
 
@@ -38,7 +38,7 @@ flowchart LR
     ntp["pool.ntp.org and<br/>time.cloudflare.com<br/>the time"]
     web["OpenStreetMap, unpkg, jsDelivr<br/>map, place search, scripts"]
   end
-  browser -->|"HTTP, port 80<br/>ledmatrix.local<br/>no password"| board
+  browser -->|"HTTP, port 80<br/>ledmatrix.local by default<br/>no password"| board
   board <-->|"Wi-Fi"| router
   board ==>|"HTTPS, port 443<br/>signed requests"| proxy
   svc -->|"HTTPS"| adsb
@@ -55,13 +55,13 @@ Everything the board sends to the outside world passes through your router. The 
 
 | From | To | How | What it carries |
 | --- | --- | --- | --- |
-| Your browser | The board | Plain HTTP on port 80, found by the name `ledmatrix.local` ([mDNS](glossary.md#mdns)) | The [portal](glossary.md#portal) page and its small JSON interface. No password: it is meant for your [LAN](glossary.md#lan) only |
+| Your browser | The board | Plain HTTP on port 80, found by the display's name: `ledmatrix.local` until you choose another name ([mDNS](glossary.md#mdns), section 2.5) | The [portal](glossary.md#portal) page and its small JSON interface. No password: it is meant for your [LAN](glossary.md#lan) only, and the board refuses requests that come from other web pages (section 8) |
 | The board | The service | HTTPS on port 443, with the server's [certificate](glossary.md#certificate) checked against the [CA bundle](glossary.md#ca-bundle) built into the firmware | Flights, weather, headlines and logos (every request signed), and the firmware [manifest](glossary.md#manifest) and image (not signed) |
 | The [reverse proxy](glossary.md#reverse-proxy) | The service | Plain HTTP, port 8080 by default (`LISTEN`) | The same requests, after the proxy has handled [TLS](glossary.md#tls) |
 | The service | adsb.fi, adsbdb, IPMA, Google News | HTTPS | Positions, routes, weather files, an RSS feed |
 | The board | Time servers | NTP, the standard time protocol (UDP port 123) | The current time. Unauthenticated |
 | Your browser | unpkg.com, cdn.jsdelivr.net, OpenStreetMap | HTTPS | The map, the time zone lookup library, place search. This is the browser, not the board |
-| Your phone | The board, in [setup mode](glossary.md#setup-mode) | The board's own Wi-Fi network `ledmatrix` (a random password is shown on the panel), HTTP on `192.168.4.1` | The form where you pick your home Wi-Fi and type its password |
+| Your phone | The board, in [setup mode](glossary.md#setup-mode) | The board's own Wi-Fi network, named after the display (`ledmatrix` on a first start; a random password is shown on the panel), HTTP on `192.168.4.1` | The form where you pick your home Wi-Fi and type its password |
 
 Sources: `arduino/ledmatrix/live.cpp` (port 443, host names, `configTzTime`), `arduino/ledmatrix/net.cpp` (web server on port 80, mDNS name, setup network), `service/main.go` (`LISTEN`, no TLS code), `portal/portal.template.html` (the browser-side hosts).
 
@@ -112,7 +112,7 @@ flowchart TB
 | Task | Core | Priority | Stack | Started in | What it owns |
 | --- | --- | --- | --- | --- | --- |
 | render | 1 | 2 | 10 KB | `ledmatrix.ino` | The panel. Picks the screen, draws it, applies dimming, drift and night blanking |
-| net | 0 | 1 | 12 KB | `net.cpp` | Wi-Fi (join, reconnect), the DNS guard, mDNS, the setup network and its captive page, the web server and every portal route, the write of an uploaded firmware file |
+| net | 0 | 1 | 12 KB | `net.cpp` | Wi-Fi (join, reconnect), the DNS guard, mDNS, the setup network and its captive page, the web server with its portal guard and every portal route, the write of an uploaded firmware file |
 | data | 0 | 1 | 16 KB | `live.cpp` | The clock (NTP), every HTTPS request to the service, the live state, the [problem list](glossary.md#problem-list), the firmware check and download |
 | [probation](glossary.md#probation) | not pinned | 3 | 6 KB | `ota.cpp` | Only on a freshly installed firmware: the checklist that decides whether it is kept. It deletes itself when it is done |
 | loop | Arduino default | Arduino default | Arduino default | `ledmatrix.ino` | The two buttons: UP and DOWN step the demo screens, any press wakes the panel, holding UP for 5 seconds forgets the Wi-Fi network |
@@ -137,7 +137,7 @@ The rule works only because of a division of labour, in `ledmatrix.ino`, `live.c
 6. **Big work happens in small pieces.** A firmware download is read, hashed and written 4 KB at a time with a 2 ms pause after each piece, and the other app slot is erased sector by sector as the writes arrive, not all at once.
 7. **A logo is fetched before the plane that needs it is queued**, so the render task never waits for one.
 
-One exception: `settings::setFromJson` (`settings.cpp`) holds the settings lock while it writes all 34 saved values to flash, and the render task asks for the settings once per frame. So saving from the portal can make a frame wait for those writes. How long that takes has not been measured. The counters below are how you would see a problem.
+The settings, which the render task reads every frame and the portal rarely changes, have two locks (`swapstore.h`, used by `settings.cpp`). The **state lock** guards the settings themselves and is held only to copy them or to swap in a new set: microseconds, never across a flash write. The **save lock** guards the flash writes and makes a save one-at-a-time; the render task never takes it. So a save from the portal swaps the new settings in under the short state lock and writes all of them to flash afterwards, holding only the save lock, and a frame never waits for the flash. The flash chip itself still pauses briefly while it is written; how that shows in the frame counters during a save has not been measured. The counters below are how you would see a problem.
 
 **How the rule is measured.** The render task counts how many frames it has drawn and the gap between each pair of `show()` calls while the board is online. The board's `/status` page reports them:
 
@@ -147,7 +147,7 @@ One exception: `settings::setFromJson` (`settings.cpp`) holds the settings lock 
 | `frame_max_ms` | The longest gap between two frames while online |
 | `frames_over_1s` | How many gaps were longer than 1000 ms. This should stay 0 |
 
-`/status` also shows the version, the Wi-Fi name, the addresses, the signal strength, uptime, free memory and the identity state. It is plain JSON on port 80. Not tested here.
+`/status` also shows the version, the Wi-Fi name, the addresses, the signal strength, free memory and the identity state, and the uptime in seconds, which counts from a 64-bit hardware timer and does not wrap (verified on the author's own display on 26 Nov 2026). It is plain JSON on port 80.
 
 Reported, not repeated here: the slice 10 commit message records a longest frame gap of 93 ms during the flash in the upload test. Verified on the author's own display on 25 Nov 2026: during a download from the real service the longest gap was 131 ms (the author's report; no file in the repository records that figure). In both, no frame took over 1 second. The same counters decide whether a new firmware is kept (section 6): a single frame over 1 second fails its probation at once.
 
@@ -193,12 +193,12 @@ Things worth knowing about each step:
 
 - **Planes come first, then headlines, then weather, then idle.** A plane is "due" when it is new (not shown in the last 30 minutes) or, if you switched on plane cycling, when it is next in the cycle. A plane on the panel always finishes its turn, which is 10 seconds by default. If you turned on rotation, weather only gets every second slot of the rotation time and the idle screen gets the others.
 - **Demo screens.** With no service address saved, the board steps through the screens you enabled with example data, so a new board is useful before it is set up.
+- **The display's name on the panel.** The Connected screen (the first 5 seconds after joining Wi-Fi) shows `<name>.local` and the IP address, and the setup screen shows the name of the setup Wi-Fi network, which is the display name. Names up to about 10 characters fit big on the setup screen, longer ones (up to 24) are drawn small on up to two lines. On the Connected screen and in the problem message a long name is cut to the panel width, so the IP address is the way to reach the display (section 2.5).
 - **Update screens (step 2).** While an [update code](glossary.md#update-code) is waiting, or an image is arriving, the panel shows the code screen or the progress screen instead of everything else, and drops the stale dot and the problem message. Only while online. These count as "other" pictures for protection: never dimmed, never blanked, never drifted, because you are standing in front of the panel.
-- **The problem message (step 4).** If some kind of data (flights, weather, headlines, logos, the clock, the update check, the identity) has been failing for a full hour in a row and is still failing, the panel shows "PROBLEM", "Data is failing" and "See the portal: ledmatrix.local" for 5 seconds once a minute, in place of the weather or the clock only. It never covers a plane or a headline, and it stays dark during night blanking. The decision itself is the pure function `problemMessageWanted()` in `problems.h`, which the laptop tests cover.
+- **The problem message (step 4).** If some kind of data (flights, weather, headlines, logos, the clock, the update check, the identity) has been failing for a full hour in a row and is still failing, the panel shows "PROBLEM", "Data is failing" and "See the portal:" with the display's address (`ledmatrix.local` by default) for 5 seconds once a minute, in place of the weather or the clock only. It never covers a plane or a headline, and it stays dark during night blanking. A [rollback](glossary.md#rollback) of a firmware update appears in the portal's problem list too, but as an event: it never feeds this one-hour rule, so it never puts this message on the panel. The decision itself is the pure function `problemMessageWanted()` in `problems.h`, which the laptop tests cover.
 - **Overlays (step 6).** A small blinking orange dot in the top right corner means data is stale: flights (when switched on and a location is set) are stale when the last successful fetch is more than 5 minutes old, or when none has succeeded yet and the board has been up for more than 3 minutes. Weather is stale in the same way, with 2 hours and 5 minutes. A thin amber bar along the bottom shows how far you have got in the 5-second long press of UP. Overlays are drawn after the drift, so they stay where they are, but step 7 dims them with everything else.
-- **A screen that is never chosen.** The drawing code (`screens.cpp`) can draw a "Stale" screen, but the picker never selects it. Staleness is shown only by the dot.
 
-The twelve screens in the code are: Flight (3 layouts), Weather (3), News (2), Idle (clock or black), Setup, Boot, Connected, Stale, No Wi-Fi, Problem, Update code and Update progress. `screens.cpp` is a C++ port of the drawing code in `shared/renderer.js`, which the preview page and the portal's layout thumbnails run in a browser. `tools/check_margins.py` (it needs Chrome) draws both and compares them.
+The eleven screens in the code are: Flight (3 layouts), Weather (3), News (2), Idle (clock or black), Setup, Boot, Connected, No Wi-Fi, Problem, Update code and Update progress. Staleness is not a screen: it is only the blinking dot described above. `screens.cpp` is a C++ port of the drawing code in `shared/renderer.js`, which the preview page and the portal's layout thumbnails run in a browser. `tools/check_margins.py` (it needs Chrome) draws both and compares them.
 
 ### 2.4 Panel protection
 
@@ -226,14 +226,16 @@ The Protomatter library has no brightness control, so `applyBrightness()` scales
 
 Settings live in NVS, a small key-value store in the `nvs` partition of the board's flash memory. It survives restarts and firmware updates.
 
-- **Namespace `ledmatrix`** (`settings.cpp`): the Wi-Fi name and password, and every setting the portal edits: what to show, layouts, brightness, how long a plane stays, location, radius, altitude limits, up to five headline topics, the service host name, the time zone name and rule, and the protection settings.
-- **Namespace `update`** (`ota.cpp`): the version that failed here and why, written only when a firmware is rolled back.
+- **Namespace `ledmatrix`** (`settings.cpp`): the Wi-Fi name and password, and every setting the portal edits: what to show, layouts, brightness, how long a plane stays, location, radius, altitude limits, up to five headline topics, the service host name, the display name, the time zone name and rule, and the protection settings.
+- **Namespace `update`** (`ota.cpp`): the version that failed here and why, written only when a firmware is rolled back, and the probation boot counter (key `pcount`), which exists only while a new image is on probation (section 6).
 
 Values from the portal are checked before they are saved, and the time zone and the panel protection values are checked again when they are read back, so a damaged flash cannot put a bad value into a request header or the time zone setting. "Forget this Wi-Fi network" (the portal button, or holding UP for 5 seconds) removes only the Wi-Fi name and password.
 
 Nothing in this project encrypts NVS or the flash. The Wi-Fi password is stored as plain text, and the portal's `/api/settings` never returns it.
 
-What is **not** saved, and is lost at a restart: the live data, the 16 cached logos, the list of the last 10 problems, the log of the last 60 planes seen that the portal shows, the list of recently shown planes and headlines, and any clock offset. One counter lives in the chip's RTC memory, which survives a crash restart but not a power cut: the boot count used by the [rollback](glossary.md#rollback) (section 6).
+What is **not** saved, and is lost at a restart: the live data, the 16 cached logos, the list of the last 10 problems, the log of the last 60 planes seen that the portal shows, the list of recently shown planes and headlines, and any clock offset.
+
+**The display name.** The setting `deviceName` (default `ledmatrix`) is what the display calls itself on the network: its mDNS name (the portal is at `<name>.local`), its DHCP host name and the name of its setup Wi-Fi network. The rules are in `devicename.h`, which is plain C++ with its own laptop test: 1 to 24 characters, letters, digits and hyphens, no hyphen at either end, capitals become lower case. The portal's "Wi-Fi and device" section edits it. A new name is saved at once and takes effect at the next start, so the board restarts about a second and a half after it has answered (about 20 seconds in all, unless an update is being installed, which restarts anyway), and the portal follows it to the new address. Two displays on one network need different names; each also needs its own provisioning (see [install.md, "A second display"](install.md)). If another device on the network already has the name, the mDNS software is expected to add `-2` to it (not yet seen on a real display); the panel would not show the `-2`, and the IP address always works. The first start of a board with no saved Wi-Fi always uses `ledmatrix` for its setup network. Verified on the author's own display on 26 Nov 2026: renaming the display through the settings API and back left the settings identical afterwards, the settings JSON gained only the field `deviceName`, and invalid names were refused with the plain sentences from `devicename.h`. Not verified: the `-2` clash, and the setup screen with a long name.
 
 ### 2.6 The flash layout
 
@@ -318,7 +320,7 @@ Source: `service/flights.go`, `weather.go`, `headlines.go`, `cache.go`. The cach
 - **Request bodies, sessions or accounts.** The board sends only `GET` requests.
 - **Query strings in its log.** The query carries your location, so the access log leaves it out and quotes the path with Go's `%q`, so a path containing a line break cannot forge a log line. Error messages from upstream calls name the host, never the URL.
 
-What it does log: the access line (method, path, status, time), one line when a request is refused with the device ID and the reason (at most once per device and reason per minute, and 30 lines a minute in all, so a scanner cannot flood the log), and firmware messages. It never logs a key, a signature or the master secret. What is in memory: the caches, which hold positions rounded to two decimals, call signs and headline topics, until the service restarts.
+What it does log: the access line (method, path, status, time); one line when a request is refused, with the device ID and the reason (at most once per device and reason per minute, and 30 lines a minute in all, so a scanner cannot flood the log); one line `device seen <id>` when a signed request is accepted, at most once per device per hour, so you can tell which displays use the service and notice an ID that is not yours (up to 256 devices, then one notice line until older ones expire; not written when signature checking is off); and firmware messages. A `device seen` line holds only the 12-character device ID, never a path, a query, a signature or any header. It never logs a key, a signature or the master secret. What is in memory: the caches, which hold positions rounded to two decimals, call signs and headline topics, and the time each device ID was last logged, until the service restarts.
 
 ## 4. How data gets to the panel
 
@@ -532,17 +534,18 @@ stateDiagram-v2
 
 An image whose slot state is `NEW` is **on probation**. An image flashed over USB has no such state and is never on probation. The steps (`ota.cpp`, `otalogic.h`):
 
-1. Very early in `setup()`, before Wi-Fi and the tasks, the firmware counts this boot in a small counter in RTC memory. More than 3 boots in one probation (3 crashes) means a rollback on the 4th.
+1. Very early in `setup()`, before Wi-Fi and the tasks, the firmware counts this boot. The count is kept in NVS (namespace `update`, key `pcount`), as one 64-bit item that holds the image's identity and the count, so a count left by another image never counts against this one. More than 3 boots in one probation means a rollback on the 4th, and it makes no difference whether the earlier boots ended in a crash or a power cut. At most 4 writes happen for one update (boots 1 to 3, and one erase), and an unreadable store counts as boot 1 rather than causing a rollback.
 2. A small task of its own watches four things. Within 3 minutes of the start the board must have joined Wi-Fi, the portal must be answering, the render task must have drawn 100 frames, none more than 1 second apart, and the service must have given one complete HTTP answer of any status (this check is waived if no service address is saved, if the identity is not OK, or if nothing would be fetched).
-3. When all four hold, and at least 60 seconds have passed since the start, the image marks itself good and the boot counter is reset. If a frame is ever over 1 second, or a check is still missing at 3 minutes, the verdict is "failed".
+3. When all four hold, and at least 60 seconds have passed since the start, the image marks itself good and the boot counter is erased. (It is also erased when an update is installed and at the next start that is not on probation.) If a frame is ever over 1 second, or a check is still missing at 3 minutes, the verdict is "failed".
 4. On failure the image first writes the failed version and the plain reason into NVS, then asks the system to mark itself invalid and restart into the previous slot.
 5. The image that runs after a rollback reads that record. The portal shows what happened, and that version, and anything not newer, is not offered again until a newer one exists. A later successful update clears the record.
+6. The rollback also goes into the portal's problem list, once per start from the first data cycle after Wi-Fi is up, and again at every start while the record exists. The entry has the kind "update check", the sentence "The new firmware (version X) did not pass its start-up check, so the board went back to the previous firmware." and the reason as its detail. It is an *event*, not a failing source of data: it goes into the list only and never into the one-hour rule behind the panel's PROBLEM message. If the running image is itself on probation, the entry waits until that image has been marked good.
 
 The verdict comes from its own task rather than the data task, so a stuck Wi-Fi join, or a start-up that hangs, still ends in a rollback at 3 minutes. If there is no previous valid image to go back to, the board stays up and says so.
 
-**Known gaps** (stated in the contract): a crash before `setup()` starts (in the core's start-up code) is not caught by the rollback. The boot counter and the throttle live in RAM, so a power cut resets them. The manifest is not signed (section 8).
+**Known gaps** (stated in the contract): a crash before `setup()` starts (in the core's start-up code) is not counted, because the count is made in `setup()`. Because power cuts count like crashes, four power cuts in the first minutes after an update can roll back a version that is fine; after an update, leave the display alone until the portal says the check passed. The update-code throttle lives in RAM, so a power cut resets it. The manifest is not signed (section 8).
 
-**Bench evidence** (from the slice 10 commit message, the contract and the author's report of 25 November 2026; verified on the author's own display on 25 Nov 2026, not repeated here): an update through the upload path and through the real service; wrong codes refused; an image that crashes on start rolled back on the 4th boot; an image that never reaches the service rolled back at 3:00; an update while the board's key was refused.
+**Bench evidence** (from the slice 10 commit message, the contract and the author's reports; not repeated here). Verified on the author's own display on 25 Nov 2026: an update through the upload path and through the real service; wrong codes refused; an image that crashes on start rolled back on the 4th boot; an image that never reaches the service rolled back at 3:00; an update while the board's key was refused. Verified on the author's own display on 26 Nov 2026: a crash-on-start update rolled back on the 4th start, with the entry in the problem list (kind "update check", the sentence with the version, the detail "The new version kept restarting.") and without the panel PROBLEM message; an update that hangs before Wi-Fi rolled back at exactly 3 minutes ("The board did not join Wi-Fi within 3 minutes of starting."). Not verified: a real power cut during probation (the counter in flash is proven by laptop tests and by the crash loop, not by pulling the plug).
 
 ## 7. Networks and time
 
@@ -556,7 +559,7 @@ The board works on [IPv4](glossary.md#ipv4) and [IPv6](glossary.md#ipv6) network
 
 So a host that publishes an AAAA record later is picked up with no firmware change. In the author's own setup the service host has only an IPv4 address today, so the board talks to it over IPv4 (the limit is the DNS record, not the firmware). The portal's connection test reaches your service and two test hosts (one reachable only over IPv6, one over both) to show this. The fallback path itself (an AAAA record that does not answer) is described in issue 15 as not yet exercised.
 
-Two practical details. The board turns IPv6 on so that `ledmatrix.local` also answers with an IPv6 address; without it macOS waited 5 seconds for the missing record on every lookup. And a "DNS guard" in `net.cpp` checks every 2 seconds that the first DNS server is usable: some routers announce their own link-local IPv6 address as a DNS server, which the board's network stack cannot use, so the guard puts back the IPv4 server DHCP gave. The setup network (`192.168.4.1`) is IPv4 only, deliberately. Open issue 36: after a settings change, name lookups sometimes time out for a long time while the data task refreshes everything in a burst; the display recovers by itself on the next refresh and frames are not affected.
+Two practical details. The board turns IPv6 on so that its `.local` name (`ledmatrix.local` by default) also answers with an IPv6 address; without it macOS waited 5 seconds for the missing record on every lookup. And a "DNS guard" in `net.cpp` checks every 2 seconds that the first DNS server is usable: some routers announce their own link-local IPv6 address as a DNS server, which the board's network stack cannot use, so the guard puts back the IPv4 server DHCP gave. The setup network (`192.168.4.1`) is IPv4 only, deliberately. Open issue 36: after a settings change, name lookups sometimes time out for a long time while the data task refreshes everything in a burst; the display recovers by itself on the next refresh and frames are not affected.
 
 ### 7.2 Time
 
@@ -583,11 +586,11 @@ Every claim below was checked in the source named next to it.
 
 | Where | What | Notes |
 | --- | --- | --- |
-| The board's flash (NVS) | Wi-Fi name and password, your location, radius, headline topics, the service host name, and all other settings | Not encrypted. `settings.cpp` |
+| The board's flash (NVS) | Wi-Fi name and password, your location, radius, headline topics, the service host name, the display name, and all other settings; the failed-update record; the probation boot counter while an update is on probation | Not encrypted. `settings.cpp`, `ota.cpp` |
 | The board's `ident` partition | Device ID (not secret) and, until the burn, the interim key | Read-only for the firmware. `identstore.h` |
 | The board's chip (eFuse) | The device key, after the burn | Cannot be read or changed |
 | The board's RAM | Live data, logos, the last 10 problems, the last 60 planes seen, recently shown planes and headlines | Lost at restart. `live.cpp` |
-| The service's RAM | Caches: positions rounded to 2 decimals, call signs, forecasts, headline topics | Lost at restart. It writes nothing to disk |
+| The service's RAM | Caches: positions rounded to 2 decimals, call signs, forecasts, headline topics; the time each device ID was last logged | Lost at restart. It writes nothing to disk |
 | The service's environment | The master secret (in the file named by `MASTER_SECRET_FILE`, or in `MASTER_SECRET`) and the revoked list | Your secret store |
 | Your computer | The master secret file and its backup | Outside the repository |
 | Your browser | Nothing: the portal uses no cookies and no browser storage (a search of the page finds none) | |
@@ -606,7 +609,7 @@ The board never sends its key anywhere (only signatures made with it, and only t
 ### What the service sees and does
 
 - It sees every request above, including your location to 4 decimals in the query string.
-- **It does not log the query string.** The access log has the method, the path, the status and the time. Refusals log the device ID and the reason.
+- **It does not log the query string.** The access log has the method, the path, the status and the time. Refusals log the device ID and the reason, and an accepted display is noted as `device seen <id>` at most once an hour.
 - **It limits what its sources learn.** adsb.fi gets the location rounded to 2 decimals, about 1 km. adsbdb gets call signs. Google News gets your topic words (with `when:1d` added). IPMA gets only a city number and its public files, no coordinates at all. All of them see the service's IP address, not the board's.
 - **Other logs are yours to check.** The reverse proxy or hosting platform in front of the service has its own access log, and such logs may include the full URL with the query string. This has not been checked for any particular proxy; look at its log settings (see [hosting.md](hosting.md) and [security.md](security.md)).
 
@@ -614,10 +617,23 @@ The board never sends its key anywhere (only signatures made with it, and only t
 
 The portal page is served by the board, but the map is not private. When you open it, your browser downloads the map library from `unpkg.com`, the time zone library from `cdn.jsdelivr.net` and map pictures from OpenStreetMap, and a place search goes to OpenStreetMap's Nominatim. Those servers see your browser's IP address and the map area you look at. The scripts are pinned by integrity hashes. Without internet the page still works: you type the coordinates and choose the time zone from the list.
 
+### The portal guard
+
+The portal has no password, but the board refuses requests that a browser sends on behalf of another web page (issue 46). Two checks run in front of every portal route (`webguard.h`, applied in `net.cpp`; the repository has a laptop test for the rules, `tools/test_webguard.cpp`):
+
+- **Host check**, on every request including reads. The `Host` header must be one of the display's own names or addresses: `<name>.local`, the bare `<name>`, its IPv4 address or its IPv6 addresses (ports are ignored). Anything else, or no `Host` at all, gets 421 "Misdirected Request". This blunts DNS rebinding, where a web page on another site gets its name pointed at the display's address so that the browser lets the page read `/api/settings`, which holds your home location. The name accepted is the one mDNS is announcing right now, so a clash-renamed `<name>-2.local` works too.
+- **Origin check**, on every request that changes something (all `POST` routes: settings, forget, and the update routes including the upload). If the browser says which page the request came from (the `Origin` header, or the `Referer` when there is no `Origin`) and that page is not the display itself, the answer is 403. An upload from another site is refused before any update code try is spent. `Origin: null` is refused too.
+- **Requests with neither header pass.** `curl` and scripts are not a browser acting for another page, so they still work.
+- **Setup mode.** The Host check is off, because phones send captive-portal probes under all kinds of names. The Origin check still applies to the Wi-Fi form.
+
+Verified on the author's own display on 26 Nov 2026: requests from the same site, and requests with no `Origin`, were answered normally; requests naming another site were refused with 403; other `Host` names got 421; an upload from another site was refused without using a code try. Not verified: a real cross-site page in a browser (the proof page), and access by an IPv6 address written in the URL.
+
+Names the display does not own get 421, even though they point at it: router DNS names such as `ledmatrix.lan`, a reverse proxy in front of the display, VPN or port-forward addresses, unique-local IPv6 addresses and `localhost`. Open the portal by `<name>.local`, the bare name, or the IP address shown on the panel or in `/status`.
+
 ### Known limits, stated honestly
 
-- **The portal is plain HTTP on your LAN with no password.** Anyone on your Wi-Fi can read and change the settings, including your location and the saved service host.
-- **The service host is also where firmware updates come from.** Someone on your LAN could point the board at a server of their own (it would need a valid certificate) and offer a "newer" version. What stops a silent takeover: an update needs the code that appears only on the panel, and the portal names the host next to the Update button. A signed manifest would close this gap; it is not built (issue 21 chose "no signature for now").
+- **The portal is plain HTTP on your LAN with no password.** A web page in a browser on your network can no longer change settings, press "Forget" or start an update, and cannot read the settings through DNS rebinding (the guard above). Anyone on your Wi-Fi who sends the requests directly (for example with `curl`) still can read and change the settings, including your location, the display name and the saved service host.
+- **The service host is also where firmware updates come from.** Someone on your LAN who sends the request directly could point the board at a server of their own (it would need a valid certificate) and offer a "newer" version. What stops a silent takeover: an update needs the code that appears only on the panel, and the portal names the host next to the Update button. A signed manifest would close this gap; it is not built (issue 21 chose "no signature for now").
 - Whoever can push to `main` or deploy the service image decides which firmware boards are offered, subject to the panel code. On the public image that is the maintainer; on your own build it is you.
 - The board's clock comes from unauthenticated NTP.
 - The protection of the identity key, and the limits of it, are in section 5.
@@ -648,11 +664,13 @@ The decisions were made by the project's author, one GitHub issue each; [issue 3
 
 | What | Status | How |
 | --- | --- | --- |
-| The 12 Mermaid diagrams on this page | Tested on macOS on 25 Nov 2026 | Each rendered without errors with Mermaid CLI 11.17.1 in headless Google Chrome 158. GitHub's own renderer was not tried |
-| Statements about the firmware | Not tested here | Checked by reading `ledmatrix.ino`, `live.cpp`, `net.cpp`, `ota.cpp`, `identity.cpp`, `protect.cpp`, `settings.cpp`, `otalogic.h`, `deviceauth.h`, `problems.h`, `partitions.csv` and the contracts in `shared/`. Nothing was run on a board, and no board was touched |
+| The 12 Mermaid diagrams on this page | Tested on macOS on 26 Nov 2026 | Each rendered without errors with Mermaid CLI 11.17.1 in headless Google Chrome 158. GitHub's own renderer was not tried |
+| Statements about the firmware | Not tested here | Checked by reading `ledmatrix.ino`, `live.cpp`, `net.cpp`, `ota.cpp`, `identity.cpp`, `protect.cpp`, `settings.cpp`, `otalogic.h`, `deviceauth.h`, `problems.h`, `webguard.h`, `devicename.h`, `swapstore.h`, `partitions.csv` and the contracts in `shared/`. Nothing was run on a board, and no board was touched |
 | The longest frame gap during a download from the real service (131 ms), the update through the upload path and through the real service, wrong codes refused, a crash rolled back on the 4th boot, an image that never reaches the service rolled back at 3:00, an update while the key is refused, the permanent burn with `provision.py --burned` | Verified on the author's own display on 25 Nov 2026 | Quoted from the contract and the author's report; not repeated here. The 131 ms figure is in no repository file. (The 93 ms gap in the upload test is only reported in the slice 10 commit message, so it carries no verified label) |
+| The display name through the settings API and back; the portal's Origin and Host checks; a crash-on-start update rolled back on the 4th start, with its problem-list entry; an update that hangs before Wi-Fi rolled back at 3 minutes; `/status` uptime from a 64-bit timer | Verified on the author's own display on 26 Nov 2026 | The author's report; not repeated here |
+| A real power cut during probation, the mDNS name clash (`-2`), setup mode with a long name, the cross-site browser proof page, IPv6 literal access | Not verified | No test on a real display. The boot counter in flash is covered by laptop tests and by the crash loop, not by pulling the plug |
 | Statements about the service | Not tested here | Checked by reading `service/*.go` and `service/README.md`, including the secret file option (`MASTER_SECRET_FILE`). The service, its tests and the host tests were not run for this page |
-| How long a settings save holds the settings lock (section 2.2) | Not measured | Read from the code only |
+| Frame timing while a settings save writes to flash (section 2.2) | Not measured | The two-lock design is read from the code; the repository has a laptop test for it (`tools/test_swapstore.cpp`), which was not run for this page. The frame counters were not recorded during a save |
 | Whether a reverse proxy or hosting platform logs query strings | Not checked | It depends on the product and its settings |
 | What adsb.fi, IPMA, Google News, OpenStreetMap and the NTP pools log or allow | Not checked | The page says only what this project sends them |
 | The one-line reasons in section 9 | Read from the issues on 25 Nov 2026 | Issues can be edited later; the issue itself is the record |
