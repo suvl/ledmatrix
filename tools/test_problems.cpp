@@ -548,6 +548,173 @@ static void testWordsUpdate() {
   CHECK(strcmp(problemKindName(ProblemKind::Update), "update check") == 0);
 }
 
+// ---- a rollback names its version and carries its reason (ticket 47) -------------------------------------------------------
+static void testRolledBackWords() {
+  SECTION("problemVersionLen: x.y.z at the start of a text");
+  CHECK(problemVersionLen("0.10.1") == 6);
+  CHECK(problemVersionLen("1.2.3: reason") == 5);
+  CHECK(problemVersionLen("9999.9999.9999") == 14);
+  CHECK(problemVersionLen("10000.1.1") == 0);   // five digits
+  CHECK(problemVersionLen("1.10000.1") == 0);
+  CHECK(problemVersionLen("1.1.10000") == 0);
+  CHECK(problemVersionLen("1.2") == 0);
+  CHECK(problemVersionLen("1.2.") == 0);
+  CHECK(problemVersionLen("1..3") == 0);
+  CHECK(problemVersionLen(".1.2") == 0);
+  CHECK(problemVersionLen("1.2.3.4") == 0);      // a fourth number is not a version
+  CHECK(problemVersionLen("v1.2.3") == 0);
+  CHECK(problemVersionLen("1.2.3a") == 5);       // a letter ends it: the caller checks what follows
+  CHECK(problemVersionLen("") == 0);
+  CHECK(problemVersionLen("HTTP 404") == 0);
+
+  SECTION("problemPlainText: printable text only");
+  char t[40];
+  problemPlainText("The panel stalled.", 18, t, sizeof t);
+  CHECK(strcmp(t, "The panel stalled.") == 0);
+  problemPlainText("a\x01" "b\n" "c\x7F" "d\xC3\xA9" "e", 11, t, sizeof t);
+  CHECK(strcmp(t, "a b c d  e") == 0);                     // a control character, DEL or a byte above 127 becomes a space
+  problemPlainText("  padded \t", 10, t, sizeof t);
+  CHECK(strcmp(t, "padded") == 0);                         // the ends are trimmed
+  problemPlainText("abcdefghij", 10, t, 5);
+  CHECK(strcmp(t, "abcd") == 0);                           // cut to fit, terminated
+  problemPlainText("abcdefghij", 4, t, sizeof t);
+  CHECK(strcmp(t, "abcd") == 0);                           // the length given is the limit
+  problemPlainText("\x01\x02\x03", 3, t, sizeof t);
+  CHECK(t[0] == 0);
+  t[0] = 'Q';
+  problemPlainText("abc", 3, t, 0);
+  CHECK(t[0] == 'Q');                                      // no room: nothing is written
+  problemPlainText("abc", 3, t, 1);
+  CHECK(t[0] == 0);
+
+  SECTION("problemRolledBackRaw: the text ota.cpp hands to the list");
+  char raw[200];
+  problemRolledBackRaw("0.10.1", "The panel stalled for more than a second.", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: The panel stalled for more than a second.") == 0);
+  problemRolledBackRaw("0.10.1", "", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1") == 0);
+  problemRolledBackRaw("0.10.1", nullptr, raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1") == 0);
+  problemRolledBackRaw("", "Why.", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": Why.") == 0);        // no version: the older shape
+  problemRolledBackRaw(nullptr, "Why.", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": Why.") == 0);
+  problemRolledBackRaw("0.10.1x", "Why.", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": Why.") == 0);        // not a clean version: left out, never passed on
+  problemRolledBackRaw("0.10.1", "bad\x03\n\"x\"", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: bad  \"x\"") == 0);
+  problemRolledBackRaw("", "", raw, sizeof raw);
+  CHECK(strcmp(raw, PROBLEM_RAW_UPDATE_ROLLED_BACK) == 0);
+  char small[24];
+  problemRolledBackRaw("0.10.1", "A reason that does not fit.", small, sizeof small);
+  CHECK(strlen(small) == sizeof small - 1 && memchr(small, 0, sizeof small));  // cut, terminated
+  problemRolledBackRaw("0.10.1", "x", small, 0);                                // no room: nothing happens
+
+  SECTION("problemRolledBackParts");
+  char v[16];
+  const char *reason = nullptr;
+  CHECK(problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: Why.", v, sizeof v, &reason) && strcmp(v, "0.10.1") == 0 && strcmp(reason, "Why.") == 0);
+  CHECK(problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1", v, sizeof v, &reason) && strcmp(v, "0.10.1") == 0 && reason[0] == 0);
+  CHECK(problemRolledBackParts("UPDATE ROLLED BACK: 1.2.3: Why.", v, sizeof v, &reason) && strcmp(v, "1.2.3") == 0);  // any case
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK, v, sizeof v, &reason));
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": HTTP 404", v, sizeof v, &reason));
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1x", v, sizeof v, &reason));       // something glued to the version
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1 Why", v, sizeof v, &reason));
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ":0.10.1: Why", v, sizeof v, &reason));
+  CHECK(!problemRolledBackParts("x " PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: Why", v, sizeof v, &reason));  // it must be the start of the text
+  CHECK(!problemRolledBackParts("firmware download failed: 0.10.1: Why", v, sizeof v, &reason));
+  CHECK(!problemRolledBackParts(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 9999.9999.9999: Why", v, 8, &reason));  // a version that does not fit the buffer
+
+  SECTION("problemWords: a rollback that names its version");
+  Words r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: The panel did not draw 100 frames within 3 minutes of starting.");
+  CHECK(r.tag == UPD_ROLLED);
+  CHECK(r.why == "The new firmware (version 0.10.1) did not pass its start-up check, so the board went back to the previous firmware.");
+  CHECK(r.detail == "The panel did not draw 100 frames within 3 minutes of starting.");   // the reason, whole (63 characters)
+  CHECK(r.why.size() < 159 && r.detail.size() < 79);
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("(version 0.10.1)") != std::string::npos && r.detail == "");
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 9999.9999.9999: The new version kept restarting.");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("(version 9999.9999.9999)") != std::string::npos && r.detail == "The new version kept restarting.");
+  CHECK(r.why.size() < 159);
+  r = words("  " PROBLEM_RAW_UPDATE_ROLLED_BACK ": 1.2.3: Why.");   // leading spaces are not part of the text
+  CHECK(r.tag == UPD_ROLLED && r.why.find("(version 1.2.3)") != std::string::npos && r.detail == "Why.");
+  r = words("UPDATE ROLLED BACK: 1.2.3: Why.");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("(version 1.2.3)") != std::string::npos);
+  // the sentence is the same whatever the reason says: words that other branches would take do not change it
+  for (const char *why : {"HTTP 404", "HTTP 503", "refused", "no firmware is published (HTTP 404)", "no identity record", "handshake timeout",
+                          "code expired", "no previous firmware to go back to", "the clock is not set yet", "x509 certificate", "typed wrong three times"}) {
+    std::string withReason = std::string(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: ") + why;
+    Words w = words(withReason.c_str());
+    checks++;
+    if (w.tag != UPD_ROLLED || w.why != "The new firmware (version 0.10.1) did not pass its start-up check, so the board went back to the previous firmware.") {
+      fails++;
+      printf("    FAIL: \"%s\" -> \"%s\"\n", withReason.c_str(), w.why.c_str());
+    }
+    CHECK(w.detail == why);
+  }
+  // a reason longer than the detail is cut in the detail only
+  r = words((std::string(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: ") + std::string(300, 'y')).c_str());
+  CHECK(r.tag == UPD_ROLLED && r.detail.size() == 79 && r.why.size() < 159);
+  // nothing that is not plain printable text gets through, whatever the raw holds
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: bad\x03 reason\n\"q\"\x7F\xC3\xA9 end");
+  for (char ch : r.detail) CHECK((unsigned char)ch >= 0x20 && (unsigned char)ch < 0x7F);
+  CHECK(r.detail.find("bad") == 0 && r.detail.find("end") != std::string::npos);
+  for (char ch : r.why) CHECK((unsigned char)ch >= 0x20 && (unsigned char)ch < 0x7F);
+  // a sentence fed back in is itself
+  Words again = words(words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: Why.").why.c_str());
+  CHECK(again.tag == UPD_ROLLED);
+  // no jargon the owner would not know
+  for (const char *jargon : {"secret", "password", "token", "sha", "esp_", "0x", "errno", "partition", "ota_", "nvs", "rtc"})
+    CHECK(!problemHas(words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: Why.").why.c_str(), jargon));
+
+  SECTION("problemWords: the older rollback forms stay as they were");
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK);
+  CHECK(r.tag == UPD_ROLLED && r.why == "The new firmware did not pass its start-up check, so the board went back to the previous firmware." && r.detail == PROBLEM_RAW_UPDATE_ROLLED_BACK);
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": HTTP 404");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("version") == std::string::npos && r.detail == PROBLEM_RAW_UPDATE_ROLLED_BACK ": HTTP 404");
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": The panel did not draw 100 frames within 3 minutes of starting.");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("version") == std::string::npos);
+  r = words(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1x: Why.");      // not a clean version: the older sentence
+  CHECK(r.tag == UPD_ROLLED && r.why.find("version") == std::string::npos);
+  r = words("went back to the previous firmware");
+  CHECK(r.tag == UPD_ROLLED && r.why.find("version") == std::string::npos);
+
+  SECTION("problemNote: an event is listed and never feeds the one-hour rule");
+  ProblemLog log;
+  ProblemWatch watch;
+  char why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+  problemWords(PROBLEM_RAW_UPDATE_ROLLED_BACK ": 0.10.1: The service did not answer within 3 minutes of starting.", why, sizeof why, detail, sizeof detail);
+  problemNote(log, watch, ProblemKind::Update, why, detail, false, 1700000100, 100 * 1000);
+  CHECK(log.n == 1 && log.e[0].kind == ProblemKind::Update && log.e[0].count == 1);
+  CHECK(strcmp(log.e[0].why, why) == 0 && strcmp(log.e[0].detail, detail) == 0 && log.e[0].firstUnix == 1700000100 && log.e[0].lastUpS == 100);
+  CHECK(!watch.failing[(int)ProblemKind::Update] && watch.failingForMs(ProblemKind::Update, 100 * 1000) == 0);
+  // noted again every minute for two hours: still no long failure, the message never comes
+  for (uint32_t m = 1; m <= 120; m++) {
+    uint32_t now = (100 + 60 * m) * 1000u;
+    problemNote(log, watch, ProblemKind::Update, why, detail, false, 1700000100 + 60 * m, now);
+    CHECK(!watch.longFailure(now) && !watch.kindIsLong(ProblemKind::Update, now) && watch.failingForMs(ProblemKind::Update, now) == 0);
+    CHECK(!problemMessageWanted(true, watch.longFailure(now), now, true, false));
+  }
+  CHECK(log.n == 1 && log.e[0].count == 121);  // the same event is one line that counts up
+  // the contrast: the same text as a failure does start the hour
+  ProblemLog log2;
+  ProblemWatch watch2;
+  for (uint32_t m = 0; m <= 61; m++) problemNote(log2, watch2, ProblemKind::Update, why, detail, true, 1700000100 + 60 * m, (100 + 60 * m) * 1000u);
+  CHECK(watch2.longFailure((100 + 60 * 61) * 1000u));
+  // an event in the middle of a real failure of the same kind changes neither its start nor its latest failure, and does not end it
+  ProblemLog log3;
+  ProblemWatch watch3;
+  const ProblemKind U = ProblemKind::Update;
+  problemNote(log3, watch3, U, "The service did not answer in time.", "", true, 1700000000, 10 * 1000);
+  problemNote(log3, watch3, U, "The service did not answer in time.", "", true, 1700000060, 70 * 1000);
+  uint32_t forBefore = watch3.failingForMs(U, 100 * 1000);
+  problemNote(log3, watch3, U, why, detail, false, 1700000090, 100 * 1000);
+  CHECK(watch3.failing[(int)U] && watch3.failingForMs(U, 100 * 1000) == forBefore && watch3.last[(int)U] == 70 * 1000 && watch3.since[(int)U] == 10 * 1000);
+  CHECK(log3.n == 2 && log3.e[0].count == 1 && log3.e[1].count == 2);
+  // and it does not start a failing run on its own for any other kind either
+  for (int k = 0; k < PROBLEM_KINDS; k++) CHECK(!watch.failing[k]);
+}
+
 static void testWordsDetail() {
   SECTION("problemWords: the detail keeps the technical text");
   Words r = words("X509 - Certificate verification failed, e.g. CRL, CA or signature check failed");
@@ -1602,6 +1769,7 @@ int main() {
   testWordsSentences();
   testWordsDeviceAuth();
   testWordsUpdate();
+  testRolledBackWords();
   testWordsDetail();
   testWordsUnknown();
   testWordsIdempotent();
