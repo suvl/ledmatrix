@@ -185,15 +185,18 @@ code{background:#0b0d10;padding:2px 6px;border-radius:4px}
 <h2 id="fwH">Firmware</h2>
 <p class="note" style="margin:0 0 8px">Nothing here needs Save: the buttons act at once.</p>
 <p id="fwVer" style="margin:0">Loading…</p>
+<p class="note" id="fwSign" style="margin:4px 0 0" hidden></p>
 <p class="note" id="fwProb" hidden></p>
 <p class="note" id="fwChecked" style="margin:4px 0 0"></p>
 <p class="note err" id="fwOff" hidden></p>
 <div class="btns"><button type="button" class="ghost" id="fwCheck">Check now</button></div>
 <div class="fwbox bad" id="fwRolled" hidden></div>
+<div class="fwbox bad" id="fwRefused" hidden role="alert"><h3>An update was refused</h3><p id="fwRefusedText"></p></div>
 <div class="fwbox bad" id="fwErr" hidden role="alert"></div>
 <div class="fwbox avail" id="fwAvail" role="region" aria-labelledby="fwAvailH" hidden>
 <h3 id="fwAvailH">New firmware available</h3>
 <p id="fwAvailV" style="font-weight:600"></p>
+<p class="note" id="fwSigned" style="margin:0 0 6px" hidden></p>
 <p class="fwnotes" id="fwNotes"></p>
 <p class="fwhost" id="fwFrom"><span id="fwFromA">From: </span><code id="fwHostName"></code><span id="fwFromB"></span></p>
 <div class="btns"><button type="button" class="primary" id="fwUpdate">Update</button></div>
@@ -1032,10 +1035,19 @@ const nowifi = (fb, t, ctx) => {
     setText('fwChecked', checked); $('fwChecked').hidden = !checked;
     $('fwCheck').disabled = !idleish || fwWorking;
 
-    /* rolled back, error */
+    /* signing: which keys the display accepts, or that it checks nothing (a development build) */
+    const sg = j.signing && typeof j.signing === 'object' ? j.signing : null;
+    const sgKeys = sg && Array.isArray(sg.keys) ? sg.keys.filter(k => typeof k === 'string' && k).map(k => k.slice(0, 16)) : [];
+    const sgOff = !!sg && sg.required === false, sgOn = !!sg && sg.required === true;
+    putText('fwSign', sgOff ? 'Development build: updates are installed without checking a signature.' : sgOn ? 'Updates must be signed.' + (sgKeys.length ? ' Accepted keys: ' + sgKeys.join(', ') + '.' : '') : '');
+    $('fwSign').className = 'note' + (sgOff ? ' err' : '');
+
+    /* rolled back, refused, error */
     const rb = j.rolledBack && typeof j.rolledBack === 'object' ? j.rolledBack : null;
     putText('fwRolled', rb ? 'Version ' + rb.version + ' failed on this display and was rolled back: ' + rb.why : '');
-    putText('fwErr', upPath ? '' : err); putText('upErr', upPath ? err : '');
+    const refused = !!sg && typeof sg.refused === 'string' && !!sg.refused && !!err && !upPath;  // the signature check said no: the sentence is in `error`
+    $('fwRefused').hidden = !refused; setText('fwRefusedText', refused ? err : '');
+    putText('fwErr', upPath || refused ? '' : err); putText('upErr', upPath ? err : '');
 
     /* the new-version notice */
     const showAvail = !!a && !(waiting && !upPath) && !(active && !upPath) && !(away && !upPath);
@@ -1043,6 +1055,8 @@ const nowifi = (fb, t, ctx) => {
     if (a) {
       setText('fwAvailV', 'Version ' + a.version + (Number.isFinite(a.size) ? ' (' + kb(a.size) + ' KB)' : ''));
       setText('fwNotes', String(a.notes || '').split(/\r?\n/).filter(l => l.trim()).slice(0, 3).join('\n'));
+      const by = typeof a.signedBy === 'string' && a.signedBy ? a.signedBy.slice(0, 16) : '';
+      putText('fwSigned', by ? 'Signed with key ' + by + '.' : sgOff ? 'Signature not checked (development build).' : '');
       const host = typeof a.host === 'string' ? a.host : '';  // where the update would come from: the owner must see it before pressing Update
       setText('fwHostName', host); $('fwFromA').hidden = $('fwHostName').hidden = !host;
       setText('fwFromB', host ? '. Only update if this is your own service.' : 'The update comes from the service address saved on this display. Only update if that is your own service.');

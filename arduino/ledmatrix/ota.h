@@ -29,6 +29,7 @@ enum class PanelScreen : uint8_t { None, Code, Progress };
 
 void begin();  // once, from setup(), after settings::begin(): creates the lock and reads the small saved state (namespace "update")
 const char *version();  // FIRMWARE_VERSION, for /status (read from the marker in the image that the next update looks for)
+const char *signingMode();  // "required" (updates must be signed) or "off" (a development build), for /status
 bool flashing();        // an image is being downloaded, received or installed right now (the portal's connection test waits for the turn: it must not)
 
 // The data task, every loop. `timeSynced`: the clock is set (secure connections need it). May block for the length of a check or a
