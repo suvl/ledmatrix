@@ -135,6 +135,12 @@ Google's service that runs a [container](#container) for you and gives it an HTT
 It is one of the four ways to run the service.
 Read [hosting.md](hosting.md), "Path 3: Google Cloud Run".
 
+## Commit hash
+
+A long code (40 characters, [hexadecimal](#hexadecimal)) that names one exact commit of a repository.
+"Pinned by commit hash" means a workflow step or an image is tied to that exact commit instead of a version label that someone could move. In this project the workflow's GitHub Actions are pinned this way, with the release name in a comment, and the service [image tags](#image-tag) include the commit hash.
+Read [security.md](security.md), "What you must keep up to date" and [hosting.md](hosting.md), "The image".
+
 ## Container
 
 A running copy of a [Docker image](#docker-image): a program started by [Docker](#docker) in its own sealed space, with its own files.
@@ -156,8 +162,8 @@ Read [build.md](build.md), "Terminal in 2 minutes".
 ## Dependabot
 
 A GitHub service that proposes updates to the software your project depends on.
-The security guide lists turning it on among the things to keep up to date.
-Read [security.md](security.md), "What you must keep up to date".
+In this project it runs weekly (on Mondays) for the workflow's GitHub Actions, the service's Go modules and its Docker base images (`.github/dependabot.yml`). It cannot see the tool versions pinned in the workflow's `env` block (arduino-cli, the board package and the libraries): check those by hand.
+Read [security.md](security.md), "What you must keep up to date" and [development.md](development.md), "Releasing".
 
 ## Device ID
 
@@ -176,6 +182,12 @@ Read [architecture.md](architecture.md), "Identity and trust" and [security.md](
 The service in your router that hands out network addresses to the devices on your home network.
 A DHCP reservation (also called a static lease) makes the router always give the same address to one device. Give your home server one.
 Read [hosting.md](hosting.md), "Path 1: a home server".
+
+## Display name
+
+The name of one display, set in the [portal](#portal) under "Wi-Fi and device". The default is `ledmatrix`. It is the display's [mDNS](#mdns) name (`<name>.local`), its name on your router and the name of its own setup Wi-Fi network once you have set one; the Connected screen and the Problem message show it too.
+A name is 1 to 24 characters: letters, digits and hyphens, with no hyphen at either end, and capitals become lower case. Saving a new name restarts the display (about 20 seconds) and the portal follows it to the new address. Two displays on one network need different names; with the same name the second one is answered as `<name>-2.local`, which was not seen on a board yet. A board that has never been set up always starts its setup network as `ledmatrix`.
+Read [install.md](install.md), "A second display" and [operations.md](operations.md), "Change a setting".
 
 ## DNS
 
@@ -312,7 +324,7 @@ Read [build.md](build.md), "Terminal in 2 minutes" and [build.md](build.md), "Wh
 ## Host test
 
 A test that compiles part of the firmware's own code as an ordinary program for your computer and runs it, so you need no board.
-In this project five of them cover request signing, the [problem list](#problem-list), plane choice, [panel protection](#panel-protection) and the update logic. You need them only if you change the code.
+In this project they cover request signing, the [problem list](#problem-list), plane choice, [panel protection](#panel-protection), the update logic, the display name, the settings save and the portal's request guard. You need them only if you change the code.
 Read [development.md](development.md), "The tests".
 
 ## HTTP and HTTPS
@@ -426,7 +438,7 @@ Read [install.md](install.md), "Make the master secret and back it up" and [secu
 ## mDNS
 
 A way for devices on the same local network to find each other by name without a server.
-It is why `http://ledmatrix.local` works. macOS supports it. On Linux you may need the Avahi service and the `nss-mdns` package (not tested here).
+It is why `http://ledmatrix.local` works (`ledmatrix` is the default [display name](#display-name)). macOS supports it. On Linux you may need the Avahi service and the `nss-mdns` package (not tested here).
 Read [install.md](install.md), "Wi-Fi setup (setup mode)".
 
 ## Mermaid
@@ -467,7 +479,7 @@ Read [architecture.md](architecture.md), "Networks and time".
 ## NVS
 
 Non-volatile storage: a small key-value store in the `nvs` [partition](#partition) of the board's [flash](#flash).
-In this project it holds the saved settings and the Wi-Fi name and password. It survives restarts and updates, and it is not encrypted.
+In this project it holds the saved settings and the Wi-Fi name and password, and, only while a new firmware is on [probation](#probation), that firmware's boot counter. It survives restarts and updates, and it is not encrypted.
 Read [architecture.md](architecture.md), "What the board remembers".
 
 ## One-second rule
@@ -475,6 +487,12 @@ Read [architecture.md](architecture.md), "What the board remembers".
 The project's hard rule: once the board is online, the panel never goes more than 1 second without drawing a new picture.
 It works because slow work (network, [flash](#flash), name lookups) never runs on the drawing [task](#task).
 Read [architecture.md](architecture.md), "The one-second rule".
+
+## Origin and Host check
+
+The portal's guard against other web pages. It refuses a request that changes something (every POST) when its `Origin` (or `Referer`) names another website, with `403`. It also refuses, with `421 Misdirected Request`, any request that does not name the display itself (its `<name>.local`, its bare name or its IP address) in the `Host` header, which blunts DNS rebinding.
+So a web page in your browser cannot change the display's settings. Programs that send no `Origin` or `Referer`, such as [curl](#curl), still can: there is still no password. In setup mode the Host check is off.
+Read [security.md](security.md), "The portal: plain HTTP, no password".
 
 ## OTA
 
@@ -526,7 +544,7 @@ Read [install.md](install.md), "Parts, wiring and power".
 ## Portal
 
 The settings web page that the display serves itself on your home network, at `http://ledmatrix.local`. You use it to choose what to show, set your location, check problems and allow updates.
-It uses plain HTTP and has no password, so anyone on your Wi-Fi can open it; a firmware update still needs the [update code](#update-code) from the panel.
+It uses plain HTTP and has no password, so anyone on your Wi-Fi can open it; a firmware update still needs the [update code](#update-code) from the panel. A web page in your browser cannot change its settings (see [Origin and Host check](#origin-and-host-check)), but a program on your network that sends the commands directly can.
 Read [install.md](install.md), "First look at the portal" and [security.md](security.md), "How the system is protected".
 
 ## POSIX time zone rule
@@ -542,14 +560,14 @@ Read [architecture.md](architecture.md), "The big picture".
 
 ## Probation
 
-The trial period of a freshly installed firmware. Within 3 minutes it must join Wi-Fi, serve the [portal](#portal), draw 100 frames with none more than 1 second apart, and get one answer from your service. If it passes and 60 seconds have gone by, it is kept. If it fails, or crashes 3 times, the board goes back to the old image ([rollback](#rollback)).
+The trial period of a freshly installed firmware. Within 3 minutes it must join Wi-Fi, serve the [portal](#portal), draw 100 frames with none more than 1 second apart, and get one answer from your service. If it passes and 60 seconds have gone by, it is kept. If it fails, or the board has started 3 times without passing, it goes back to the old image ([rollback](#rollback)) on the 4th start. The count is kept in flash and every start counts, so a power cut counts like a crash.
 A firmware flashed over USB is never on probation.
 Read [architecture.md](architecture.md), "Firmware updates".
 
 ## Problem list
 
-The display's own list of its last 10 problems, in plain English, newest first. It is in the portal's Problems section and at `/api/problems`, and it is empty after a restart.
-When one kind of data has failed for a full hour, the panel also shows "PROBLEM" for 5 seconds once a minute.
+The display's own list of its last 10 problems and notable events, in plain English, newest first. It is in the portal's Problems section and at `/api/problems`, and it is empty after a restart. A rollback of a new firmware appears here too, under the kind "update check".
+When one kind of data has failed for a full hour, the panel also shows "PROBLEM" for 5 seconds once a minute; events such as a rollback show only in the list.
 Read [operations.md](operations.md), "Reading the Problems section".
 
 ## Protomatter
@@ -627,7 +645,7 @@ Read [install.md](install.md), "Parts, wiring and power".
 ## Rollback
 
 Going back to the old firmware when a new one fails its [probation](#probation).
-The board's [bootloader](#bootloader) does not do this, so the firmware does it itself, using a state record and a boot counter. A version that was rolled back is not offered again until a newer one exists.
+The board's [bootloader](#bootloader) does not do this, so the firmware does it itself, using a state record and a boot counter that is kept in flash. A version that was rolled back is not offered again until a newer one exists. A rollback is listed in the [problem list](#problem-list) but does not put the PROBLEM message on the panel.
 Read [operations.md](operations.md), "Rollback: when the new version does not pass" and [architecture.md](architecture.md), "Firmware updates".
 
 ## ROM bootloader
@@ -641,12 +659,6 @@ Read [install.md](install.md), "First flash".
 Two kinds of key that a [certificate](#certificate) can hold.
 The display accepts both, but a certificate with an RSA key (2048 bits) lets it make its first secure connection much faster: about 0.4 seconds against about 2.3 in the project's own measurements. So ask for RSA.
 Read [hosting.md](hosting.md), "What the display needs" and [hosting.md](hosting.md), "Background".
-
-## RTC memory
-
-A small area of the chip's memory that survives a crash restart but not a power cut.
-In this project it holds the boot counter that [rollback](#rollback) uses: more than 3 boots during [probation](#probation) means a rollback on the 4th.
-Read [architecture.md](architecture.md), "Firmware updates".
 
 ## Screw terminal
 
@@ -680,7 +692,7 @@ Read [architecture.md](architecture.md), "The service" and [hosting.md](hosting.
 
 ## Setup mode
 
-The state in which the board makes its own Wi-Fi network, named `ledmatrix`, so that you can tell it your home Wi-Fi. A random 8-character password is shown on the panel. You then open `http://192.168.4.1`.
+The state in which the board makes its own Wi-Fi network, named `ledmatrix` (or your [display name](#display-name), once you have set one), so that you can tell it your home Wi-Fi. A random 8-character password is shown on the panel. You then open `http://192.168.4.1`.
 A board with no saved Wi-Fi starts in setup mode. To start it again, hold the UP button for 5 seconds.
 Read [install.md](install.md), "Wi-Fi setup (setup mode)".
 

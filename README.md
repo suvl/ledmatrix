@@ -3,7 +3,7 @@
 LedMatrix is a smart flight tracker for your window. A small LED panel shows each new plane that flies near your
 home, once, with its airline, route, aircraft type, height and speed. Between planes it shows the weather, news
 headlines and a clock. You set it up on a web page that the display serves itself on your home network, at
-`http://ledmatrix.local`. It has three parts: the [firmware](docs/glossary.md#firmware) on the display's
+`http://ledmatrix.local` (the default name; you can give each display its own). It has three parts: the [firmware](docs/glossary.md#firmware) on the display's
 [ESP32](docs/glossary.md#esp32) board, a small [service](docs/glossary.md#service) you run that fetches the flight,
 weather and headline data, and the settings page (the [portal](docs/glossary.md#portal)).
 
@@ -63,6 +63,10 @@ Wiring and power details are in [docs/install.md](docs/install.md). Prices are n
 Something unclear, broken or missing? Open an issue at <https://github.com/suvl/ledmatrix/issues>. Where a guide says
 "ask in an issue", this is where.
 
+Found a security problem? Do not put the details in a public issue. Report it privately: open the **Security** tab of
+the repository on GitHub and choose **Report a vulnerability**. [SECURITY.md](SECURITY.md) explains what to include and
+what to expect.
+
 ## Quick start
 
 Do these in order. Each step names the guide and the step title in it. [docs/operations.md](docs/operations.md), "Day 0",
@@ -115,7 +119,10 @@ the architecture page to build a display.
 | `shared/` | What the portal, the preview page and the firmware share: the pixel renderer and fonts, the time zone table, and the written contracts for [signed requests](shared/device-auth.md) and [firmware updates](shared/firmware-update.md). |
 | `tools/` | Helper scripts: `build_web.py` builds the portal and preview pages, `provision.py` gives a board its key, `burn_key/` burns the key into the chip, `make_manifest.py` writes the update list, plus the tests that run on your computer. |
 | `deploy/compose/` | Example files for running the service on a home or rented server: a Docker Compose file and a Caddy configuration (see [docs/hosting.md](docs/hosting.md)). |
+| `.github/` | The build workflow (tests, firmware build, service image) and the Dependabot configuration. |
 | `docs/` | The documents listed above. |
+| `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md` | The licence (Apache 2.0), the copyright notice, and the notices for other people's code (see "Licence" below). |
+| `SECURITY.md` | How to report a security problem privately, and what to expect. |
 | `wayfinder/` | A pointer to the project's decisions and the longer research notes in `research/`. |
 | `arduino/milestone/`, `circuitpython/` | Earlier experiments (a Wi-Fi and TLS interference test, CircuitPython smoke tests). |
 
@@ -135,6 +142,20 @@ mean.
   key refused. The display never went more than one second without redrawing, even during a download.
 - The permanent key burn, followed by `provision.py --burned`.
 
+**Verified on the author's own display on 26 November 2026:**
+
+- Renaming the display through the settings interface and back: the settings were identical afterwards, and invalid
+  names were refused with plain sentences.
+- The portal's checks of where a request comes from: requests from the same site, or with no origin, were answered;
+  requests from another site were refused (403); requests with another host name were refused (421); an upload from
+  another site was refused without using up one of the update code's tries.
+- A firmware update that crashes at start rolled back on the 4th start, with an entry in the Problems section (the
+  kind "update check", the version, and the reason "The new version kept restarting.") and without the panel's PROBLEM
+  message.
+- An update that hangs before it joins Wi-Fi rolled back at exactly 3 minutes ("The board did not join Wi-Fi within 3
+  minutes of starting.").
+- The uptime counter in `/status` counts from a 64-bit timer, and the settings gained only the new `deviceName` field.
+
 **Checked by the author on a real board while building it** (not repeated for these guides): the screens, the Wi-Fi
 setup mode, the settings portal, live data from the service, signed requests, panel protection and the problem list.
 
@@ -148,18 +169,28 @@ setup mode, the settings portal, live data from the service, signed requests, pa
   a rented server and Google Cloud Run were not tested. Each section of [docs/hosting.md](docs/hosting.md) says what
   was run.
 - Any board or panel other than the two named above.
+- A real power cut during the first minutes after an update. The boot counter that decides a rollback is now kept in
+  flash and is covered by tests and by the crash test, but nobody pulled the plug.
+- Two displays with the same name on one network (the second answers as `<name>-2.local`), and setup mode with a long
+  display name.
+- A web page on another site trying the portal in a real browser (the checks were tested with requests), the timing of
+  frames while settings are saved, and reaching the portal by a raw IPv6 address.
 
 **Licence:** Apache License 2.0, see [Licence](#licence) below.
 
 **Known limits** (the security ones are explained in [docs/security.md](docs/security.md)):
 
 - Weather works for Portugal only, and headlines come from the Portuguese edition of Google News.
-- The portal uses plain HTTP, on your home network, with no password. Anyone on your network can change the display's
-  settings.
+- The portal uses plain HTTP, on your home network, with no password. A web page in a browser cannot change the
+  display's settings (the display refuses requests from other sites), but anyone on your network who sends the
+  commands directly can.
+- The portal answers only to the display's own name (`<name>.local`) or its IP address. Other names, such as one from
+  your router's DNS or a reverse proxy, are refused with a message.
 - That includes the address of the service, which is also where firmware updates come from. An update still needs the
   six-digit code shown only on the panel, but a signed update list would close the gap and is not built yet.
 - The automatic rollback does not catch a crash that happens before the program's `setup()` starts. Its boot counter
-  lives in memory.
+  is kept in flash and every start counts, so a display that is switched off and on again several times in the first
+  minutes after an update can go back to the old firmware even if the new one is fine.
 - After the key is burned, a lost master secret locks the display out of your service for good. Back it up offline.
 - Not every commit in the history is signed.
 

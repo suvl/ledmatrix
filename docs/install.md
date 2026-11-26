@@ -6,7 +6,7 @@ This page takes you from a box of parts to one working LedMatrix display on your
 
 **You can stop after step 5 and still have a result.** Steps 1 to 5 need no service. The display then shows example screens with made-up planes, weather and headlines, and that proves the hardware works.
 
-Every host name, address, ID and path on this page is a placeholder: `apis.example.com` (your service), `192.0.2.10` (the display's address on your network), `aabbccddeeff` (a device ID), `/dev/cu.usbmodem1234` (a serial port), `Example Home Wi-Fi` (your Wi-Fi name). The name `ledmatrix.local` is real: every display asks for that name. The address `192.168.4.1` is real too: it is the fixed address of the display's own Wi-Fi network in setup mode.
+Every host name, address, ID and path on this page is a placeholder: `apis.example.com` (your service), `192.0.2.10` (the display's address on your network), `aabbccddeeff` (a device ID), `/dev/cu.usbmodem1234` (a serial port), `Example Home Wi-Fi` (your Wi-Fi name). The name `ledmatrix.local` is real: it is the name every display answers to until you change its Display name setting (step 11), and this page uses it throughout. A renamed display answers to `<name>.local` instead, and its setup Wi-Fi network carries the same name. The address `192.168.4.1` is real too: it is the fixed address of the display's own Wi-Fi network in setup mode.
 
 ## Before you start
 
@@ -192,14 +192,14 @@ Both commands run from the repository root. The board name `esp32:esp32:adafruit
 | Screen | What it shows | What it means |
 | --- | --- | --- |
 | Boot | `ledmatrix`, `connecting...` | The board is joining the Wi-Fi, or scanning for networks before it starts setup mode. |
-| Setup | `ledmatrix` in amber, `WIFI PASSWORD`, an 8-character password, `192.168.4.1` | [Setup mode](glossary.md#setup-mode): the board has no saved Wi-Fi and has started a Wi-Fi network of its own. |
-| Connected | `WIFI OK`, the board's address, `ledmatrix.local` | The board joined your Wi-Fi. Shown for 5 seconds. |
+| Setup | the network name (`ledmatrix` on a new board) in amber, `WIFI PASSWORD`, an 8-character password, `192.168.4.1` | [Setup mode](glossary.md#setup-mode): the board has no saved Wi-Fi and has started a Wi-Fi network of its own, named after the display. |
+| Connected | `WIFI OK`, the board's address, `ledmatrix.local` (the display's own name) | The board joined your Wi-Fi. Shown for 5 seconds. |
 | No Wi-Fi | a red cross, `NO WIFI`, `hold UP 5s`, `to set up` | The saved network could not be joined within about 20 seconds. |
 | Example screens | made-up flight cards, example weather, sample headlines | No service address saved: the board cycles example data (a clock takes their place only if you switch all three off). A short press of UP or DOWN steps through them. |
-| Problem | `PROBLEM`, `Data is failing`, `See the portal:`, `ledmatrix.local` | Something has been failing for an hour. See step 9. |
+| Problem | `PROBLEM`, `Data is failing`, `See the portal:`, `ledmatrix.local` (the display's own name) | Something has been failing for an hour. See step 9. |
 | Update | `UPDATE` with six digits, `Type it in portal` | A firmware update waits for its [update code](glossary.md#update-code) (see [operations.md](operations.md), "Firmware updates"). |
 
-A small orange square that blinks at the top right of a live screen means the data is stale. A thin amber line that grows along the bottom edge is the UP button being held.
+The boot screen always says `ledmatrix`. The setup, Connected and Problem screens show the display's own name; a long name is cut at the panel's width (about 10 characters of name fit next to `.local`), and the Connected screen also shows the IP address. A name of 11 to 24 characters appears in small letters on up to two lines of the Setup screen (Not tested here). A small orange square that blinks at the top right of a live screen means the data is stale. A thin amber line that grows along the bottom edge is the UP button being held.
 
 **In the serial monitor.** The serial monitor shows what the board prints about itself. Open it (leave it with Ctrl+C):
 
@@ -210,14 +210,14 @@ arduino-cli monitor --port /dev/cu.usbmodem1234 --config baudrate=115200
 You see lines like these, in about this order (taken from the source code, not from a recording; the version follows the firmware you built, and your password differs):
 
 ```
-ledmatrix: slice 4, live data
+ledmatrix 0.10.1
 IDENT device aabbccddeeff record missing signer none check not_run
 OTA version 0.10.1
 matrix.begin() = 0
 SETUP network "ledmatrix" password 7K3PQ9XM at 192.168.4.1
 ```
 
-- `matrix.begin() = 0` means the panel driver started. Any other number means it did not: check the wiring.
+- The first line is `ledmatrix` and the firmware version. `matrix.begin() = 0` means the panel driver started. Any other number means it did not: check the wiring.
 - `IDENT device aabbccddeeff ...` shows the board's **[device ID](glossary.md#device-id)**: its factory MAC address (a number built into a network chip at the factory) written as 12 lowercase characters. Write it down. `record missing` is right for now: the identity record comes in step 8.
 - `SETUP ...` shows the setup network name, password and address, the same as the panel. Later lines include `NET state N` (0 connecting, 1 online, 2 offline, 3 setup), `ONLINE <address> as ledmatrix.local` once the Wi-Fi is joined, `LIVE ...` lines about the data, and `SHOW <screen>` each time the picture changes.
 
@@ -245,12 +245,12 @@ If the monitor shows nothing, press RESET once. If it stops when the board resta
 
 A board with no saved Wi-Fi network goes into [setup mode](glossary.md#setup-mode) by itself when it starts. To start it later, **hold the UP button for 5 seconds**. Adafruit's guide describes three buttons along one edge of the board: RESET at the top, UP in the middle and DOWN at the bottom, plus a separate small BOOT button. Check the printed labels on your own board, and do not confuse UP with BOOT. A thin amber line grows along the bottom edge of the panel while you hold. At 5 seconds the board forgets the Wi-Fi network and restarts into setup mode. Only the Wi-Fi network is forgotten. Settings and identity stay. The portal also has a button, "Forget this Wi-Fi network", that does the same.
 
-In setup mode the board creates its own Wi-Fi network named `ledmatrix`, with a random 8-character password that is shown on the panel and printed in the serial monitor. The password uses capital letters and digits without 0, O, 1 and I, and it changes every time setup mode starts.
+In setup mode the board creates its own Wi-Fi network, named after the display: `ledmatrix` on a new board (the first-boot name is always `ledmatrix`), or the new name once you have renamed the display (step 11). The network has a random 8-character password that is shown on the panel and printed in the serial monitor. The password uses capital letters and digits without 0, O, 1 and I, and it changes every time setup mode starts.
 
 ### 4.2 Steps
 
 1. **Read the panel.** It shows the network name (`ledmatrix`), the password and the address `192.168.4.1`.
-2. **Join that network** from your phone or computer: open the Wi-Fi list, choose `ledmatrix`, and type the password from the panel. Your device may say there is no internet on this network. That is true: stay connected.
+2. **Join that network** from your phone or computer: open the Wi-Fi list, choose `ledmatrix` (or the display's own name), and type the password from the panel. Your device may say there is no internet on this network. That is true: stay connected.
 3. **Open the setup page.** A sign-in page may open by itself (the board answers every name with its own address). If not, open `http://192.168.4.1` in a browser. Use `http`, not `https`.
 4. **Fill in the form.** The browser tab says "ledmatrix setup"; the page's heading is "ledmatrix" and it says "Choose the Wi-Fi network this display should use." Pick your network from the list (the board scans when setup starts and lists up to 20 networks, strongest first). If yours is not listed, type its exact name in the box "Network not listed? Type its name". Type the Wi-Fi password and press **Save and connect**.
 5. **Wait.** The page says "Saved" and that the display is restarting. After about 2.5 seconds the board restarts and joins your network. The panel shows the boot screen, then the Connected screen for 5 seconds (`WIFI OK`, its address, `ledmatrix.local`).
@@ -262,6 +262,8 @@ The Wi-Fi password is saved in the board's flash. It is never put in this reposi
 
 Open **`http://ledmatrix.local`** in a browser on a device that is on the same home network. This works through [mDNS](glossary.md#mdns), a way for devices on a [local network](glossary.md#lan) to find each other by name without a server. macOS supports it. The page you see is the portal (step 5). The address is plain `http`: the portal is for your home network only and has no password (see [security.md](security.md)).
 
+If you renamed the display (step 11), use `<name>.local` instead of `ledmatrix.local` here and everywhere else on this page.
+
 If `ledmatrix.local` does not open, use the board's address instead:
 
 - The Connected screen shows it, but only for 5 seconds after each join. To see it again, unplug the board and plug it in again, or press RESET.
@@ -270,17 +272,19 @@ If `ledmatrix.local` does not open, use the board's address instead:
 
 Then open `http://192.0.2.10` (with your own address). Not tested here: `ping ledmatrix.local` is a quick test that the name resolves.
 
+**The display answers only to its own name or its own IP address.** If a page says "This display answers only to its own name (for example ledmatrix.local) or its own IP address. Open it that way.", you reached it by another name, such as a name your router gives it (`ledmatrix.lan`, for example), or through a proxy or a VPN. Use `ledmatrix.local`, the bare name `ledmatrix`, or the IP address. This protects the portal from web pages that try to trick your browser into talking to it. (Verified on the author's own display on 26 November 2026: other Host names get this answer, code 421. Tools such as `curl` that name the display correctly are not affected.)
+
 Linux (Not tested here): `.local` names need the Avahi service and the `nss-mdns` package. Without them, use the address.
 
 ### 4.4 If something goes wrong
 
-- **No `ledmatrix` network in the Wi-Fi list.** Check that the panel shows the Setup screen. Move closer. If the panel shows the Boot screen for a long time, wait a few seconds: the board scans first.
+- **No `ledmatrix` network (or no network with the display's name) in the Wi-Fi list.** Check that the panel shows the Setup screen. Move closer. If the panel shows the Boot screen for a long time, wait a few seconds: the board scans first.
 - **You joined it, but no page opens.** Type `http://192.168.4.1` yourself. Turn off a VPN or private DNS on the device while you do this, and keep the connection when it says there is no internet.
 - **The Wi-Fi list is empty or does not have your network.** Type the name in the "Network not listed" box.
 - **After Save the panel says `NO WIFI`.** The name or password was wrong, the network is out of range, or it is 5 GHz only. Hold UP for 5 seconds and try again. The password is case sensitive.
-- **`ledmatrix.local` does not open.** Use the address (4.3). Check that your computer is on the same network as the display and not on a guest network. Some routers block devices from talking to each other (often called client isolation): look for that setting. Not tested here.
+- **`ledmatrix.local` does not open.** Use the address (4.3). If the page says "This display answers only to its own name...", see the end of 4.3. Check that your computer is on the same network as the display and not on a guest network. Some routers block devices from talking to each other (often called client isolation): look for that setting. Not tested here.
 - **The address changes after a restart.** That is normal on many routers. Use `ledmatrix.local`, or ask the router to always give the display the same address.
-- **You have two displays.** Both ask for the name `ledmatrix.local`. See step 11.
+- **You have two displays.** Both start with the name `ledmatrix.local`. Give each its own Display name: see step 11.
 
 ## 5. First look at the portal
 
@@ -292,7 +296,7 @@ Linux (Not tested here): `.local` names need the Avahi service and the `nss-mdns
 Settings apply when you press **Save**, the amber button in the bar at the bottom ("Saved." appears in the bar). Brightness is the one exception: it applies and is saved when you let go of its slider. Settings live on the board, one set for each display. The portal has no export button; [operations.md](operations.md) ("Backups") shows how to save and restore them with `/api/settings`.
 
 > [!NOTE]
-> The portal has no password. Anyone on your home network can open it and change the settings, including the saved service address. This is a known limit; [security.md](security.md) explains it.
+> The portal has no password. Anyone on your home network who types the requests directly (with `curl`, for example) can change the settings, including the saved service address. A request that names another web site as its origin, as a browser sends it for a page from that site, is refused (Verified on the author's own display on 26 November 2026 with requests that carry such an origin; a real cross-site page in a browser was not tried). This is a known limit; [security.md](security.md) explains it.
 
 ### 5.1 What to set now
 
@@ -316,7 +320,9 @@ So a dark or dim panel is usually normal. Press UP or DOWN briefly to wake it.
 
 ### 5.3 The rest of the portal
 
-*Recent planes* lists the planes the display has seen enter your radar. *Problems* is the list of the last 10 problems, in plain English (step 9). *Firmware* shows the version and a **Check now** button, and *Install a .bin file* is for when the normal update does not work (both are in [operations.md](operations.md), "Firmware updates"). *Wi-Fi and device* shows which network the display is on and has the button **Forget this Wi-Fi network**, which restarts the display into setup mode (it asks you first). If you press Save with a value the display does not accept, it says why next to the button, for example "The radius must be between 1 and 250 km." and saves nothing.
+*Recent planes* lists the planes the display has seen enter your radar. *Problems* is the list of the last 10 problems, in plain English (step 9). *Firmware* shows the version and a **Check now** button, and *Install a .bin file* is for when the normal update does not work (both are in [operations.md](operations.md), "Firmware updates"). *Wi-Fi and device* has the **Display name** (see below), shows which network the display is on, and has the button **Forget this Wi-Fi network**, which restarts the display into setup mode (it asks you first).
+
+**Display name.** Leave it as `ledmatrix` unless you run more than one display on the same network (step 11). It is the name the display answers to on your network (`<name>.local`), its name for your router, and the name of its setup Wi-Fi. It has 1 to 24 letters, digits or hyphens, with no hyphen at the start or end; capital letters become lower case. A name the display does not accept is refused with a plain sentence, for example "The display name can be at most 24 characters." Saving a new name restarts the display, which takes about 20 seconds, and the portal then opens the new address by itself. (Verified on the author's own display on 26 November 2026: renaming the display through its settings interface and back left the settings identical, and bad names were refused with plain sentences. Not tested here: the portal following the new address in a browser, and a setup network with a long name.) If you press Save with a value the display does not accept, it says why next to the button, for example "The radius must be between 1 and 250 km." and saves nothing.
 
 ### 5.4 If something goes wrong
 
@@ -408,7 +414,7 @@ About `python3 -I`: the `-I` flag runs Python in isolated mode. Python then igno
 
 There are two ways. They differ in where the tool gets the device ID. Use Way 1 unless you cannot.
 
-**Way 1: ask the board over the network (`--from-board`).** Use it when the display is on your Wi-Fi, `ledmatrix.local` opens in your browser, and there is only one display on your network.
+**Way 1: ask the board over the network (`--from-board`).** Use it when the display is on your Wi-Fi, `ledmatrix.local` opens in your browser, and no other display answers to that name.
 
 ```
 python3 -I tools/provision.py --from-board ledmatrix.local \
@@ -421,7 +427,7 @@ What it does: asks `http://ledmatrix.local/status` for the device ID, makes the 
 
 A good result: first a line like `device=aabbccddeeff crc32=3ed30d13` (the checksum differs for every secret), then the `arduino-cli upload` output, and last `deleted the image file (it held the device key); use --keep to keep it`. The tool never prints the secret or the key.
 
-**Way 2: give the device ID yourself (`--device-id`).** Use it when `.local` names do not work for you, when the display is not on Wi-Fi yet, or when you have several displays on one network (the name `ledmatrix.local` may then reach the wrong one; the firmware refuses an identity made for another board, so a mix-up is caught). Get the ID from the serial monitor (the `IDENT device ...` line), from `/status` at the board's address, or from the portal's "This board's ID". It is exactly 12 lowercase hexadecimal characters.
+**Way 2: give the device ID yourself (`--device-id`).** Use it when `.local` names do not work for you, when the display is not on Wi-Fi yet, or when two displays still share the name `ledmatrix.local` (it may then reach the wrong one; the firmware refuses an identity made for another board, so a mix-up is caught). Get the ID from the serial monitor (the `IDENT device ...` line), from `/status` at the board's address, or from the portal's "This board's ID". It is exactly 12 lowercase hexadecimal characters.
 
 ```
 python3 -I tools/provision.py --device-id aabbccddeeff \
@@ -486,7 +492,7 @@ These are the tool's own messages with the fix. The first seven were produced by
 | `error: the device ID must be 12 lowercase hexadecimal characters` | The ID has capitals, colons or another length. | Copy the ID again from the serial monitor or the portal. |
 | `error: give exactly one of --device-id and --from-board` | You gave both or neither. | Give one. |
 | `provision.py: error: unrecognized arguments (not shown: one of them may be a secret)...` | An option the tool does not know, for example the secret typed as an argument. | Give the file with `--secret-file`. |
-| `error: could not read the device ID from the board (is it on, and is the firmware up to date?)` | The tool could not reach the board's `/status`. | Check the board is on your Wi-Fi and `ledmatrix.local` opens in a browser, or use Way 2. |
+| `error: could not read the device ID from the board (is it on, and is the firmware up to date?)` | The tool could not reach the board's `/status`. | Check the board is on your Wi-Fi and `ledmatrix.local` opens in a browser. The display answers only to its own name or IP address, so another name for it (a router's name, say) fails too. Or use Way 2. |
 | `error: an identity image is exactly 8192 bytes` | `--check` was given a file that is not an identity file. | Check the file name. |
 | `the image file was kept (it holds the device key): <path>`, then `error: arduino-cli upload failed (exit code N)` | The flash step failed. The tool keeps the file so that you can try again. | Fix the cause (3.4), then run the same command again. After a good flash the tool deletes the file; if you give up, delete it yourself: it holds the device key. |
 | `error: arduino-cli could not show the board's upload properties` | The tool could not run `arduino-cli`. | Check that `arduino-cli version` works in the same Terminal window (see [build.md](build.md)). |
@@ -553,19 +559,18 @@ The runbook covers each case. In short:
 
 ## 11. A second display
 
-*Label: Not tested here. Nobody has set up a second display.*
+*Label: Verified on the author's own display on 26 November 2026: renaming the display through its settings interface and back, and the refusals with plain sentences. Not tested here: a real second display, and the name clash (the `-2` name below).*
 
-The steps are the same as for the first display, with these differences. [operations.md](operations.md) ("Replace or add a display") covers the day-to-day side.
+Every display starts with the name `ledmatrix`, and two displays on one network cannot both keep it. The **Display name** setting in the portal gives each display a name of its own. The steps are the same as for the first display, with these differences. [operations.md](operations.md) ("Replace or add a display") covers the day-to-day side.
 
 1. **Parts and wiring:** step 1 again.
 2. **First flash:** step 3 again. The build folder from the first display works: the firmware is the same for every board. Use the second board's own serial port.
-3. **Wi-Fi:** step 4 again.
-4. **Settings:** step 5 and the service address in step 7 again. Settings are per display; the portal has no copy button (see "Backups" in [operations.md](operations.md)).
-5. **Identity: reuse the same master secret, and give the new board its own provisioning.** Run `provision.py` again with the same `--secret-file` and the new board's own device ID (Way 2). The new board has a different ID, so it gets a different key from the same secret. Do not reuse the first board's identity file. **The service needs no change:** it works out each board's key from its ID.
-6. **The burn:** each board has its own dry run and its own real burn, with its own build for its own ID.
-7. **Back up:** the master secret is the only thing to back up. A leak of it affects every display.
-
-**Name clash.** Each display asks for the name `ledmatrix.local`. What your network does when two displays ask for it at once is not tested here. The safe way: set up and provision the second display while the first is unplugged, find each one by its address, and use Way 2 in step 8.
+3. **Wi-Fi:** step 4 again. A new board's setup network is always called `ledmatrix`, whatever you named the first display.
+4. **Give it its own name.** If the first display is switched on, it already answers to `ledmatrix.local`. The portal's own note says that a display that finds its name taken adds `-2` to it (for example `ledmatrix-2.local`), that the address line on the panel does not show the `-2`, and that the IP address always works. That clash has not been seen on a board yet (Not tested here). So find the second display by its IP address (4.3), or switch the first display off while you set up the second. Then open the second display's portal and, under **Wi-Fi and device**, type a name in **Display name**, for example `kitchen`, and press **Save**. The display restarts (about 20 seconds), the portal opens `http://kitchen.local` by itself, and from now on the display's setup Wi-Fi is called `kitchen`. The rules for a name are in step 5.
+5. **Settings:** step 5 and the service address in step 7 again. Settings are per display; the portal has no copy button (see "Backups" in [operations.md](operations.md): the saved settings include the display name).
+6. **Identity: reuse the same master secret, and give the new board its own provisioning.** Run `provision.py` again with the same `--secret-file`. Once the display has its own name, Way 1 is safe: `--from-board kitchen.local`. Otherwise use Way 2 with the new board's own device ID. The new board has a different ID, so it gets a different key from the same secret. Do not reuse the first board's identity file. **The service needs no change:** it works out each board's key from its ID.
+7. **The burn:** each board has its own dry run and its own real burn, with its own build for its own ID.
+8. **Back up:** the master secret is the only thing to back up. A leak of it affects every display.
 
 ## Background
 
@@ -589,7 +594,8 @@ An upload writes the boot loader at the start of the flash, the partition table 
 | Evidence | What it covers |
 | --- | --- |
 | **Verified on the author's own display on 25 Nov 2026** | The dry run and the real burn with `tools/burn_key`, followed by `provision.py --burned`, and the `identity` and `signer` fields in that procedure. |
+| **Verified on the author's own display on 26 November 2026** | Renaming the display through its settings interface and back (the settings were identical afterwards), and the refusals of bad names with plain sentences; the portal's Host and Origin checks (requests from the page itself, and requests with no Origin, are answered; requests from another site get 403; other Host names get 421, the answer described in 4.3); the settings gaining only `deviceName`. |
 | **Checked by the author while building it** (not re-run for this page) | The first flash with `arduino-cli upload`; running normally on a saved Wi-Fi; the portal sections and their fields; the `version` field of `/status`; `provision.py --from-board ... --flash`. |
 | **Tested on macOS on 25 Nov 2026** (macOS 27.0.1, no board attached) | `python3 -I tools/provision.py --device-id aabbccddeeff --secret-file <placeholder> --out <file>` printed `device=aabbccddeeff crc32=3ed30d13` and wrote an 8192-byte file with mode `-rw-------`. `--check` on it printed `device=aabbccddeeff crc32=3ed30d13 burned=no`. A `--burned --device-id` file printed `crc32=2514c637 burned=yes`, and `--check` agreed. The first seven messages in the table in step 8 were produced by running the tool. `tools/test_provision.py` ran 66 tests and `tools/test_burn_key.py` ran 12 tests: all OK. The secret recipe in step 6 ran in `zsh` in a scratch folder with the built-in LibreSSL 3.3.6: a 65-byte file with mode `-rw-------`, and the second run printed the STOP line; Homebrew OpenSSL 4.1.0 gave the same file. `arduino-cli version`, `python3 --version` and `openssl version` printed the versions in step 2. Only `--help` of `arduino-cli upload`, `monitor` and `board list` was run: no serial port was touched. |
 | **Read from the manufacturers' pages** (fetched 25 Nov 2026) | The quotes and figures in step 1: Adafruit's Matrix Portal S3 learn guide and product pages 5778 and 6475, Waveshare's wiki and product page, and Espressif's datasheet page. |
-| **Not tested here** | The wiring and power steps and the first power-up check; the PCB-antenna board; the first flash of a factory-fresh board; the manual bootloader procedure; setup mode (written from `net.cpp`, `screens.cpp` and `settings.cpp`); `.local` names, including on Linux; `provision.py` with `--device-id` and `--flash`; the second display and the name clash; the panel screens with real data at your own location; which USB charger is enough; a power cut during the burn; every Linux command. |
+| **Not tested here** | The wiring and power steps and the first power-up check; the PCB-antenna board; the first flash of a factory-fresh board; the manual bootloader procedure; setup mode (written from `net.cpp`, `screens.cpp` and `settings.cpp`); `.local` names, including on Linux; `provision.py` with `--device-id` and `--flash`; the second display and the name clash; the panel screens with real data at your own location; which USB charger is enough; a power cut during the burn; the name clash (`-2`) of two displays; a setup network with a long display name; the portal following a rename in a browser; a real cross-site web page against the portal; reaching the portal by an IPv6 address; every Linux command. |
