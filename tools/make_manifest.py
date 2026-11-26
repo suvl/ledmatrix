@@ -23,7 +23,11 @@ What it checks before it writes anything (a failure prints one plain sentence on
   with another hash, it refuses unless --force. The same image again is fine and changes nothing.
 
 The image is copied first and manifest.json is replaced last, so a run that stops half way never advertises a missing file.
-Pass the notes as --notes="..." when the text can start with a dash."""
+Pass the notes as --notes="..." when the text can start with a dash.
+
+The manifest is the unsigned form (version 1, five fields): in the build workflow tools/sign_manifest.py runs next and appends
+keyid and sig (shared/manifest-signing.md). The notes are therefore valid UTF-8 text without a control character (they are signed
+as text), and running this tool again on a folder whose manifest is already signed writes the unsigned form again: sign it again."""
 import argparse
 import hashlib
 import json
@@ -189,6 +193,10 @@ def make_manifest(image_path, version, notes, out_dir, force=False):
         raise Refusal(f"cannot read the image {image_path}: {e}")
     check_image(data)
     check_version_tag(data, version)               # never skipped, not even by force
+    try:
+        (notes or "").encode("utf-8")   # the notes are signed as UTF-8 text: a lone surrogate (a command line that was not UTF-8) is no text
+    except UnicodeEncodeError:
+        raise Refusal("the notes are not valid UTF-8 text (was the command line in another encoding?)")
     notes = fold_notes(notes)
 
     name = f"ledmatrix-{version}.bin"
