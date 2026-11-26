@@ -126,6 +126,11 @@ const FLIGHTS = [
 const WX = { loc: 'HOME', temp: '18', text: 'Partly cloudy', line: 'H21 L12 10%', icon: 'part', cols: [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']] };
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
+// The display name (the Display name setting, up to 24 characters of a-z, 0-9 and hyphens): the display is reached at <name>.local and its
+// setup Wi-Fi has the same name. The Connected screen and the problem message show "<name>.local" (screens.cpp portalHost): a long one is
+// cut by TT() like any text. The setup screen shows the name as the network name (screens.cpp setupScreen).
+const DEVICE = { name: 'ledmatrix' };
+const portalHost = () => DEVICE.name + '.local';
 
 /* ---------- screen drawings ---------- */
 const flightA = (fb, t, ctx) => {
@@ -205,15 +210,26 @@ const idleC = (fb, t) => {
 };
 const setupA = (fb, t, ctx) => {
   TT(fb, ctx, 2, 6, 'SETUP MODE', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI ledmatrix', WHITE, 62);
+  TT(fb, ctx, 2, 14, 'WIFI ' + DEVICE.name, WHITE, 62);
   TT(fb, ctx, 2, 21, 'PASS 7K3PQ9XM', WHITE, 62);
   TT(fb, ctx, 2, 28, 'OPEN 192.168.4.1', CYAN, 62);
 };
+// The layout in use (screens.cpp setupScreen). A network name of up to 10 characters is drawn big; a longer one in the 4x6 font on up to two
+// lines of 15 characters, so the whole name (up to 24) can be read, and the rest moves down a little.
 const setupB = (fb, t, ctx) => {
-  T6(fb, ctx, 2, 0, 'ledmatrix', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
-  T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
-  TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  const ssid = DEVICE.name;
+  if (ssid.length <= 10) {
+    T6(fb, ctx, 2, 0, ssid, AMBER, 62);
+    TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  } else {
+    TT(fb, ctx, 2, 5, ssid.slice(0, 15), AMBER, 62);
+    if (ssid.length > 15) TT(fb, ctx, 2, 11, ssid.slice(15, 30), AMBER, 62);
+    TT(fb, ctx, 2, 18, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 19, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 31, '192.168.4.1', CYAN, 62);
+  }
 };
 const boot = (fb, t, ctx) => {
   T6(fb, ctx, centerX(w6('ledmatrix', 1)), 7, 'ledmatrix', WHITE, 62);
@@ -221,7 +237,7 @@ const boot = (fb, t, ctx) => {
   TT(fb, ctx, 14, 24, 'connecting' + dots, GREY, 50);
 };
 const connected = (fb, t, ctx) => {
-  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, 'ledmatrix.local', CYAN, 62);
+  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, portalHost(), CYAN, 62);
 };
 const stale = (fb, t, ctx) => {
   wxIcon(fb, 4, 8, 'part', 16);
@@ -235,7 +251,7 @@ const problemMsg = (fb, t, ctx) => {
   T6(fb, ctx, 2, 1, 'PROBLEM', AMBER, 62);
   TT(fb, ctx, 2, 15, 'Data is failing', WHITE, 60);
   TT(fb, ctx, 2, 22, 'See the portal:', GREY, 60);
-  TT(fb, ctx, 2, 29, 'ledmatrix.local', CYAN, 60);
+  TT(fb, ctx, 2, 29, portalHost(), CYAN, 60);
 };
 // The two firmware-update screens (screens.cpp updateCodeScreen and updateProgressScreen). They are drawn instead of the normal
 // screens, never dimmed or drifted, so they may use column 63 and row 31 (the countdown bar uses row 31). UPD is the panel's

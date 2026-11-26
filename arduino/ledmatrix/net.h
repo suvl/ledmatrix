@@ -3,17 +3,19 @@
 #pragma once
 #include <stdint.h>
 
+#include "devicename.h"
+
 enum class NetState : uint8_t {
   Connecting,  // joining the saved network (or scanning before the setup network starts)
-  Online,      // joined; portal reachable at http://ledmatrix.local
+  Online,      // joined; portal reachable at http://<display name>.local (devicename.h; "ledmatrix" until the owner chooses another)
   Offline,     // saved network configured but not reachable
-  Setup        // no saved network: the "ledmatrix" access point is up
+  Setup        // no saved network: the setup access point is up, named like the display ("ledmatrix" by default)
 };
 
 struct NetInfo {
   NetState state = NetState::Connecting;
   char ip[20] = "";       // station address when online
-  char apSsid[20] = "";   // setup network name
+  char apSsid[devicename::MAX_LEN + 1] = "";  // setup network name: the display name
   char apPass[12] = "";   // setup network password (random each time setup starts)
   char apIp[16] = "";     // setup network address
 };

@@ -6,6 +6,7 @@
 //   slice 7: panel protection (protect.cpp): pixel drift, dim after stillness, night blanking, clock/weather rotation;
 //            a short press of UP or DOWN wakes the panel
 //   slice 8: the problem list (problems.h, live.cpp) and the panel message that points to it after an hour of failure
+//   slice 13: the display name (devicename.h): mDNS host name, DHCP name and setup Wi-Fi name; a new name restarts the display
 //
 //   core 1: render task   ~30 fps, picks the screen from the network state, the settings and the live data
 //   core 0: net task      Wi-Fi, setup access point, DNS, web server and portal API (see net.cpp)
@@ -184,8 +185,9 @@ static void renderTask(void *) {
         lastState = ni.state;
         Serial.printf("NET state %d\n", (int)ni.state);
       }
-      UiState ui = {ni.apSsid[0] ? ni.apSsid : "ledmatrix", ni.apPass[0] ? ni.apPass : "7K3PQ9XM",
+      UiState ui = {ni.apSsid[0] ? ni.apSsid : cfg.deviceName, ni.apPass[0] ? ni.apPass : "7K3PQ9XM",
                     ni.apIp[0] ? ni.apIp : "192.168.4.1", ni.ip[0] ? ni.ip : "192.168.1.100", cfg.clock24h};
+      ui.deviceName = cfg.deviceName;  // the Connected screen and the problem message show "<name>.local"
 
       const ProtectConfig pcfg = protectConfigOf(cfg);
       Screen screen;

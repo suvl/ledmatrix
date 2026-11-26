@@ -110,6 +110,8 @@ static void loadAll() {
   }
   String host = prefs.getString("svc", "");
   strlcpy(cur.serviceHost, host.c_str(), sizeof(cur.serviceHost));
+  String dn = prefs.getString("dn", "");
+  if (devicename::storedOk(dn.c_str())) strlcpy(cur.deviceName, dn.c_str(), sizeof(cur.deviceName));  // a damaged or missing name leaves the default
   String tzn = prefs.getString("tzn", ""), tzp = prefs.getString("tzp", "");
   if (validTzName(tzn.c_str()) && validTzPosix(tzp.c_str())) {  // both or neither: never a name from one zone and a rule from another
     strlcpy(cur.tzName, tzn.c_str(), sizeof(cur.tzName));
@@ -157,6 +159,7 @@ static void saveAll(const Settings &s) {
     prefs.putString(key.c_str(), s.queries[i]);
   }
   prefs.putString("svc", s.serviceHost);
+  prefs.putString("dn", s.deviceName);
   prefs.putString("tzn", s.tzName);
   prefs.putString("tzp", s.tzPosix);
   prefs.putBool("drift", s.drift);
@@ -354,6 +357,17 @@ bool setFromJson(const char *json, size_t len, String &error) {
     strlcpy(n.serviceHost, h.c_str(), sizeof(n.serviceHost));
   }
 
+  // The display name: missing or null keeps the saved one; anything but a valid name refuses the whole save. Upper case is made lower case.
+  JsonVariantConst dn = doc["deviceName"];
+  if (!dn.isNull()) {
+    if (!dn.is<JsonString>()) { error = devicename::message(devicename::Error::NotText); return false; }
+    JsonString name = dn.as<JsonString>();
+    char norm[devicename::MAX_LEN + 1];
+    devicename::Error e = devicename::normalise(name.c_str(), name.size(), norm);
+    if (e != devicename::Error::None) { error = devicename::message(e); return false; }
+    strlcpy(n.deviceName, norm, sizeof(n.deviceName));
+  }
+
   JsonObject tz = doc["timezone"];
   if (!tz.isNull()) {
     if (!tz["name"].is<const char *>() || !tz["posix"].is<const char *>()) { error = "The time zone needs both a name and a rule."; return false; }
@@ -386,6 +400,7 @@ String toJson() {
   doc["brightness"] = s.brightness;
   doc["clock24h"] = s.clock24h;
   doc["cyclePlanes"] = s.cyclePlanes;
+  doc["deviceName"] = s.deviceName;  // a char array is copied into the document; s is a local copy anyway
   JsonObject prot = doc["protection"].to<JsonObject>();
   prot["drift"] = s.drift;
   JsonObject dim = prot["dim"].to<JsonObject>();
