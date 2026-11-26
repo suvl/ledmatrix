@@ -1,6 +1,6 @@
 # Build the firmware
 
-Checked on macOS on 25 Nov 2026: what was run and what was not is in the table at the end of this page.
+Checked on macOS on 25 and 26 Nov 2026: what was run and what was not is in the table at the end of this page.
 
 This page gets your computer ready and builds the [firmware](glossary.md#firmware), the program that runs on the display. It is for a beginner who can open a Terminal window and paste commands, but has not used Arduino tools before. To get a working display you need only this page for the software on your computer; the wiring and flashing are in [install.md](install.md) and the data service is in [hosting.md](hosting.md). **You do not build the service:** hosting.md uses the public image. If you want to run the tests, publish releases or build the service yourself, see [development.md](development.md).
 
@@ -194,16 +194,16 @@ arduino-cli compile --fqbn esp32:esp32:adafruit_matrixportal_esp32s3 --jobs 0 --
 
 Do not use `--output-dir` instead of `--build-path`: Tested, it also creates a `build/` folder inside the sketch folder in your repository.
 
-A good result, after about 76 to 86 seconds the first time (the first build also compiles the whole ESP32 support code; 145 seconds in the emulated Ubuntu container; **12 seconds** if you run the same command again with nothing changed):
+A good result, after about 76 to 92 seconds the first time (the first build also compiles the whole ESP32 support code; 145 seconds in the emulated Ubuntu container; **12 seconds** if you run the same command again with nothing changed):
 
 ```
-Sketch uses 1479637 bytes (70%) of program storage space. Maximum is 2097152 bytes.
-Global variables use 106064 bytes (32%) of dynamic memory, leaving 221616 bytes for local variables. Maximum is 327680 bytes.
+Sketch uses 1498117 bytes (71%) of program storage space. Maximum is 2097152 bytes.
+Global variables use 106168 bytes (32%) of dynamic memory, leaving 221512 bytes for local variables. Maximum is 327680 bytes.
 ```
 
-The first line is the flash room the program takes: 70 percent of one 2 MB program slot (firmware 0.10.1). The second is RAM: 32 percent. An update has to fit in one slot, so watch the first number if you add code. The numbers move a little with the code and with the machine (1479637 bytes on the Mac, 1479301 in the Ubuntu container, 1479317 in the project's own build of the same code); a few hundred bytes of difference is normal.
+The first line is the flash room the program takes: 71 percent of one 2 MB program slot (firmware 0.10.1 on 26 Nov 2026). The second is RAM: 32 percent. An update has to fit in one slot, so watch the first number if you add code. The numbers move a little with the code and with the machine (on 25 Nov the same code gave 1479637 bytes on the Mac, 1479301 in the Ubuntu container and 1479317 in the project's own build); a few hundred bytes of difference between machines is normal.
 
-The file you will flash is `~/ledmatrix-build/firmware/ledmatrix.ino.bin` (about 1.4 MB): the firmware image. The build folder holds other files too (the start-up program, the partition table, a debugging file, a single 8 MB file with everything joined); you do not need to touch them. [development.md](development.md), "Inside a build", says what each one is. If the compile fails, the last lines say why: see "If something goes wrong" below.
+The file you will flash is `~/ledmatrix-build/firmware/ledmatrix.ino.bin` (about 1.5 MB, 1,498,272 bytes on 26 Nov 2026): the firmware image. The build folder holds other files too (the start-up program, the partition table, a debugging file, a single 8 MB file with everything joined); you do not need to touch them. [development.md](development.md), "Inside a build", says what each one is. If the compile fails, the last lines say why: see "If something goes wrong" below.
 
 ## 5. Check the partition table
 
@@ -275,7 +275,7 @@ If a problem is not in this table, or a fix does not work, open an issue at <htt
 
 ## What was run
 
-All on 25 Nov 2026, on an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Python 3.15.2 (and the system Python 3.9.6), arduino-cli 1.6.0, on the repository as committed at `1f9b6a5` (firmware version 0.10.1). "Ubuntu" is an Ubuntu 24.04.5 x86_64 container, emulated on that Mac. Everything after the tools was run in a separate throw-away arduino-cli setup, so the result does not depend on what was already on the Mac.
+On an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Python 3.15.2 (and the system Python 3.9.6), arduino-cli 1.6.0. Rows dated 25 Nov 2026 were run on the repository as committed at `1f9b6a5`; the row dated 26 Nov 2026 was run on a snapshot of `main` at `0789a98` (firmware version 0.10.1 in both). "Ubuntu" is an Ubuntu 24.04.5 x86_64 container, emulated on that Mac. Everything after the tools was run in a separate throw-away arduino-cli setup, so the result does not depend on what was already on the Mac.
 
 | What | Where | Result |
 | --- | --- | --- |
@@ -283,7 +283,8 @@ All on 25 Nov 2026, on an Apple silicon Mac (macOS 27.0.1) with git 2.54.0, Pyth
 | Install from an empty setup: `core update-index` 6 s, `core install esp32:esp32@3.3.13` 68 s, `lib update-index` 2 s, four `lib install --no-deps` 1 to 2 s each; `core list` and `lib list` as in step 3 | Mac | about 85 s in total; 3.9 GB data, 1.1 GB downloads, 5 MB libraries |
 | The same install, in a container | Ubuntu | worked; core install 70 s |
 | The arduino-cli install script as a normal user, with and without the `BINDIR` folder existing | Ubuntu | as in the Linux text |
-| `arduino-cli compile`: cold 86 s (default build folder), cold with `--build-path` 76 s, again 12 s; from a fresh `git clone` 77 s (with `--output-dir`) and 79 s (as in step 4); in the container 145 s | Mac, Ubuntu | each ended `Sketch uses 1479637 bytes (70%) ...` on the Mac, `Global variables use 106064 bytes (32%) ...`; `ledmatrix.ino.bin` 1,479,792 bytes |
+| `arduino-cli compile` from the snapshot of `main`, as in step 4, 26 Nov | Mac | 92 s (other jobs were running); `Sketch uses 1498117 bytes (71%) ...`, `Global variables use 106168 bytes (32%) ...`; `ledmatrix.ino.bin` 1,498,272 bytes; the `ident` line was present |
+| `arduino-cli compile` (25 Nov): cold 86 s (default build folder), cold with `--build-path` 76 s, again 12 s; from a fresh `git clone` 77 s (with `--output-dir`) and 79 s (as in step 4); in the container 145 s | Mac, Ubuntu | each ended `Sketch uses 1479637 bytes (70%) ...` on the Mac, `Global variables use 106064 bytes (32%) ...`; `ledmatrix.ino.bin` 1,479,792 bytes |
 | Compile of a copy of the sketch without `partitions.csv`; of a copy in a renamed folder; with no board package; with no libraries; a misspelt library name | Mac | the messages quoted above (the first compiles silently with the stock layout) |
 | `grep '^ident'` on both builds | Mac | one `ident` line with the project's layout; nothing without it |
 | `git clone https://github.com/suvl/ledmatrix.git`, then steps 3 and 4 in that clone | Mac | 1.2 s, 2.3 MB; built as above |

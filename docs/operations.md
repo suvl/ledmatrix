@@ -1,6 +1,6 @@
 # Operations: running your display
 
-Checked on macOS on 25 Nov 2026. What was run, and what was not, is in the table at the end of this page.
+Checked on macOS on 25 Nov 2026, and read against the code of the `main` branch on 26 Nov 2026. What was run, and what was not, is in the table at the end of this page.
 
 This page is for you if you own a working LedMatrix display and want to keep it running. It has three parts. **Day 0** is the first-install checklist: it follows the order of [install.md](install.md) and [hosting.md](hosting.md) and tells you how to know that each step worked. **Day 1** shows what normal looks like and how to change settings. **Day 2** covers everything after that: [firmware](glossary.md#firmware) updates and [rollback](glossary.md#rollback), reading problems and logs, backups, revoking and replacing a display, updating the [service](glossary.md#service), moving it to a new address, and a decision list for when things go wrong. Whoever publishes firmware releases has a short section of their own at the end.
 
@@ -68,11 +68,11 @@ Terms are explained once in the [glossary](glossary.md) and linked the first tim
 - The [portal](glossary.md#portal) is the settings page the display serves itself on your home network ([LAN](glossary.md#lan)).
 - The service is the small program that gives the display flights, weather and headlines, and also the firmware updates.
 
-Every host, address, ID and path in this page is a placeholder. Use your own.
+Every host, address, ID and path in this page is a placeholder. Use your own. `ledmatrix.local` is the display's default name: if you set a Display name in the portal (see "Change a setting"), use `<name>.local` wherever this page says `ledmatrix.local`.
 
 | Placeholder | Stands for |
 | --- | --- |
-| `http://ledmatrix.local` | the display on your home network |
+| `http://ledmatrix.local` | the display on your home network (`ledmatrix` is its default name) |
 | `192.0.2.10` | the display's address on your network |
 | `apis.example.com` | your data service |
 | `203.0.113.7` | the service host's public address |
@@ -224,7 +224,7 @@ Skip this if you are unsure. You can burn at any time later. Run the display for
 
 ### Step 11. A second display
 
-Each display has its own ID and key; the same master secret serves all of them, and the service needs no change. See [install.md](install.md), "A second display", and "Replace or add a display" in Day 2.
+Each display has its own ID and key; the same master secret serves all of them, and the service needs no change. Give the second display its own Display name (portal, "Wi-Fi and device") so that the two do not share the name `ledmatrix.local`. See [install.md](install.md), "A second display", and "Replace or add a display" in Day 2.
 
 ## Day 1: what normal looks like
 
@@ -237,8 +237,8 @@ The display shows one picture at a time. This table lists every picture, what it
 | Screen | What it shows | When it appears |
 | --- | --- | --- |
 | Boot | `ledmatrix` and `connecting...` | At power-up, and while the board joins Wi-Fi (the first 20 seconds). |
-| Setup | The setup network name (`ledmatrix`), `WIFI PASSWORD`, the 8-character password, and `192.168.4.1` | When no Wi-Fi network is saved: first start, after you hold UP for 5 seconds, or after "Forget this Wi-Fi network" in the portal. It stays until you finish setup. |
-| Connected | `WIFI OK`, the display's address, `ledmatrix.local` | For 5 seconds after the board joins Wi-Fi. |
+| Setup | The setup network name (`ledmatrix`, or the display name you set; a name longer than 10 characters is drawn small, on up to two lines), `WIFI PASSWORD`, the 8-character password, and `192.168.4.1` | When no Wi-Fi network is saved: first start, after you hold UP for 5 seconds, or after "Forget this Wi-Fi network" in the portal. It stays until you finish setup. |
+| Connected | `WIFI OK`, the display's address, `<name>.local` (`ledmatrix.local` unless you set a Display name; a long name is cut at the panel's edge, and about 10 characters of name fit with `.local`, so read the address above it) | For 5 seconds after the board joins Wi-Fi. |
 | NO WIFI | A red cross, `NO WIFI`, `hold UP 5s`, `to set up` | If the board has not joined 20 seconds after starting, and any time the connection is lost later. It keeps trying to rejoin by itself. |
 | Example screens | Example flights, weather and headlines, for the screens you have switched on. The example clock (21:47) shows only if all three are off. | When no service address is saved. They change every few seconds (the "show each new plane for" setting). UP and DOWN step through them. |
 | Flight (layouts A, B, C) | Airline, route, aircraft type, altitude and speed, and the airline's logo if the service has it | When a plane is new in your radius. It stays for the "show each new plane for" time (10 seconds by default). The same plane is not shown again for 30 minutes. |
@@ -246,7 +246,7 @@ The display shows one picture at a time. This table lists every picture, what it
 | Weather (layouts A, B, C) | Temperature, icon, high and low, chance of rain; layout C shows now, +3 hours and +6 hours | Whenever nothing more urgent is showing and weather data has arrived. |
 | Idle | The clock and date, or a black screen (your choice under "Layouts") | When there is nothing else to show. |
 | Stale-data dot | A small orange square flashing in the top right corner of any live picture | When live data is old. See below. |
-| Problem message | `PROBLEM`, `Data is failing`, `See the portal:`, `ledmatrix.local` | After one kind of data has failed for an hour and is still failing. It replaces weather or the clock for 5 seconds at the start of every minute. Never over a plane or a headline, and not while the panel is dark at night. |
+| Problem message | `PROBLEM`, `Data is failing`, `See the portal:`, `<name>.local` | After one kind of data has failed for an hour and is still failing. It replaces weather or the clock for 5 seconds at the start of every minute. Never over a plane or a headline, and not while the panel is dark at night. |
 | Update code | `UPDATE`, a countdown, a 6-digit code in two groups, `Type it in portal` | While you are authorising a firmware update. See "Firmware updates". |
 | Update progress | `UPDATE`, a percentage, the version, a status word (`Checking`, `Downloading`, `Installing`, `Restarting`) and a bar | While a firmware update is downloading or installing. |
 
@@ -263,7 +263,9 @@ Good result: the page titled `ledmatrix` loads with "What to show" at the top.
 
 The portal is plain HTTP and has no password. Your browser may call it "Not secure". That is how it is built: it only works on your home network, and the most serious thing it can do, installing new firmware, needs a code that shows only on the panel. See [security.md](security.md) for what that means.
 
-**If `ledmatrix.local` does not open.** The name works through [mDNS](glossary.md#mdns), which macOS supports out of the box. Try the display's address directly, for example `http://192.0.2.10`. You can find the address on the panel for 5 seconds after it joins Wi-Fi (the `WIFI OK` screen), in your router's list of connected devices, or by restarting the display. On Linux the `.local` name needs the Avahi daemon and name service switch support (**Not tested here**). If you run two displays on one network, both ask for the name `ledmatrix.local`; use each display's address instead (**Not tested here**: what the second one does with the name).
+**If `ledmatrix.local` does not open.** The name works through [mDNS](glossary.md#mdns), which macOS supports out of the box. Try the display's address directly, for example `http://192.0.2.10`. You can find the address on the panel for 5 seconds after it joins Wi-Fi (the `WIFI OK` screen), in `/status`, in your router's list of connected devices, or by restarting the display. On Linux the `.local` name needs the Avahi daemon and name service switch support (**Not tested here**). If you run two displays on one network, give each its own Display name (see "Replace or add a display"). If two displays do ask for the same name, the one that comes second adds `-2` to its own (`kitchen-2.local`); the panel does not show that `-2`, but the IP address always works (**Not tested here**: no board has been seen doing it).
+
+**What the portal answers to.** The portal answers only to the display's own names: `<name>.local`, the bare `<name>`, and its IP address (IPv4 or IPv6; ports are ignored). A request that names any other host gets a plain page with the status 421: `This display answers only to its own name (for example ledmatrix.local) or its own IP address. Open it that way.` That includes names your router makes up for the display (`ledmatrix.lan`, `ledmatrix.home`, `ledmatrix.fritz.box`), a reverse proxy in front of it, a VPN or port-forward address, and `localhost`. The display also refuses a save, a Forget or an update that a browser sends on behalf of *another* web page: it answers 403 with `The display refused this request because it came from another web page. Use the display's own portal page.` Commands you type yourself (`curl`) send no page name and still work: the portal has no password. Other Host names refused with 421 and other sites refused with 403, an upload from another site refused without using up a code try, and requests from the portal itself and from `curl` accepted: **Verified on the author's own display on 26 November 2026**. **Not tested here**: addresses written as IPv6, and a proof page in a real browser on another site. In setup mode the Host check is off (a phone's sign-in probe may use any name); the page check still applies.
 
 ### The portal, section by section
 
@@ -284,7 +286,7 @@ The sections appear in this order. Nothing is sent to the display until you pres
 | Firmware | The running version, **Check now**, and the update notice and buttons. See "Firmware updates". |
 | Install a .bin file | The escape route for when the normal update does not work. See "The forced `.bin` upload". |
 | Headline topics | Up to five searches, one per line. |
-| Wi-Fi and device | The network the display is on, its signal, its addresses and how long it has been up; and **Forget this Wi-Fi network**. |
+| Wi-Fi and device | **Display name** (what the display is called on the network; default `ledmatrix`), the network the display is on, its signal, its addresses and how long it has been up; and **Forget this Wi-Fi network**. |
 
 The map tiles, the map library and the time zone lookup are loaded by your *browser* from public servers when you open the portal. That does not involve the display. It does mean that your browser makes requests to those servers when you use the Location section.
 
@@ -304,17 +306,20 @@ What happens next, **Checked in the code** (`settings.cpp`, `live.cpp`):
 - If you changed the service address, the screens to show, the location, the radius, the altitudes or a headline topic, the display fetches flights, weather and headlines again straight away, and the one-hour timer for the panel's problem message starts again.
 - Other changes (layouts, brightness, protection, clock format, dwell time) apply on the next frame, without any fetch.
 - A time zone change applies within about half a second, without a restart.
+- A save does not pause the picture: the new settings are swapped in memory first and written to flash afterwards (**Checked in the code**: `settings.cpp`, `swapstore.h`; the picture's timing during a burst of saves was not measured on a board).
 - The service address is cleaned for you: `https://`, `http://` and anything after the host name are dropped, and it is made lower case. It can only have letters, digits, dots and hyphens, up to 63 characters. It cannot hold a port: the display always connects on port 443.
+- The **Display name** (under "Wi-Fi and device") is what the display is called on the network: the portal is at `<name>.local`, the display gives that host name to your router, and its setup Wi-Fi network has that name. Use 1 to 24 letters, digits or hyphens, with no hyphen at the start or end; capital letters become lower case. A name that breaks a rule is refused with a plain sentence and nothing is saved: `The display name cannot be empty.`, `The display name can be at most 24 characters.`, `The display name can only have letters, digits and hyphens, with no spaces.`, `The display name cannot start or end with a hyphen.` **Saving a new name restarts the display** (about 20 seconds), because the network name is set once at start-up. The portal says where the display will be and follows it: a page you opened with a `.local` name moves to the new name by itself when the display answers there, and a page you opened by IP address reloads. The settings did not change except for the name after renaming a display through the API and back, and the refusals were worded as above (**Verified on the author's own display on 26 November 2026**). The portal's following was read in its code (**Checked in the code**); **Not tested here**: the restart and the follow with two displays on one network.
 
 **What survives a restart.**
 
 | Thing | Where it lives | Power cut or restart | Firmware update | USB upload |
 | --- | --- | --- | --- | --- |
-| Settings you saved in the portal | Flash (the [NVS](glossary.md#nvs) area) | Kept | Kept (an update writes only the other program slot) | Kept (not separately tested) |
+| Settings you saved in the portal, including the display name | Flash (the [NVS](glossary.md#nvs) area) | Kept | Kept (an update writes only the other program slot) | Kept (not separately tested) |
 | Wi-Fi name and password | Flash (NVS) | Kept | Kept | Kept (not separately tested) |
 | Identity record (device ID, and the interim key until the burn) | A read-only flash partition, `ident` | Kept | Kept | Kept (Verified on the author's own display on 25 Nov 2026: it survived the USB uploads of the burn procedure) |
 | The permanent key, once burned | The chip's [eFuse](glossary.md#efuse) | Kept for ever | Kept for ever | Kept for ever |
 | The record "this version failed and was rolled back" | Flash (NVS) | Kept | Cleared when a newer version installs and passes its start-up check | Cleared when you flash that version or a newer one |
+| The probation boot counter (only while a new version is on probation) | Flash (NVS, key `pcount`, together with the identity of the image it counts for) | **Kept**: a power cut counts like a crash | Erased when an update is installed, and when the new version is marked good | Erased at the next start (a version flashed over USB is never on probation) |
 | Recent planes, the problem list, the data on screen | Memory | **Lost**: starts empty | Lost | Lost |
 | The update code, its tries, the throttle after wrong codes | Memory | **Lost** | Lost | Lost |
 
@@ -388,7 +393,7 @@ What each field means (**Checked in the code**: `net.cpp`, `identity.cpp`, `ledm
 | `ssid`, `ip` | The Wi-Fi network and the display's address. | Your network and address. |
 | `ip6_link_local`, `ip6_global` | The display's IPv6 addresses. `ip6_global` is empty on a network without IPv6. | Either is fine. |
 | `rssi` | Wi-Fi signal strength in dBm. Closer to zero is better. | A number that is not far below -80. That figure is a general rule of thumb, not something measured here; a weak signal makes data slow. |
-| `uptime_s` | Seconds since the display started. It starts again from zero after about 49 days even without a restart: it is a counter limit. | A number that grows. |
+| `uptime_s` | Seconds since the display started, counted from a 64-bit hardware timer, so it does not start again from zero without a restart (**Verified on the author's own display on 26 November 2026**: it counts from that timer). | A number that grows. |
 | `heap`, `min_heap` | Free memory now, and the lowest it has been since start, in bytes. | They are for the maintainer. No safe range was measured for this page. |
 | `frames` | How many pictures the display has drawn. | A number that grows. |
 | `frame_max_ms` | The longest time between two pictures, in milliseconds, counted only while online and since the start. | Well under 1000. The design rule is that the display never stalls for more than a second. During a firmware download the longest gap measured on the author's own display was 131 ms (**Verified on the author's own display on 25 Nov 2026**). |
@@ -413,7 +418,7 @@ flowchart TD
     panel -->|"PROBLEM, an orange dot, or wrong or old data"| portal["Open http://ledmatrix.local"]
     panel -->|"Example screens only"| noservice["No service address saved. Save it in Data service"]
     portal --> opens{"Does the portal open?"}
-    opens -->|"No"| net["Check power, Wi-Fi and the display's address"]
+    opens -->|"No"| net["Check power, Wi-Fi and the display's address. A page saying the display answers only to its own name: open it by that name or its IP address"]
     opens -->|"Yes"| prob["Read the Problems section and the Data service line"]
     prob --> sentence["Find the sentence in the Problems table"]
     sentence --> svc{"About the service?"}
@@ -486,7 +491,7 @@ flowchart TD
 
 6. **Installing and restarting.** The panel shows `Installing` at 100 %, then `Restarting`. The portal says `Installing version 0.10.2. Do not unplug the display.` and then `The display is restarting. This page reconnects by itself.` **Do not unplug the display while it installs.** The panel goes dark for a moment, shows the boot screen (`ledmatrix`, `connecting...`), then `WIFI OK`, then its normal pictures.
 
-7. **The start-up check.** When the portal reconnects it first says `Done: the display now runs version 0.10.2. It is on probation: ...`. The new version starts "on [probation](glossary.md#probation)". The "Firmware" section then says: `The display is still checking the new firmware. This takes a few minutes. It checks that Wi-Fi, this page and the data service work, and if they do not within 3 minutes it goes back to the previous version by itself.` During this time you cannot start another update or upload (the buttons are greyed out; the display answers `The new firmware is still being checked; try again in a few minutes.`). The check is described below.
+7. **The start-up check.** When the portal reconnects it first says `Done: the display now runs version 0.10.2. It is on probation: ...`. The new version starts "on [probation](glossary.md#probation)". The "Firmware" section then says: `The display is still checking the new firmware. This takes a few minutes. It checks that Wi-Fi, this page and the data service work, and if they do not within 3 minutes it goes back to the previous version by itself.` During this time you cannot start another update or upload (the buttons are greyed out; the display answers `The new firmware is still being checked; try again in a few minutes.`). The check is described below. Leave the display alone until it has passed: a restart or a power cut during these minutes counts against the new version (see "Rollback").
 
 8. **Done.** When the check passes, the portal says `Version 0.10.2 is running on this display.` and `Checked ... You have the newest version.` Open `/status` and confirm `"version":"0.10.2"`.
 
@@ -507,8 +512,8 @@ It is never marked good sooner than 60 seconds after the start, even if all four
 
 The board's bootloader (Adafruit's prebuilt TinyUF2) does not roll back by itself: the contract [`shared/firmware-update.md`](../shared/firmware-update.md) records this as a bench result on the real board on 25 Nov 2026. So the firmware does it. A rollback needs the previous version to be still in the board's other program slot, which it is after any update installed over a working version. Three things send a new version back:
 
-- **A crash loop.** A new version that crashes more than 3 times is rolled back on the 4th start (**Verified on the author's own display on 25 Nov 2026**).
-- **A failed check.** One of the four conditions above is still missing at 3 minutes (**Verified on the author's own display on 25 Nov 2026**, for an image that never reaches the service: rolled back at 3:00).
+- **A crash loop.** A new version that crashes more than 3 times is rolled back on the 4th start (**Verified on the author's own display on 25 Nov 2026**, and again on 26 November 2026, now with the entry in the Problems section described below). A power cut counts as a start too; see "Two things to know".
+- **A failed check.** One of the four conditions above is still missing at 3 minutes (**Verified on the author's own display on 25 Nov 2026**, for an image that never reaches the service: rolled back at 3:00; and on 26 November 2026, for an update that hangs before Wi-Fi: rolled back at exactly 3 minutes with `The board did not join Wi-Fi within 3 minutes of starting.`).
 - **A stall.** The panel took more than a second between two pictures during probation.
 
 **What you see.** The display restarts (more than once, if it was crashing) and comes back on the *previous* version. In the portal, the "Firmware" section shows a red box:
@@ -528,7 +533,7 @@ and the version line shows the old version. The reason is one of these sentences
 | `The panel stalled for more than a second.` | The new version broke the display's one-second rule. Faulty release. |
 | `The new version kept restarting.` | It crashed more than 3 times. Faulty release. |
 
-Where it is recorded: the record is kept in the board's flash, so the portal still shows it after later restarts. The Problems section does *not* list a rollback (that list is in memory and the restart emptied it). The sentence `The new firmware did not pass its start-up check, so the board went back to the previous firmware.` exists in the code's word list, but nothing raises it today; look in the Firmware section instead (**Checked in the code**: no call raises it).
+Where it is recorded, in two places. The **Firmware** section shows the red box above, kept from a record in the board's flash, so it is still there after later restarts. The **Problems** section lists the rollback too: a row of kind `update check`, with the sentence `The new firmware (version 0.10.2) did not pass its start-up check, so the board went back to the previous firmware.` and, in grey under it, the reason (for example `The new version kept restarting.`). That row is added once after each start, shortly after the display joins Wi-Fi, and again at every start for as long as the failure record exists. It goes away when a newer version is installed and passes its check. If the running version is itself on probation, the row is added only after it has passed. It is a note for you to read, not data that is failing, so it does **not** make the panel show its `PROBLEM` message. A crash-on-start update showed exactly this row after its rollback on the 4th start and did not trigger the panel message (**Verified on the author's own display on 26 November 2026**).
 
 **What happens next.** The failed version, and every older one, is not offered again until a *newer* version exists. The record is cleared when a newer version installs and passes its own check, or when you flash that version or a newer one over USB.
 
@@ -540,7 +545,7 @@ Where it is recorded: the record is kept in the board's flash, so the portal sti
 
 **Two things to know.**
 
-- **Do not unplug a display that is restarting by itself after an update.** The count of crashes is kept in memory. A power cut starts the count again from 1, so a display you keep unplugging never reaches the 4th start. Leave it alone for a few minutes. If it has not settled after 5 minutes, use the USB recovery below.
+- **After an update, leave the display alone until the portal says the check passed, and do not unplug it.** The count of starts is kept in the board's flash, together with the identity of the version it counts for, so a power cut counts like a crash. After 3 starts without a pass, the 4th start rolls back, even if the new version is fine; four power cuts in the first minutes of a good update roll it back. Waiting one to three minutes avoids that. A display that restarts by itself after an update either settles or is rolled back within four starts; if it has not settled after 5 minutes, use the USB recovery below. The counter is read in the code and tested on the laptop, and the crash loop on the real board used it (**Checked in the code**; **Not tested here**: a real power cut during probation, nobody pulled the plug).
 - **If the new version has no previous version to go back to**, it stays running and says so: `The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running.`
 
 **Known gap.** A new version that crashes before its `setup()` function even begins (in the core's own start-up, or in a static constructor) is not caught by this mechanism. The image has passed the checksum and the ESP-IDF image validation first, and comes from the same build process as the one that runs, so this is unlikely. If it happens, only the USB recovery helps.
@@ -613,11 +618,11 @@ What else must be kept up to date for security (the board's libraries, the Go to
 The portal's "Problems" section (the [problem list](glossary.md#problem-list)) keeps the last 10 *different* problems, newest first. The same problem again does not add a row: it moves to the top and its counter goes up. The columns are:
 
 - **When**: the time in your time zone (or `N min after start` if the clock was not set yet).
-- **What**: the kind of data: `flights`, `weather`, `headlines`, `logo`, `clock`, `update check` or `identity`.
+- **What**: the kind of data: `flights`, `weather`, `headlines`, `logo`, `clock`, `update check` or `identity`. A rollback is listed too, as an `update check` row.
 - **What happened**: a plain sentence, and under it in grey the technical text it came from.
 - **Times**: how often, and since when.
 
-Above the table, `Failing now: flights for 3 min.` lists what is failing at this moment. The list is kept in memory: it is empty after a restart. If one kind of data fails for a whole hour and is still failing, the panel starts showing its `PROBLEM` message. A sentence the display does not know is shown as it came, with a capital letter, so a new kind of failure is visible and never hidden.
+Above the table, `Failing now: flights for 3 min.` lists what is failing at this moment. The list is kept in memory: it is empty after a restart, except that a rollback note is added again at every start (see "Rollback"). If one kind of data fails for a whole hour and is still failing, the panel starts showing its `PROBLEM` message. A sentence the display does not know is shown as it came, with a capital letter, so a new kind of failure is visible and never hidden.
 
 The line under "Data service" (`Last problem: ...`) shows the technical text of the most recent problem, such as `flights: no identity record`. The Problems section words the same thing as a plain sentence. Look for the sentence in the tables below.
 
@@ -690,7 +695,7 @@ These come from the service's 401 answer. The section "The service refuses the k
 | `Writing the new firmware to the board's memory failed. The board keeps running the current firmware.` | A flash write failed. | Try again. If it repeats, use the USB recovery. |
 | `The update was refused: the code was typed wrong three times. Starting again is blocked for a while.` | The 3 tries were used up. | Wait as the portal says, then press Update again. |
 | `The update was refused: the code on the panel ran out of time. Start again if you still want to update.` | 3 minutes passed. | Press Update again. |
-| `The new firmware did not pass its start-up check, so the board went back to the previous firmware.` | Defined in the code but nothing raises it today. A rollback shows in the Firmware box. | See "Rollback". |
+| `The new firmware (version 0.10.2) did not pass its start-up check, so the board went back to the previous firmware.` | A rollback happened. The version is the one that failed, and the grey text under the sentence is the reason. It comes back at every start until a newer version is installed, and it never triggers the panel's `PROBLEM` message. | See "Rollback". |
 | `The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running.` | A rollback was wanted and was not possible. | The display keeps running. Open a GitHub issue and plan a USB re-flash. |
 | `The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts.` | The board could not write the "good" mark. | It tries again at every start. Unplug and plug in once and wait 3 minutes. If it repeats, open a GitHub issue. |
 
@@ -743,11 +748,23 @@ docker compose logs --tail=100 api
 | `firmware: version 0.10.2 is published (204800 bytes)` | The firmware folder is valid. Logged once per change. |
 | `firmware: nothing is published, there is no manifest.json in the firmware folder` | No valid firmware, and the reason in plain words (here: the folder has no manifest). |
 | `GET "/v1/weather" 200 12ms` | Method, path, status and time. The query is never logged: it holds the display's location. |
+| `device seen aabbccddeeff` | A signed request from this display was accepted. At most once per display per hour, and nothing of what the display asked for is logged. Normal: one line per display per hour. Not logged with `AUTH_OFF=1`. After 256 different devices in an hour, one line says `device seen: more than 256 devices in the last hour, new ones are not logged until older ones expire`. An older image does not print it. |
 | `auth refused: device=aabbccddeeff reason=bad_signature` | A refusal, with the device ID and the reason. At most once per device and reason per minute, and 30 lines a minute in all. When lines are skipped, a later line says `auth refused: N more refusals in the last minute were not logged`. |
 | `upstream error: ...` | A data source (aircraft, weather, headlines) failed. The service serves the last good answer for a while. |
 | `WARNING: AUTH_OFF=1, ...` | The signature check is off. Never on a service others can reach. |
 
-The service never logs a key, a signature or the master secret.
+The service never logs a key, a signature, a path, a query or the master secret.
+
+#### Is only my display using the service?
+
+Every accepted display shows up once an hour as `device seen <ID>`. To list them:
+
+```
+docker compose logs api | grep 'device seen'
+kubectl logs deployment/ledmatrix-api | grep 'device seen'
+```
+
+Each ID should be one of yours (the IDs in your record sheet). Your log may keep only the most recent lines. An ID you do not recognise was accepted, so its signature was made with a key derived from your master secret: a display you forgot about, or someone who has the secret or that display's key. Add the ID to `REVOKED_DEVICES` ("Revoke a display, and allow it again"); a list entry works for any ID. If you cannot explain where it came from, treat the master secret as leaked and read [security.md](security.md). (**Checked in the code**: `auth.go`; the commands are **Not tested here**.)
 
 #### Never share a log with private values in it
 
@@ -779,7 +796,7 @@ Keep two offline copies in two places (a password manager, or paper in a safe). 
 curl -s http://ledmatrix.local/api/settings -o ~/ledmatrix-secrets/ledmatrix-settings-2026-11-25.json
 ```
 
-Good result: a file that starts `{"showFlights":true,...` and ends with the `timezone` group. It holds your layouts, protection settings, location, radius, topics, service address and time zone. It does **not** hold the Wi-Fi password, the key or any secret. It does hold your home coordinates, so keep it private. That is why the command writes it into `~/ledmatrix-secrets/`, the private folder you made for the master secret, and not into the current folder: if you run the command from the repository folder, the file would land next to the code, where `git add` could pick it up. Any other folder outside the repository will do.
+Good result: a file that starts `{"showFlights":true,...` and ends with the `timezone` group. It holds your layouts, protection settings, location, radius, topics, service address, time zone and display name (`deviceName`, right after `cyclePlanes`). It does **not** hold the Wi-Fi password, the key or any secret. It does hold your home coordinates, so keep it private. That is why the command writes it into `~/ledmatrix-secrets/`, the private folder you made for the master secret, and not into the current folder: if you run the command from the repository folder, the file would land next to the code, where `git add` could pick it up. Any other folder outside the repository will do.
 
 To restore (for example on a replacement board, after its Wi-Fi is set up):
 
@@ -787,7 +804,7 @@ To restore (for example on a replacement board, after its Wi-Fi is set up):
 curl -s -X POST -H 'Content-Type: application/json' --data @"$HOME/ledmatrix-secrets/ledmatrix-settings-2026-11-25.json" http://ledmatrix.local/api/settings
 ```
 
-Good result: the display answers with the same JSON. The display checks every value; a wrong one refuses the whole file with a sentence. Keep the Wi-Fi password in your password manager; the display cannot give it back.
+Good result: the display answers with the same JSON. If the backup's display name is not the display's current name, the display restarts about 20 seconds later to use it, which is how you restore a renamed display. A backup made before the display name existed has no `deviceName` and leaves the current name alone. These commands send no page name, so the portal's cross-site check lets them through; a script in a web page from another site would be refused. Renaming through the API and back left the settings identical, and the refusals were worded in plain sentences (**Verified on the author's own display on 26 November 2026**). The display checks every value; a wrong one refuses the whole file with a sentence. Keep the Wi-Fi password in your password manager; the display cannot give it back.
 
 **3. The service's configuration.** Keep a copy (with the secret left out) of: your Compose file or Kubernetes manifest; the values of `PUBLIC_HOST` and `REVOKED_DEVICES`; and the source files of your airline logos (the folder that `tools/make_logos.py` builds). The logos are not in the repository and not in the image.
 
@@ -813,7 +830,7 @@ Good result: the display answers with the same JSON. The display checks every va
 
 **Revoke.**
 
-1. Find the display's ID: the portal's "Data service" section, `/status` (`device`), or the service's log line `auth refused: device=...`.
+1. Find the display's ID: the portal's "Data service" section, `/status` (`device`), or the service's log lines `device seen ...` and `auth refused: device=...`.
 2. Put it in `REVOKED_DEVICES` (the [revoked list](glossary.md#revoked-list)) as a comma-separated list of IDs (12 lowercase hexadecimal characters each), and restart the service. The service reads it only at start.
    - Compose (`deploy/compose/`): in the `.env` file next to `docker-compose.yml`, set `REVOKED_DEVICES=aabbccddeeff` and run `docker compose up -d`. Compose sees the changed value and recreates the service.
    - Kubernetes: `kubectl set env deployment/ledmatrix-api REVOKED_DEVICES=aabbccddeeff` (this restarts the pod). If you deploy from a manifest file, edit it there too, or the next apply undoes the change.
@@ -838,7 +855,7 @@ Each display has its own ID (its chip's factory address) and its own key. The se
 
 You cannot copy one board's identity to another: the record holds the chip's own ID and a copy is refused (`identity` says `other_board`).
 
-**Two displays on one network** both ask for the name `ledmatrix.local`. Use each display's address instead, and give each a fixed address in your router (**Not tested here**: what the second display does with the name).
+**Two displays on one network.** Give each its own Display name in the portal, for example `kitchen` and `study`: each is then at `<name>.local`, and its setup Wi-Fi network has that name. A new board is called `ledmatrix` like the first one until you rename it, so rename it before you rely on the name, and provision each display on its own ("A second display" in [install.md](install.md)). If two displays do ask for the same name, the later one becomes `<name>-2.local`; the panel does not show the `-2` and nothing can read it back, but the IP address always works. Giving each display a fixed address in your router helps too. **Not tested here**: a clash on a real network; no board has been seen doing it.
 
 ### Move the service to a new address
 
@@ -875,21 +892,33 @@ If that does not help: use a USB cable and read the serial log (see "Logs"), or 
 The display has not joined Wi-Fi 20 seconds after starting, or it lost the connection. It keeps trying by itself.
 
 1. Check your router is on and the network is up (try your phone).
-2. If you changed the network's name or password, or replaced the router: hold the UP button for 5 seconds. A thin amber line fills the bottom row. The display forgets the network and starts setup mode. Enter the new details. Your other settings stay.
+2. If you changed the network's name or password, or replaced the router: hold the UP button for 5 seconds. A thin amber line fills the bottom row. The display forgets the network and starts setup mode. Enter the new details. Your other settings stay, the display name included.
 3. The display's Wi-Fi is 2.4 GHz only (a property of the chip). A router that offers only 5 GHz will not work (**general fact, not tested here**).
 
 If that does not help: the signal is too weak (move the router or the display), or see the USB recovery.
 
 #### The panel shows the setup screen
 
-The panel shows a network name (`ledmatrix`), `WIFI PASSWORD` and 8 characters. The display has no saved Wi-Fi network. Reasons: first start; you held UP for 5 seconds; someone pressed **Forget this Wi-Fi network** in the portal (anyone on your network can, there is no password).
+The panel shows a network name (`ledmatrix`, or the display name you set), `WIFI PASSWORD` and 8 characters. The display has no saved Wi-Fi network. Reasons: first start; you held UP for 5 seconds; someone pressed **Forget this Wi-Fi network** in the portal (anyone on your network can, there is no password).
 
-1. On a phone or laptop, join the network `ledmatrix` with the password shown on the panel.
+1. On a phone or laptop, join the network named on the panel with the password shown there. It is `ledmatrix` on a first start, and your display name after you set one (**Not tested here**: setup mode with a long name).
 2. Open `192.168.4.1` (a browser may open the page by itself).
 3. Pick your home network, type its password, press **Save and connect**.
-4. The display restarts and joins. Then open `http://ledmatrix.local`. Your settings are still there.
+4. The display restarts and joins. Then open `http://<name>.local` (`ledmatrix.local` by default). Your settings are still there.
 
 If that does not help: re-read the password on the panel (it changes each time setup starts) and try again.
+
+#### The portal says "This display answers only to its own name"
+
+The page says `This display answers only to its own name (for example ledmatrix.local) or its own IP address. Open it that way.` (status 421). The display refuses any request that names a host that is not its own. In the serial log it shows as `PORTAL refused GET /: host`.
+
+1. Open the display as `http://<name>.local` (`ledmatrix.local` by default), by the bare name, or by its IP address (on the panel for 5 seconds after it joins Wi-Fi, in `/status`, or in your router's list).
+2. Names that your router makes up (`ledmatrix.lan`, `ledmatrix.home`, `ledmatrix.fritz.box`), a reverse proxy, a VPN or port-forward address and `localhost` are refused. Use the display's own name or IP address instead.
+3. A client that sends no `Host` header at all (an old HTTP/1.0 tool) is refused as well.
+
+A save, Forget or update refused with `The display refused this request because it came from another web page. Use the display's own portal page.` (status 403) means the request came from a page the display did not serve, or with the page name `null`. Open the portal at the display's own address and try again. The serial log says `PORTAL refused POST /api/settings: origin` (one line a second at most; the words after the colon are `host-missing`, `host`, `origin-null`, `origin-malformed`, `origin`, `referer-malformed` or `referer`). Both refusals were **Verified on the author's own display on 26 November 2026**.
+
+If that does not help: use the display's IP address, and open a [GitHub issue](https://github.com/suvl/ledmatrix/issues) if the IP address is refused too.
 
 #### A `PROBLEM` message on the panel
 
@@ -925,7 +954,7 @@ You pressed Update and the version is the same, or a release was published and n
 
 1. Press **Check now** and read the line: `Checked just now. You have the newest version.` means the service offers nothing newer.
 2. Compare the two versions: `curl -s https://apis.example.com/v1/firmware/manifest` (what the service offers) and `/status` (`version`, what the display runs). If the service offers the same or an older number, the maintainer has not published a newer version, or you have not yet updated your service to it ("Update the service itself"); on your own build, the number was not bumped or the new image was not deployed ("For the maintainer: publish a firmware release").
-3. If the portal shows a red `Version ... failed on this display and was rolled back` box, that version is not offered again until a newer one exists ("Rollback").
+3. If the portal shows a red `Version ... failed on this display and was rolled back` box, or the Problems section lists the rollback, that version is not offered again until a newer one exists ("Rollback"). A display that was unplugged or restarted several times during its start-up check can roll back a good version.
 4. If the display is still "on probation", it refuses new updates for a few minutes.
 
 If that does not help: the forced `.bin` upload.
@@ -981,7 +1010,7 @@ Then:
 This page cannot say why for your display: restarts that are not part of an update were not studied here.
 
 1. Is it an update that has just finished or rolled back? Then a restart is normal (see "Rollback").
-2. Look at `uptime_s` in `/status`. If it keeps going back to a small number, the display really is restarting. (Remember it also wraps after about 49 days: that is a counter limit, not a restart.)
+2. Look at `uptime_s` in `/status`. If it keeps going back to a small number, the display really is restarting. (It counts from a 64-bit timer and does not wrap.)
 3. An LED panel draws a lot of current. A power supply that is too weak, or a loose power connection, is the usual suspect for restarts on boards like this one (a general hardware rule, **not tested here**). See the power section of [install.md](install.md).
 4. Read the serial log at the moment it restarts (see "Logs"). Remove private values before you share any of it.
 
@@ -991,7 +1020,7 @@ If that does not help: open a GitHub issue with the log (private values removed)
 
 - *During `Checking` or `Downloading` (or the upload):* nothing was switched. The old version still starts. Plug it in and start again from the portal.
 - *During `Installing` or `Restarting`:* **Not tested here.** By design the new image is written to the *other* program slot and the boot choice is switched only after the image passed its checks, so the display should start either the old or the new version. If it is the new one, the start-up check runs as usual.
-- *During the start-up check:* the count of restarts is kept in memory and starts again from 1; the check starts again from zero.
+- *During the start-up check:* the count of starts is kept in the board's flash, so the unplug counts as a start; the check itself starts again from zero. After 3 starts without a pass, the 4th rolls back even a good version (**Checked in the code**; **Not tested here**: a real power cut).
 - If the display does not come back after 5 minutes: the USB recovery.
 
 ### The USB recovery
@@ -1080,12 +1109,13 @@ Details for the maintainer and for people who read logs. You do not need them to
 
 | Line starts with | Meaning |
 | --- | --- |
+| `ledmatrix 0.10.1` | The start-up banner: the firmware version, as plain text. |
 | `matrix.begin() = 0` | The panel driver started. `0` is good. |
 | `IDENT device ... record ... signer ... check ...` | The identity at start: the same words as `/status`. |
 | `OTA version 0.10.1` | The firmware version. It adds `(an update to a newer version failed here and was rolled back)` when that record exists. |
 | `NET state N` | Wi-Fi state: 0 connecting, 1 online, 2 offline, 3 setup. |
-| `ONLINE 192.0.2.10 as ledmatrix.local` | Joined Wi-Fi; the portal is up. |
-| `SETUP network "ledmatrix" password ... at 192.168.4.1` | Setup mode started. **It prints the setup network's password.** |
+| `ONLINE 192.0.2.10 as ledmatrix.local` | Joined Wi-Fi; the portal is up. The name is your Display name. |
+| `SETUP network "ledmatrix" password ... at 192.168.4.1` | Setup mode started. The network name is your Display name. **It prints the setup network's password.** |
 | `SETUP saved network "..."` | A Wi-Fi network was saved. It prints your network's name. |
 | `UP held: forgetting Wi-Fi and restarting into setup` | The 5-second long press. |
 | `DNS: first server fe80... is not usable, using 192.0.2.1` | Normal at start: the router's IPv6 announcement offered a name server the board cannot use, so it uses the IPv4 one. |
@@ -1097,11 +1127,14 @@ Details for the maintainer and for people who read logs. You do not need them to
 | `LIVE time zone now Europe/Lisbon` | The time zone rule was switched. |
 | `PROBLEM headlines: ...` | A problem entered the Problems list, with its sentence. |
 | `SETTINGS saved` | You pressed Save. |
-| `SHOW flight ABC123` | The picture changed. The first word is `flight`, `weather`, `news`, `idle`, `setup`, `boot`, `connected`, `stale`, `nowifi`, `problem`, `update code` or `update progress`. |
+| `SETTINGS display name is now "kitchen": restarting to use it` | A new Display name was saved; the display restarts. |
+| `PORTAL refused POST /api/settings: origin` | The portal's guard refused a request (see "The portal says ..."). At most one line a second; never a header value. |
+| `SHOW flight ABC123` | The picture changed. The first word is `flight`, `weather`, `news`, `idle`, `setup`, `boot`, `connected`, `nowifi`, `problem`, `update code` or `update progress`. |
 | `PROTECT mode=Dim brightness=10 drift=1,0` | Dim, night or drift changed. |
 | `SCREEN 2/3 weather` | You pressed UP or DOWN and the example screens moved. |
 | `TRUNC "..." -> "..."` | A text was too long for the panel and was cut. |
-| `OTA check: service has 0.10.2, newer: offered` | An update check. Others: `OTA a code is on the panel (service)` (never the code itself), `OTA downloading 0.10.2 (N bytes)`, `OTA download 40%`, `OTA installed 0.10.2`, `OTA restarting into the new firmware`, `OTA failed: ...`, `OTA this image is on probation: boot 1 of at most 3`, `OTA the new firmware passed its start-up check: kept`, `OTA start-up check failed: ...`, `OTA going back to the previous firmware`. |
+| `OTA check: service has 0.10.2, newer: offered` | An update check. Others: `OTA a code is on the panel (service)` (never the code itself), `OTA downloading 0.10.2 (N bytes)`, `OTA download 40%`, `OTA installed 0.10.2`, `OTA restarting into the new firmware`, `OTA failed: ...`, `OTA this image is on probation: boot 1 of at most 3 (image 1a2b3c4d, counter kept in flash)`, `OTA probation: boot 1 of at most 3, 40 s since start, not yet marked good` (every 20 seconds while on probation), `OTA erased the boot counter that an earlier probation left`, `OTA the boot counter could not be read: counting this as boot 1`, `OTA the new firmware passed its start-up check: kept`, `OTA start-up check failed: ...`, `OTA going back to the previous firmware`. |
+| `EVENT update check: The new firmware (version 0.10.2) did not pass its start-up check, ...` | A rollback was added to the Problems list (a note, not a failure: it never starts the panel's `PROBLEM` message). |
 | `LIVE data task stack free N bytes` | Once a minute. For the maintainer. |
 
 ### The shape of `/api/problems`
@@ -1130,6 +1163,7 @@ Details for the maintainer and for people who read logs. You do not need them to
 
 | Label | Meaning |
 | --- | --- |
+| Verified on the author's own display on 26 November 2026 | The author ran it on the real board: renaming the display through the API and back (the settings identical afterwards), and the refusals with plain sentences; the portal's Host and Origin checks (requests from the portal itself and from `curl` accepted, requests from another site refused with 403, other Host names refused with 421, an upload from another site refused without using up a code try); a crash-on-start update rolled back on the 4th start with the Problems entry (kind `update check`, the sentence with the version, the detail `The new version kept restarting.`, and no panel `PROBLEM` message); an update that hangs before Wi-Fi rolled back at exactly 3 minutes with `The board did not join Wi-Fi within 3 minutes of starting.`; `/status` `uptime_s` counting from a 64-bit timer; the settings JSON gaining only `deviceName`. |
 | Verified on the author's own display on 25 Nov 2026 | The author ran it on the real board. Only these things: a firmware update through the upload path and through the real service; wrong codes refused; an image that crashes on start rolled back on the fourth boot; an image that never reaches the service rolled back at 3:00; an update while the service refuses the board's key (revoked); the longest gap between two frames during a download was 131 ms, never over 1 s; the permanent key burn with `provision.py --burned`, and the identity and signer fields in those procedures, as recorded in [`tools/burn_key/README.md`](../tools/burn_key/README.md). |
 | Tested (on macOS on 25 Nov 2026) | Run for this page on a Mac, on the computer only and never on the board: the service in a local container with placeholder values, signed and unsigned requests to it, a synthetic firmware image, `openssl`, `python3`, `arduino-cli --help`. The list is below. |
 | Checked in the code | The behaviour was read in the source (the file is named) and agrees with [`shared/firmware-update.md`](../shared/firmware-update.md) and [`shared/device-auth.md`](../shared/device-auth.md). Nobody ran it on a board for this page. |
@@ -1156,7 +1190,7 @@ Two limits apply to the whole page. The board was not touched while writing it: 
 
 Afterwards the containers and the scratch images were removed.
 
-**Not run, and why:** anything on the board (the board was not touched); `kubectl` and Docker Compose (the author's cluster was not touched, and the Compose files belong to [hosting.md](hosting.md)); Linux; the GitHub workflow; a real firmware build and update.
+**Not run, and why:** anything on the board (the board was not touched; on 26 November 2026 the author's own display was not tested for: a real power cut during probation, the `-2` name clash, setup mode with a long name, a proof page in a browser on another site, the timing of a burst of settings saves, and IPv6 addresses for the portal); the service's `device seen` log line and the newer service image (Docker did not respond on 26 November 2026, so the line is Checked in the code and not Tested); `kubectl` and Docker Compose (the author's cluster was not touched, and the Compose files belong to [hosting.md](hosting.md)); Linux; the GitHub workflow; a real firmware build and update.
 
 ## Related pages
 
