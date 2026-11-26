@@ -1,0 +1,496 @@
+{
+ "_about": "Known-answer vectors for the signed firmware manifest (shared/manifest-signing.md, ticket 42). TEST ONLY: every key in this file was generated for these vectors and its private half was deleted; none of them is, or ever was, a release key. The signatures are real ECDSA P-256 / SHA-256 signatures made with the openssl CLI and checked here with two independent implementations (openssl and a pure Python verifier); the firmware's mbedTLS and any other implementation must give the same answers. Every placeholder is a placeholder: the image hashes are of the texts 'ledmatrix test image, not a firmware' and 'ledmatrix other test image'.",
+ "scheme": {
+  "canonical_prefix": "ledmatrix-update-v1",
+  "canonical_layout": "prefix LF, 'version=' v LF, 'file=' f LF, 'size=' decimal LF, 'sha256=' hex LF, 'notes=' text (UTF-8, no trailing LF); missing notes = empty text",
+  "digest": "SHA-256 of the canonical bytes",
+  "signature": "ECDSA P-256 over that digest, 64 bytes r||s (32 bytes each, big endian), written as 128 lowercase hex characters",
+  "key_id": "first 8 lowercase hex characters of SHA-256 of the 65 byte uncompressed public point (0x04 || X || Y)"
+ },
+ "keys": [
+  {
+   "name": "A",
+   "id": "f864ea3b",
+   "public_key_hex": "040e6666b9cf88f75d08fe222681d6fe3d77d7c292bfb32f1054c31c9f0a76f0b6d95a61e25d1d6e5cca6494ee1789904ac350e0ae035e10b7f1240cd83c9e9cd7",
+   "pinned": true,
+   "label": "TEST ONLY key A (pinned in the test firmware)"
+  },
+  {
+   "name": "B",
+   "id": "db10c343",
+   "public_key_hex": "04434f93e1feb1c728e6d765b3d1c40d2414d543e4a2c977fb90ba359b11e8e7f4cb6a98d7f3f4dd71e90c78a0142d36c8f4a620d784ab5157ef4262338289dee8",
+   "pinned": true,
+   "label": "TEST ONLY key B (the second pinned key)"
+  },
+  {
+   "name": "C",
+   "id": "5b4d718b",
+   "public_key_hex": "04986b8757fcceda426d72165be1555d97a49c3a264a23f370a58d5efca4106e0703f68c8e62cf9df64ac8c1882705d4adf9ab5251efc7a6542ab274231c2594b2",
+   "pinned": false,
+   "label": "TEST ONLY key C (not pinned: an outsider's key)"
+  }
+ ],
+ "vectors": [
+  {
+   "name": "ok-basic",
+   "why": "valid signature by pinned key A over the manifest's fields",
+   "expect": "ok",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=Test release: signed manifest vectors.",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d546573742072656c656173653a207369676e6564206d616e696665737420766563746f72732e",
+   "canonical_sha256": "91b4fbe9836bc6e61310702685cc434205535088b56a761757a9671cab827e0f"
+  },
+  {
+   "name": "ok-utf8-notes",
+   "why": "notes with accents, a check mark and an emoji: the signed bytes are the UTF-8 of the decoded text",
+   "expect": "ok",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Atualização: ecrã e fuso horário (✓) 🚀",
+    "keyid": "f864ea3b",
+    "sig": "562875733ec550dc02c0a4e9083d08e1dceee7133e19ca6c79bfe5f78129d43d377cf10eef31be5f54797b6cfb9627a415b8aed921f1b83543de2a6d1768e0cd"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=Atualização: ecrã e fuso horário (✓) 🚀",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d417475616c697a61c3a7c3a36f3a20656372c3a32065206675736f20686f72c3a172696f2028e29c932920f09f9a80",
+   "canonical_sha256": "7862d5346239a0496aaf14adefecbdf35e90a03656fdf497201e6eb3fd05ad3e"
+  },
+  {
+   "name": "ok-empty-notes-key-b",
+   "why": "empty notes, signed by the second pinned key B",
+   "expect": "ok",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "",
+    "keyid": "db10c343",
+    "sig": "05f35334020ea7aa87675cbe0d694c6fb7ffdafef45a99683751302e670382becde2fe8c9c49c2358172a800e95e2c37fc5c11d400fb8894d3e9321514ba0af0"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d",
+   "canonical_sha256": "8892f8113d193d75d335c96d7833c16444f658c4a6a46324cc560ffb85cc57c0"
+  },
+  {
+   "name": "ok-notes-field-missing",
+   "why": "a manifest without a notes field is read as empty notes, so the signature over notes= still verifies",
+   "expect": "ok",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "keyid": "db10c343",
+    "sig": "05f35334020ea7aa87675cbe0d694c6fb7ffdafef45a99683751302e670382becde2fe8c9c49c2358172a800e95e2c37fc5c11d400fb8894d3e9321514ba0af0"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d",
+   "canonical_sha256": "8892f8113d193d75d335c96d7833c16444f658c4a6a46324cc560ffb85cc57c0"
+  },
+  {
+   "name": "ok-high-s-twin",
+   "why": "(r, n-s) is the other valid form of the same ECDSA signature: accepted by design (mbedTLS and openssl accept it; nothing depends on a signature being unique)",
+   "expect": "ok",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0ec6190729845330e76c5ed65d530dce9f7e4f3b1d100a15c0a80f673749205e8d"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=Test release: signed manifest vectors.",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d546573742072656c656173653a207369676e6564206d616e696665737420766563746f72732e",
+   "canonical_sha256": "91b4fbe9836bc6e61310702685cc434205535088b56a761757a9671cab827e0f"
+  },
+  {
+   "name": "unsigned",
+   "why": "no keyid and no sig",
+   "expect": "unsigned",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors."
+   }
+  },
+  {
+   "name": "malformed-sig-without-keyid",
+   "why": "sig present, keyid missing",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "malformed-keyid-without-sig",
+   "why": "keyid present, sig missing",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b"
+   }
+  },
+  {
+   "name": "malformed-sig-uppercase",
+   "why": "sig must be lowercase hex",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "D29ADC49A905A9F46197A1D1B988D04BF9829A65293F9565F9C19A103DDF7C0E39E6F8D57BACCF1993A129A2ACF231603E97BF90970D88C44BAA638BB342C6C4"
+   }
+  },
+  {
+   "name": "malformed-sig-short",
+   "why": "sig is 126 characters, not 128",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6"
+   }
+  },
+  {
+   "name": "malformed-sig-long",
+   "why": "sig is 130 characters, not 128",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c400"
+   }
+  },
+  {
+   "name": "malformed-sig-not-text",
+   "why": "sig is a number",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": 12345
+   }
+  },
+  {
+   "name": "malformed-keyid-uppercase",
+   "why": "keyid must be lowercase hex",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "F864EA3B",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "malformed-keyid-short",
+   "why": "keyid is 7 characters, not 8",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "malformed-sig-not-hex",
+   "why": "128 characters but not hex",
+   "expect": "malformed",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+   }
+  },
+  {
+   "name": "unknown-key-valid-signature",
+   "why": "a perfectly valid signature by key C, which this board does not pin: the key id is unknown",
+   "expect": "unknown_key",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "5b4d718b",
+    "sig": "ea778d6d4d7b0ac6a07bebbd8b6bed1f6d69bb547a4492069f06d87780e03a161383a133e79e25a34e411724b57aa4904c87fa1fd9981564c1c10442a83e3969"
+   },
+   "canonical": "ledmatrix-update-v1\nversion=0.11.0\nfile=ledmatrix-0.11.0.bin\nsize=1412537\nsha256=2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa\nnotes=Test release: signed manifest vectors.",
+   "canonical_hex": "6c65646d61747269782d7570646174652d76310a76657273696f6e3d302e31312e300a66696c653d6c65646d61747269782d302e31312e302e62696e0a73697a653d313431323533370a7368613235363d326261323161303466383662366461353162323639613665636131323433353533343532383663623465666666363430343862646134353138623035643266610a6e6f7465733d546573742072656c656173653a207369676e6564206d616e696665737420766563746f72732e",
+   "canonical_sha256": "91b4fbe9836bc6e61310702685cc434205535088b56a761757a9671cab827e0f"
+  },
+  {
+   "name": "unknown-key-id-relabelled",
+   "why": "a valid signature by A under a key id nobody pins",
+   "expect": "unknown_key",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "00000000",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-wrong-key-id",
+   "why": "A's signature labelled with B's key id (both pinned): checked against B, fails",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "db10c343",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-unpinned-signer-claims-a",
+   "why": "key C signs and claims A's key id: fails",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "ea778d6d4d7b0ac6a07bebbd8b6bed1f6d69bb547a4492069f06d87780e03a161383a133e79e25a34e411724b57aa4904c87fa1fd9981564c1c10442a83e3969"
+   }
+  },
+  {
+   "name": "bad-signature-flipped-bit-in-r",
+   "why": "one flipped bit in the first byte of r",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d39adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-flipped-bit-in-s",
+   "why": "one flipped bit in the last byte of s",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c5"
+   }
+  },
+  {
+   "name": "bad-signature-different-version",
+   "why": "version and file changed (a valid-looking newer release), signature is over 0.11.0",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.1",
+    "file": "ledmatrix-0.11.1.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-different-size",
+   "why": "size changed by one byte",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412538,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-different-sha256",
+   "why": "the image hash is another image's",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "99e0efe8af3693bcda70612d8880c188e18440f3a823a4a114259d12ee9538aa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-one-bit-in-sha256",
+   "why": "one flipped bit in the image hash",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fb",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-different-notes",
+   "why": "one letter changed in the notes (the notes are signed too)",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Best release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-notes-trailing-space",
+   "why": "one space added at the end of the notes",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors. ",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-all-zero",
+   "why": "r = 0 and s = 0 are out of range",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  {
+   "name": "bad-signature-r-equals-n",
+   "why": "r = n is out of range (must be 1 to n-1)",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc63255139e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "bad-signature-s-equals-n",
+   "why": "s = n is out of range",
+   "expect": "bad_signature",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0effffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
+   }
+  },
+  {
+   "name": "manifest-invalid-file-not-the-version",
+   "why": "file is not ledmatrix-<version>.bin: refused by the existing manifest rules before any signature is looked at",
+   "expect": "manifest_invalid",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.9.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "Test release: signed manifest vectors.",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  },
+  {
+   "name": "manifest-invalid-control-character-in-notes",
+   "why": "notes hold a newline: refused by the manifest rules (new rule: no control characters), whatever the signature says",
+   "expect": "manifest_invalid",
+   "manifest": {
+    "version": "0.11.0",
+    "file": "ledmatrix-0.11.0.bin",
+    "size": 1412537,
+    "sha256": "2ba21a04f86b6da51b269a6eca124355345286cb4efff64048bda4518b05d2fa",
+    "notes": "line one\nline two",
+    "keyid": "f864ea3b",
+    "sig": "d29adc49a905a9f46197a1d1b988d04bf9829a65293f9565f9c19a103ddf7c0e39e6f8d57baccf1993a129a2acf231603e97bf90970d88c44baa638bb342c6c4"
+   }
+  }
+ ]
+}
