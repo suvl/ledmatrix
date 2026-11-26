@@ -85,5 +85,6 @@ struct LiveStreamReply {
 bool liveHttpsStream(const char *host, const char *path, size_t chunk, int64_t expectLength, uint32_t idleMs, LiveBodySink sink, void *ctx, LiveStreamReply &r);
 void liveNoteProblem(ProblemKind kind, const char *raw);  // the problem list and the one-hour rule (live.cpp's noteProblem), lock free
 void liveNoteWorking(ProblemKind kind);                    // this kind works again
+void liveNoteEvent(ProblemKind kind, const char *raw);    // an event for the problem list ONLY (an update was rolled back): not the one-hour rule, never the panel message
 bool liveServiceAnswered();                                // the saved service host has given one complete HTTP answer (any status) since boot
 bool liveStarted();                                        // liveBegin() has run: the lock behind liveNoteProblem exists

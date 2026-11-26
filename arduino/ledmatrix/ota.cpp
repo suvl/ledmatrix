@@ -8,6 +8,7 @@
 #include <esp_random.h>
 #include <esp_timer.h>
 #include <mbedtls/md.h>
+#include <nvs.h>
 
 #include "identity.h"
 #include "live.h"
@@ -66,9 +67,11 @@ struct RolledBack {
   otalogic::Version v;
 } rolled;
 
-// The rollback mechanism's own state. The boot record lives in RTC no-init memory: it survives a panic, a watchdog reset and a software
-// reset (what a crash loop is made of) and not a power-on reset. It has no initialiser on purpose: a constructor would wipe it at every start.
-RTC_NOINIT_ATTR otalogic::BootRecord bootRec;
+// The rollback mechanism's own state. The boot counter lives in NVS (key NVS_COUNT_KEY of the "update" namespace; see the probation section at
+// the end of this file), so a power-on reset does not lose it.
+const char *const NVS_COUNT_KEY = "pcount";
+bool clearCount();  // erases the boot counter (defined with the probation functions below)
+bool rolledNoted = false;  // the data task has put the rollback in the problem list this boot (touched by the data task only)
 volatile bool onProbation = false;  // this image's slot is NEW or PENDING_VERIFY and it has not been marked good (set once, in probationBoot)
 uint32_t probationBoots = 0;   // the number of this boot within the probation
 volatile bool started = false;  // begin() has run: the lock, the flow and the problem list exist
@@ -141,6 +144,22 @@ void loadSaved() {
 }
 
 const otalogic::Version *failedVersion() { return rolled.have ? &rolled.v : nullptr; }  // lock held
+
+// A rollback happened on this board (the record in NVS: the version that failed and why): one plain entry in the problem list, once per boot,
+// from the data task. It is an EVENT for the owner to read in the portal, not a source of data failing, so it goes to the list only and does not
+// feed the one-hour rule behind the panel's PROBLEM message (live.cpp, liveNoteEvent). Lock free on the way out.
+void noteRolledBack() {
+  char version[sizeof(rolled.version)], why[sizeof(rolled.why)];
+  lock();
+  bool have = rolled.have;
+  strlcpy(version, rolled.version, sizeof(version));
+  strlcpy(why, rolled.why, sizeof(why));
+  unlock();
+  if (!have) return;
+  char raw[200];  // the macro, the version (at most 14), the reason (at most 159): problemRolledBackRaw cleans it and cuts to fit
+  problemRolledBackRaw(version, why, raw, sizeof(raw));
+  liveNoteEvent(ProblemKind::Update, raw);
+}
 
 // ---- the installer: one image into the other app slot ----------------------------------------------------------------------
 // The same code for the service's download and for an uploaded file. Nothing here touches the boot slot until finish() has checked
@@ -220,6 +239,7 @@ class Installer {
     }
     e = esp_ota_set_boot_partition(part_);  // checks the image once more, then writes the boot slot choice
     if (e != ESP_OK) return fail(e == ESP_ERR_OTA_VALIDATE_FAILED ? Fail::BadImage : Fail::FlashFailed, esp_err_to_name(e));
+    clearCount();  // the new image starts its probation at boot 1, whatever an earlier one left behind (only writes when a count is there)
     return Fail::None;
   }
 
@@ -584,6 +604,10 @@ void dataTick(uint32_t now, bool synced, const Settings &cfg) {
     stuckFail = Fail::None;
     reportStuck(f, stuckDetail);
   }
+  if (!rolledNoted && !probationActive()) {  // not while this image is itself on probation: marking it good may clear the record (markGood)
+    rolledNoted = true;
+    noteRolledBack();
+  }
   lock();
   sched.tick(now, synced, hostSaved);
   if (auth.tick(now)) {  // the code ran out of time: the panel goes back to normal, the portal says why
@@ -868,7 +892,13 @@ void reportStuck(Fail f, const char *detail) {
 // a setup() that hangs still ends in a verdict at 3 minutes. 6 KB of stack: the rollback path does NVS and String work.
 void probationTask(void *) {
   int markTries = 0;
+  uint32_t nextNote = 20000;  // a line now and then, so a serial monitor opened after a restart still shows which boot this is
   for (;;) {
+    if ((int32_t)(millis() - nextNote) >= 0) {
+      nextNote += 20000;
+      Serial.printf("OTA probation: boot %u of at most %u, %u s since start, not yet marked good\n", (unsigned)probationBoots,
+                    (unsigned)otalogic::PROBATION_MAX_BOOTS, (unsigned)(millis() / 1000));
+    }
     otalogic::HealthInputs in;
     in.wifiJoined = netWifiJoined();
     in.portalAnswering = netPortalAnswering();
@@ -896,6 +926,44 @@ void probationTask(void *) {
   vTaskDelete(nullptr);
 }
 
+// ---- the probation boot counter, in NVS --------------------------------------------------------------------------------------
+// One 64-bit item (otalogic::BootRecord packed) in the "update" namespace. The plain nvs_* calls, not Preferences, because the difference
+// between "nothing there" (the normal case) and "could not read" (a store error) is what the decision needs, and Preferences hides it.
+// The store keeps a write that changes nothing from reaching the flash, and a write is only ever made while an image is on probation.
+otalogic::CountRead readCount(otalogic::BootRecord &out) {
+  nvs_handle_t h;
+  esp_err_t e = nvs_open(NVS_NS, NVS_READONLY, &h);
+  if (e == ESP_ERR_NVS_NOT_FOUND) return otalogic::CountRead::Missing;  // the namespace does not exist yet: no count
+  if (e != ESP_OK) return otalogic::CountRead::Unreadable;
+  uint64_t raw = 0;
+  e = nvs_get_u64(h, NVS_COUNT_KEY, &raw);
+  nvs_close(h);
+  if (e == ESP_ERR_NVS_NOT_FOUND) return otalogic::CountRead::Missing;
+  if (e != ESP_OK) return otalogic::CountRead::Unreadable;
+  out = otalogic::unpackBootRecord(raw);
+  return otalogic::CountRead::Found;
+}
+
+bool writeCount(const otalogic::BootRecord &r) {
+  nvs_handle_t h;
+  if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+  bool ok = nvs_set_u64(h, NVS_COUNT_KEY, otalogic::packBootRecord(r)) == ESP_OK && nvs_commit(h) == ESP_OK;
+  nvs_close(h);
+  return ok;
+}
+
+// Erases the counter; true when there is none afterwards (it was not there, or it is gone now). Reads first: no flash write when there is nothing to erase.
+bool clearCount() {
+  otalogic::BootRecord ignored;
+  if (readCount(ignored) == otalogic::CountRead::Missing) return true;
+  nvs_handle_t h;
+  if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+  esp_err_t e = nvs_erase_key(h, NVS_COUNT_KEY);
+  bool ok = (e == ESP_OK || e == ESP_ERR_NVS_NOT_FOUND) && nvs_commit(h) == ESP_OK;
+  nvs_close(h);
+  return ok;
+}
+
 otalogic::ImageState imageStateOf(esp_ota_img_states_t st) {
   switch (st) {
     case ESP_OTA_IMG_NEW: return otalogic::ImageState::New;
@@ -914,11 +982,24 @@ void probationBoot() {
   const esp_partition_t *run = esp_ota_get_running_partition();
   // no record for this slot (a USB flash, or the factory slot): not on probation
   bool known = run && esp_ota_get_state_partition(run, &st) == ESP_OK;
-  otalogic::ProbationStep step = otalogic::probationStep(otalogic::isProbation(known ? imageStateOf(st) : otalogic::ImageState::Undefined), bootRec);
+  bool on = otalogic::isProbation(known ? imageStateOf(st) : otalogic::ImageState::Undefined);
+  // Which image is this? The ELF digest of the running program and the slot it runs from (a count left by another image is not ours).
+  const esp_app_desc_t *desc = esp_app_get_description();
+  uint32_t image = otalogic::imageIdentity(desc ? desc->app_elf_sha256 : nullptr, desc ? 8 : 0, run ? run->address : 0);
+  otalogic::BootRecord stored;
+  otalogic::CountRead read = readCount(stored);  // before anything is written; a failure to read is "boot 1", never a rollback by itself
+  otalogic::ProbationStep step = otalogic::probationStep(on, image, read, stored);
+  if (step.save == otalogic::CountSave::Write && !writeCount(step.record))
+    Serial.println("OTA the boot counter could not be saved: this boot is counted here but a power cut will not be");
+  else if (step.save == otalogic::CountSave::Erase)
+    Serial.println(clearCount() ? "OTA erased the boot counter that an earlier probation left"
+                                : "OTA the boot counter of an earlier probation could not be erased: it belongs to another image and is ignored");
   onProbation = step.onProbation;
   probationBoots = step.boots;
   if (!step.onProbation) return;
-  Serial.printf("OTA this image is on probation: boot %u of at most %u\n", (unsigned)step.boots, (unsigned)otalogic::PROBATION_MAX_BOOTS);
+  if (read == otalogic::CountRead::Unreadable) Serial.println("OTA the boot counter could not be read: counting this as boot 1");
+  Serial.printf("OTA this image is on probation: boot %u of at most %u (image %08x, counter kept in flash)\n", (unsigned)step.boots,
+                (unsigned)otalogic::PROBATION_MAX_BOOTS, (unsigned)image);
   if (step.rollback) rollbackNow(otalogic::WHY_RESTART_LOOP);  // does not return when it works; if it does, the board carries on
   health.begin(0);                                               // "within 3 minutes of its boot": millis() counts from the boot
   if (xTaskCreate(probationTask, "probation", 6144, nullptr, 3, nullptr) != pdPASS)
@@ -934,7 +1015,7 @@ bool markGood() {
     reportStuck(Fail::CannotConfirm, esp_err_to_name(e));
     return false;
   }
-  otalogic::probationOver(bootRec);
+  if (!clearCount()) Serial.println("OTA the boot counter could not be erased: the next start, not on probation, erases it");  // after the state flipped, not before
   onProbation = false;
   lock();
   flow.markedGood();
