@@ -326,6 +326,18 @@ static void testRange() {
   x[16] = 0xBB;
   x[31] = 0xFF;                                                       // one middle byte lowered, the rest high: below n
   CHECK(scalarInRange(x));
+  memcpy(x, P256_ORDER, 32);
+  x[4] = 0x01;
+  x[31] = 0x00;                                                       // bigger than n in byte 4, smaller in the last byte: the first difference decides
+  CHECK(!scalarInRange(x));
+  memcpy(x, P256_ORDER, 32);
+  x[16] = 0xBD;
+  x[17] = 0x00;
+  x[31] = 0x00;                                                       // bigger at byte 16, then smaller everywhere after it
+  CHECK(!scalarInRange(x));
+  memset(x, 0, 32);
+  x[0] = 0xFF; x[1] = 0xFF; x[2] = 0xFF; x[3] = 0xFF; x[4] = 0x00; x[5] = 0x00; x[6] = 0x00; x[7] = 0x01;  // n has 00 at byte 7: bigger there, and smaller in every byte after it
+  CHECK(!scalarInRange(x));
   memset(x, 0, 32);
   x[0] = 0x80;
   CHECK(scalarInRange(x));                                            // 2^255
