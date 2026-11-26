@@ -2,7 +2,9 @@ name: ledmatrix-api image
 
 # One workflow, one image: the service image carries the firmware that matches the repository state (shared/firmware-update.md).
 # The steps: test the service, test the host-side code, compile the firmware, write the manifest and the image into
-# service/firmware/ (git-ignored), then build the service image with that folder in it. No secret is used for the firmware.
+# service/firmware/ (git-ignored), sign the manifest, then build the service image with that folder in it. The one secret is
+# UPDATE_SIGNING_KEY, the private half of the firmware update signing key (shared/manifest-signing.md): only the step "Sign the
+# manifest" sees it. Until the secret exists, REQUIRE_SIGNING below lets the release go out unsigned, loudly.
 # Every action is pinned by the full hash of a release commit (a tag can be moved by its author, a hash cannot); the comment
 # names the release. Dependabot (.github/dependabot.yml) proposes new ones and moves hash and comment together.
 
@@ -14,6 +16,11 @@ on:
       - "arduino/**"
       - "shared/**"
       - "tools/make_manifest.py"
+      - "tools/update_signing.py"
+      - "tools/sign_manifest.py"
+      - "tools/gen_signing_key.py"
+      - "tools/make_test_manifests.py"
+      - "tools/test_sign_manifest.py"
       - ".github/workflows/service.yml"
   workflow_dispatch:
 
@@ -22,6 +29,10 @@ permissions:
   packages: write
 
 env:
+  # Signing policy. "0": while the repository secret UPDATE_SIGNING_KEY is empty or missing, the release goes out UNSIGNED, with a
+  # loud warning (a signed manifest must still verify). "1": an empty secret FAILS the run and nothing is published (fail closed).
+  # Set to "1" once the secret UPDATE_SIGNING_KEY exists (gh secret set UPDATE_SIGNING_KEY < ledmatrix-update-A.github-secret.txt).
+  REQUIRE_SIGNING: "0"
   # The toolchain, pinned. Change a pin here and the cache below (keyed on all of them) starts afresh.
   ARDUINO_CLI_VERSION: "1.6.0"
   # SHA-256 of arduino-cli_<version>_Linux_64bit.tar.gz, from the release's own checksums file.
@@ -55,6 +66,7 @@ jobs:
       - name: Python tests
         run: |
           python3 -I tools/test_make_manifest.py
+          python3 -I tools/test_sign_manifest.py
           python3 -I tools/test_provision.py
           python3 -I tools/test_burn_key.py
 
@@ -127,6 +139,34 @@ jobs:
           echo "$line"
           echo "Firmware: \`$line\`" >> "$GITHUB_STEP_SUMMARY"
           ls -l service/firmware
+      - name: Sign the manifest
+        env:
+          # The one step that sees the signing key: no other step, action, artifact or image layer does. Empty when the secret
+          # does not exist yet.
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          case "$REQUIRE_SIGNING" in
+            1) allow=() ;;
+            0) allow=(--allow-unsigned) ;;
+            *) echo "::error::REQUIRE_SIGNING must be \"0\" or \"1\" (it is \"$REQUIRE_SIGNING\")"; exit 1 ;;
+          esac
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            if [ "$REQUIRE_SIGNING" = "0" ]; then
+              msg="the manifest is NOT signed: UPDATE_SIGNING_KEY is not set; displays that enforce signatures will refuse this release"
+              echo "::warning title=Unsigned release::$msg"
+              echo "WARNING: $msg" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error title=Cannot sign::UPDATE_SIGNING_KEY is not set and REQUIRE_SIGNING is 1, so nothing is published"
+            fi
+          fi
+          python3 -I tools/sign_manifest.py service/firmware/manifest.json --keys-header arduino/ledmatrix/update_keys.h "${allow[@]}"
+      - name: Check the signed manifest (public keys only)
+        run: |
+          allow=()
+          if [ "$REQUIRE_SIGNING" = "0" ]; then allow=(--allow-unsigned); fi
+          line="$(python3 -I tools/sign_manifest.py --check service/firmware/manifest.json --keys-header arduino/ledmatrix/update_keys.h "${allow[@]}")"
+          echo "$line"
+          echo "Signature: \`$line\`" >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the firmware as a workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

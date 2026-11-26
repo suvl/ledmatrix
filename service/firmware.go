@@ -22,6 +22,10 @@ import (
 // manifest.json and the image it describes, ledmatrix-<version>.bin. The service only reads it.
 // Both routes are public: they ignore the signature headers completely, so a board whose key is
 // refused can still fetch a fix. The integrity check is the board's SHA-256 against the manifest.
+//
+// A release may be signed (shared/manifest-signing.md): the manifest then carries keyid and sig,
+// made by the build workflow. This service only checks that the two have the right shape and passes
+// them on; it does not verify the signature and holds no key. The board's check is the one that counts.
 
 const (
 	firmwareRecheck      = time.Minute      // the folder is looked at again at most this often
@@ -29,6 +33,9 @@ const (
 	firmwareMaxSize      = 2097152          // and at most one app slot
 	firmwareMaxNotes     = 200              // characters
 	firmwareMaxManifest  = 8 << 10          // bytes; a real manifest is under 1 KB
+	firmwareMaxAnswer    = 2048             // bytes of the manifest answer: the limit built into every board
+	firmwareKeyIDLen     = 8                // lowercase hex characters
+	firmwareSigLen       = 128              // lowercase hex characters: r then s, 32 bytes each
 	firmwareSlots        = 8                // downloads at once; kept apart from the load limit of the data routes
 	firmwareWriteTimeout = 10 * time.Minute // the server's 20 s write timeout would cut a slow board off
 )
@@ -41,6 +48,8 @@ type firmwareManifest struct {
 	Size    int64  `json:"size"`
 	SHA256  string `json:"sha256"`
 	Notes   string `json:"notes"`
+	KeyID   string `json:"keyid,omitempty"` // keyid and sig come as a pair, or not at all (manifest-signing.md)
+	Sig     string `json:"sig,omitempty"`
 }
 
 // firmwareRelease is a manifest that passed every check together with its image. It is never
@@ -52,6 +61,8 @@ type firmwareRelease struct {
 	path     string // where the image is, built from the validated file name
 	size     int64
 	sha256   string
+	keyid    string // the public id of the signing key, "" for an unsigned release
+	id       string // changes whenever anything that is published changes (never logged: it holds the signature)
 }
 
 type firmwareStore struct {
@@ -95,12 +106,16 @@ func (f *firmwareStore) current() *firmwareRelease {
 		f.rel = rel
 		state := "none: " + why
 		if rel != nil {
-			state = "published " + rel.version + " " + rel.sha256
+			state = "published " + rel.id
 		}
 		if state != f.state { // one line per change, not per request
 			f.state = state
 			if rel != nil {
-				f.logf("firmware: version %s is published (%d bytes)", rel.version, rel.size)
+				signed := "not signed"
+				if rel.keyid != "" {
+					signed = "signed with key " + rel.keyid // the key id is public; the signature is never logged
+				}
+				f.logf("firmware: version %s is published (%d bytes), %s", rel.version, rel.size, signed)
 			} else {
 				f.logf("firmware: nothing is published, %s", why)
 			}
@@ -116,6 +131,17 @@ func isDigits(s string) bool {
 		}
 	}
 	return s != ""
+}
+
+// hasControl reports a character below U+0020 or the DEL character: the notes are shown by the portal
+// and signed as text, so they hold none.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // validVersion: three dot-separated numbers of 1 to 4 digits.
@@ -146,8 +172,30 @@ func (m firmwareManifest) check() string {
 		return "the sha256 is not 64 lowercase hex characters"
 	case utf8.RuneCountInString(m.Notes) > firmwareMaxNotes:
 		return "the notes are longer than 200 characters"
+	case hasControl(m.Notes):
+		return "the notes hold a control character"
+	case (m.KeyID == "") != (m.Sig == ""):
+		return "the keyid and the sig must be both present or both absent"
+	case m.KeyID != "" && (len(m.KeyID) != firmwareKeyIDLen || !isLowerHex(m.KeyID)):
+		return "the keyid is not 8 lowercase hex characters"
+	case m.Sig != "" && (len(m.Sig) != firmwareSigLen || !isLowerHex(m.Sig)):
+		return "the sig is not 128 lowercase hex characters"
 	}
 	return ""
+}
+
+// buildAnswer is what GET /v1/firmware/manifest sends: made from the validated fields in the order of
+// the contract (never copied from the file), or why there is none. The limit is the one every board
+// reads. With the notes at their longest the answer is far below it, so this is a guard.
+func buildAnswer(m firmwareManifest) ([]byte, string) {
+	answer, err := json.Marshal(m)
+	switch {
+	case err != nil:
+		return nil, "the manifest cannot be written"
+	case len(answer) > firmwareMaxAnswer:
+		return nil, "the answer would be longer than 2048 bytes"
+	}
+	return answer, ""
 }
 
 // load reads the manifest and checks it against the image. It returns the release, or why there is none.
@@ -179,11 +227,12 @@ func (f *firmwareStore) load() (*firmwareRelease, string) {
 	case sum != m.SHA256:
 		return nil, "the image hash does not match the manifest"
 	}
-	answer, err := json.Marshal(m)
-	if err != nil {
-		return nil, "the manifest cannot be written"
+	answer, why := buildAnswer(m)
+	if why != "" {
+		return nil, why
 	}
-	return &firmwareRelease{manifest: answer, version: m.Version, file: m.File, path: path, size: size, sha256: sum}, ""
+	return &firmwareRelease{manifest: answer, version: m.Version, file: m.File, path: path, size: size, sha256: sum,
+		keyid: m.KeyID, id: m.Version + " " + sum + " " + m.KeyID + " " + m.Sig}, ""
 }
 
 func readLimited(path string, max int64) ([]byte, error) {
