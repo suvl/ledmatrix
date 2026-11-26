@@ -405,6 +405,31 @@ class PublishTests(TempCase):
         with open(os.path.join(self.out, "manifest.json"), "rb") as f:
             self.assertIn("caf\u00e9".encode("utf-8"), f.read())
 
+    def test_the_manifest_is_in_the_form_the_signer_reads(self):
+        # tools/sign_manifest.py (shared/manifest-signing.md) signs this very file: it must pass the signer's strict rules and have
+        # canonical bytes, with every kind of notes this tool can write (empty, folded, cut, non-ASCII)
+        spec = importlib.util.spec_from_file_location("update_signing", os.path.join(HERE, "update_signing.py"))
+        us = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(us)
+        for i, notes in enumerate(("", "Fixes the clock.", "line one\nline two\n\n" + "word " * 100, "Atualização ✓ \U0001F680")):
+            out = os.path.join(self.tmp, f"fw{i}")
+            self.assertEqual(run_main([self.image(), "--version", "1.2.3", "--notes", notes, "--out", out])[0], 0)
+            m = us.load_manifest(os.path.join(out, "manifest.json"))
+            self.assertIsNone(us.manifest_problem(m, release=True), notes)
+            self.assertEqual(list(m), ["version", "file", "size", "sha256", "notes"])
+            canonical = us.canonical_bytes(m).decode("utf-8")
+            self.assertTrue(canonical.startswith("ledmatrix-update-v1\nversion=1.2.3\nfile=ledmatrix-1.2.3.bin\nsize=102416\nsha256="))
+            self.assertTrue(canonical.endswith("\nnotes=" + m["notes"]))
+            self.assertEqual(us.classify(m, [])[0], us.UNSIGNED)
+
+    def test_notes_that_are_not_text_are_refused(self):
+        # a command line that was not UTF-8 reaches Python as a lone surrogate; it cannot be written or signed
+        out = os.path.join(self.tmp, "fw")
+        rc, o, err = run_main([self.image(), "--version", "1.2.3", "--notes", "bad \udcff byte", "--out", out])
+        self.assertEqual((rc, o), (1, ""))
+        self.assertIn("not valid UTF-8", err)
+        self.assertFalse(os.path.exists(out))
+
     def test_version_from_version_h(self):
         img = self.image(tags=("0.10.0",))
         vh = self.write("version.h", '#pragma once\n#define FIRMWARE_VERSION "0.10.0"\n')
