@@ -25,8 +25,10 @@ DNSServer dns;
 volatile bool wifiJoinedOnce = false;  // the station loop saw the Wi-Fi joined (netWifiJoined)
 volatile uint32_t portalBeatMs = 0;  // the last time the station loop served the web server (netPortalAnswering)
 
-const char *const AP_SSID = "ledmatrix";
-const char *const HOSTNAME = "ledmatrix";
+// The display name (devicename.h) this start runs with: the mDNS host name, the DHCP host name and the setup Wi-Fi name. Read once when
+// the net task starts. A new name is saved at once but used only after a restart, so the portal restarts the display when it changes
+// (registerStationRoutes); this copy is what "the name in use" means.
+char deviceName[devicename::MAX_LEN + 1] = "ledmatrix";
 
 void setState(NetState s) {
   xSemaphoreTake(lockHandle, portMAX_DELAY);
@@ -119,17 +121,17 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
 
   String pass = randomPassword();
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, pass.c_str());
+  WiFi.softAP(deviceName, pass.c_str());
   IPAddress ip = WiFi.softAPIP();
   dns.start(53, "*", ip);  // captive portal: every name resolves to us
 
   xSemaphoreTake(lockHandle, portMAX_DELAY);
-  strlcpy(info.apSsid, AP_SSID, sizeof(info.apSsid));
+  strlcpy(info.apSsid, deviceName, sizeof(info.apSsid));
   strlcpy(info.apPass, pass.c_str(), sizeof(info.apPass));
   strlcpy(info.apIp, ip.toString().c_str(), sizeof(info.apIp));
   info.state = NetState::Setup;
   xSemaphoreGive(lockHandle);
-  Serial.printf("SETUP network \"%s\" password %s at %s\n", AP_SSID, pass.c_str(), ip.toString().c_str());
+  Serial.printf("SETUP network \"%s\" password %s at %s\n", deviceName, pass.c_str(), ip.toString().c_str());
 
   server.on("/", HTTP_GET, [nets]() { server.send(200, "text/html", setupForm(nets, "")); });
   server.on("/save", HTTP_POST, [nets]() {
@@ -145,7 +147,7 @@ String setupForm(const std::vector<NetItem> &nets, const String &error) {
     Serial.printf("SETUP saved network \"%s\"\n", ssid.c_str());
     String h = pageStart("ledmatrix saved");
     h += "<h1>Saved</h1><p>The display is restarting and will join <b>" + htmlEscape(ssid) +
-         "</b>. Reconnect your phone to your usual Wi-Fi, then open <code>http://ledmatrix.local</code>. "
+         "</b>. Reconnect your phone to your usual Wi-Fi, then open <code>http://" + String(deviceName) + ".local</code>. "
          "If the panel shows NO WIFI, hold the UP button for 5 seconds and try again.</p>";
     h += PAGE_END;
     server.send(200, "text/html", h);
@@ -187,6 +189,17 @@ void registerStationRoutes() {
     }
     Serial.println("SETTINGS saved");
     server.send(200, "application/json", settings::toJson());
+    // A new display name (ticket 45) reaches the network only at the next start: the mDNS host name, the DHCP name and the setup Wi-Fi name
+    // are set once. So, like the Wi-Fi save, restart after the answer has gone out (the portal learns the new name from the answer and
+    // follows the display). MDNS.end() and begin() again would not be enough: the DHCP name would stay stale and every client's cached
+    // address too, so one clean start is simpler and safer. Not while an update is being installed: that ends with a restart of its own,
+    // which applies the name.
+    const Settings now = settings::get();
+    if (strcmp(now.deviceName, deviceName) != 0 && !ota::flashing()) {
+      Serial.printf("SETTINGS display name is now \"%s\": restarting to use it\n", now.deviceName);
+      vTaskDelay(pdMS_TO_TICKS(1500));
+      ESP.restart();
+    }
   });
   server.on("/api/live", HTTP_GET, []() {
     server.sendHeader("Cache-Control", "no-store");
@@ -256,7 +269,7 @@ void registerStationRoutes() {
       });
   server.on("/forget", HTTP_POST, []() {
     String h = pageStart("ledmatrix");
-    h += "<h1>Forgotten</h1><p>The display is restarting in setup mode. Join the network <b>ledmatrix</b> using the password shown on the panel.</p>";
+    h += "<h1>Forgotten</h1><p>The display is restarting in setup mode. Join the network <b>" + String(deviceName) + "</b> using the password shown on the panel.</p>";
     h += PAGE_END;
     server.send(200, "text/html", h);
     vTaskDelay(pdMS_TO_TICKS(1500));
@@ -292,7 +305,7 @@ void ensureDns() {
   setState(NetState::Connecting);
   WiFi.mode(WIFI_STA);
   WiFi.enableIPv6();  // so mDNS can answer AAAA too; without it macOS waits 5 s for the missing record
-  WiFi.setHostname(HOSTNAME);
+  WiFi.setHostname(deviceName);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(c.ssid.c_str(), c.pass.c_str());
@@ -307,11 +320,11 @@ void ensureDns() {
       ensureDns();
     }
     if (up && !services) {
-      if (MDNS.begin(HOSTNAME)) MDNS.addService("http", "tcp", 80);
+      if (MDNS.begin(deviceName)) MDNS.addService("http", "tcp", 80);
       registerStationRoutes();
       server.begin();
       services = true;
-      Serial.printf("ONLINE %s as %s.local\n", WiFi.localIP().toString().c_str(), HOSTNAME);
+      Serial.printf("ONLINE %s as %s.local\n", WiFi.localIP().toString().c_str(), deviceName);
     }
     xSemaphoreTake(lockHandle, portMAX_DELAY);
     if (up) {
@@ -330,6 +343,7 @@ void ensureDns() {
 }
 
 void netTask(void *) {
+  strlcpy(deviceName, settings::get().deviceName, sizeof(deviceName));  // settings::begin() has run (ledmatrix.ino setup())
   WifiCreds c = settings::loadWifi();
   if (!c.valid()) runSetup();
   runStation(c);

@@ -2,8 +2,10 @@
 """Pixel drift moves the finished picture one pixel right and/or down, so on every screen it applies to
 (flight layouts A-C, weather layouts A-C, the idle clock, the problem message) column 63 and row 31 must stay black,
 whatever the data. This draws those screens with worst-case data and exits 1 if any picture lights column 63 or row 31.
+The problem message shows the display name as "<name>.local", so it is drawn with names of every kind (up to 24 characters).
 The two firmware-update screens are never drifted, so they may use both: for them this only checks that the board and
-renderer.js draw the same pixels for the example states and a few hundred made-up ones.
+renderer.js draw the same pixels for the example states and a few hundred made-up ones. The same goes for the Connected
+and setup screens, which also show the display name (checked with the default name and with long ones).
 
   1. shared/renderer.js (preview page and portal thumbnails) in headless Chrome.
   2. arduino/ledmatrix/screens.cpp (the real board code and the real Adafruit GFX library, built for the
@@ -80,8 +82,17 @@ for (let day = 0; day < 366; day++) for (const hh of [0, 9, 12, 23]) for (const 
 }
 fakeNow = new RealDate(2026, 10, 21, 21, 47, 0);
 
-// the problem message: fixed text, but it replaces weather and the clock, which drift
+// the problem message: fixed text, but it replaces weather and the clock, which drift. It shows the display name as "<name>.local", so
+// names of every kind are tried too (a-z, 0-9 and hyphens, 1 to 24 characters, no hyphen at either end): a long one is cut
+const deviceNames = ['ledmatrix'];
+for (let n = 1; n <= 24; n++) for (const c of ['w', 'm', '0', 'q']) {
+  const w = c.repeat(n); deviceNames.push(w, w.slice(1) + '1', '1' + w.slice(1), w.slice(1) + 'y');
+  if (n >= 3) deviceNames.push(c + '-'.repeat(n - 2) + c);
+}
+for (let i = 0; i < 3000; i++) { let s = rstr(1, 24, 'abcdefghijklmnopqrstuvwxyz0123456789-'); if (s[0] === '-') s = 'a' + s.slice(1); if (s[s.length - 1] === '-') s = s.slice(0, -1) + 'z'; deviceNames.push(s); }
 for (const t of [0, 0.5]) draw('Problem msg', 'problem message', problemMsg, t);
+for (const name of deviceNames) { DEVICE.name = name; for (const t of [0, 0.5]) draw('Problem msg', 'problem message, display name ' + name, problemMsg, t); }
+DEVICE.name = 'ledmatrix';
 
 // the example screens against the board's pixels
 const q = c => ((c[0] & 0xF8) << 8) | ((c[1] & 0xFC) << 3) | (c[2] >> 3);
@@ -97,6 +108,12 @@ FLIGHTS.length = 0; SAMPLES.forEach(f => FLIGHTS.push(f));
 for (const l of 'ABC') compare('weather' + l, L[l][1]);
 compare('idleA', idleA);
 compare('problem', problemMsg);
+// the screens that show the display name, with names that fit, are cut (Connected, problem) or move to two small lines (setup)
+const withName = (name, fn) => (fb, t, ctx) => { DEVICE.name = name; try { fn(fb, t, ctx); } finally { DEVICE.name = 'ledmatrix'; } };
+for (const [tag, name] of [['', 'ledmatrix'], ['Mid', 'kitchen'], ['Fifteen', 'kitchen-display'], ['Max', 'living-room-display-two']]) {
+  compare('connected' + tag, withName(name, connected)); compare('problemName' + tag, withName(name, problemMsg)); compare('setup' + tag, withName(name, setupB));
+}
+for (const n of [10, 11, 14, 15, 16, 24]) compare('setupLen' + n, withName('m'.repeat(n), setupB));
 
 // the firmware-update screens: never drifted, so no margin to keep; only the pixels must equal the board's
 const updBase = JSON.parse(JSON.stringify(UPD));

@@ -101,12 +101,12 @@ figcaption strong { display: block; color: var(--text); font-weight: 500; font-s
   </section>
 
   <section id="setup">
-    <header><h2>Setup mode</h2><p>After a long press on UP. The password is generated each time and shown here.</p></header>
+    <header><h2>Setup mode</h2><p>After a long press on UP. The password is generated each time and shown here. The network name is the display name (&ldquo;ledmatrix&rdquo; until you choose another): up to 10 characters it is drawn big, a longer one in small letters on up to two lines.</p></header>
     <div class="grid" id="setup-grid"></div>
   </section>
 
   <section id="status">
-    <header><h2>Status screens</h2><p>Boot, connected, stale data, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
+    <header><h2>Status screens</h2><p>Boot, connected, stale data, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night). Connected and the problem message show the display name as <code>&lt;name&gt;.local</code>; a long name is cut to the width.</p></header>
     <div class="grid" id="status-grid"></div>
   </section>
 
@@ -247,6 +247,11 @@ const FLIGHTS = [
 const WX = { loc: 'HOME', temp: '18', text: 'Partly cloudy', line: 'H21 L12 10%', icon: 'part', cols: [['21h', 'part', '18'], ['00h', 'sun', '21'], ['03h', 'rain', '15']] };
 const HEADLINES = ['City council approves new tram line for the riverside', 'Local bakery wins national bread award', 'Heavy rain expected across the north tonight'];
 const state = { flight: 0, style: 'dots', bright: 1, paused: false };
+// The display name (the Display name setting, up to 24 characters of a-z, 0-9 and hyphens): the display is reached at <name>.local and its
+// setup Wi-Fi has the same name. The Connected screen and the problem message show "<name>.local" (screens.cpp portalHost): a long one is
+// cut by TT() like any text. The setup screen shows the name as the network name (screens.cpp setupScreen).
+const DEVICE = { name: 'ledmatrix' };
+const portalHost = () => DEVICE.name + '.local';
 
 /* ---------- screen drawings ---------- */
 const flightA = (fb, t, ctx) => {
@@ -326,15 +331,26 @@ const idleC = (fb, t) => {
 };
 const setupA = (fb, t, ctx) => {
   TT(fb, ctx, 2, 6, 'SETUP MODE', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI ledmatrix', WHITE, 62);
+  TT(fb, ctx, 2, 14, 'WIFI ' + DEVICE.name, WHITE, 62);
   TT(fb, ctx, 2, 21, 'PASS 7K3PQ9XM', WHITE, 62);
   TT(fb, ctx, 2, 28, 'OPEN 192.168.4.1', CYAN, 62);
 };
+// The layout in use (screens.cpp setupScreen). A network name of up to 10 characters is drawn big; a longer one in the 4x6 font on up to two
+// lines of 15 characters, so the whole name (up to 24) can be read, and the rest moves down a little.
 const setupB = (fb, t, ctx) => {
-  T6(fb, ctx, 2, 0, 'ledmatrix', AMBER, 62);
-  TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
-  T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
-  TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  const ssid = DEVICE.name;
+  if (ssid.length <= 10) {
+    T6(fb, ctx, 2, 0, ssid, AMBER, 62);
+    TT(fb, ctx, 2, 14, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 16, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 30, '192.168.4.1', CYAN, 62);
+  } else {
+    TT(fb, ctx, 2, 5, ssid.slice(0, 15), AMBER, 62);
+    if (ssid.length > 15) TT(fb, ctx, 2, 11, ssid.slice(15, 30), AMBER, 62);
+    TT(fb, ctx, 2, 18, 'WIFI PASSWORD', GREY, 62);
+    T6(fb, ctx, 2, 19, '7K3PQ9XM', WHITE, 62);
+    TT(fb, ctx, 2, 31, '192.168.4.1', CYAN, 62);
+  }
 };
 const boot = (fb, t, ctx) => {
   T6(fb, ctx, centerX(w6('ledmatrix', 1)), 7, 'ledmatrix', WHITE, 62);
@@ -342,7 +358,7 @@ const boot = (fb, t, ctx) => {
   TT(fb, ctx, 14, 24, 'connecting' + dots, GREY, 50);
 };
 const connected = (fb, t, ctx) => {
-  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, 'ledmatrix.local', CYAN, 62);
+  TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, portalHost(), CYAN, 62);
 };
 const stale = (fb, t, ctx) => {
   wxIcon(fb, 4, 8, 'part', 16);
@@ -356,7 +372,7 @@ const problemMsg = (fb, t, ctx) => {
   T6(fb, ctx, 2, 1, 'PROBLEM', AMBER, 62);
   TT(fb, ctx, 2, 15, 'Data is failing', WHITE, 60);
   TT(fb, ctx, 2, 22, 'See the portal:', GREY, 60);
-  TT(fb, ctx, 2, 29, 'ledmatrix.local', CYAN, 60);
+  TT(fb, ctx, 2, 29, portalHost(), CYAN, 60);
 };
 // The two firmware-update screens (screens.cpp updateCodeScreen and updateProgressScreen). They are drawn instead of the normal
 // screens, never dimmed or drifted, so they may use column 63 and row 31 (the countdown bar uses row 31). UPD is the panel's
@@ -452,11 +468,17 @@ addPanel('idle-grid', 'B · Radar sweep', FT, idleB, true);
 addPanel('idle-grid', 'C · Three pulsing dots', 'pixels only', idleC, true);
 addPanel('setup-grid', 'A · All on one screen', FT, setupA);
 addPanel('setup-grid', 'B · Static, big password (in use)', FB6, setupB);
+// A display name is the setup network's name and the host name in the addresses: each panel sets its own example name for the drawing.
+const withName = (name, fn) => (fb, t, ctx) => { const keep = DEVICE.name; DEVICE.name = name; fn(fb, t, ctx); DEVICE.name = keep; };
+addPanel('setup-grid', 'B · Display name of 15 characters', FT, withName('kitchen-display', setupB));
+addPanel('setup-grid', 'B · Display name of 24 characters', FT, withName('living-room-display-two', setupB));
 addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
 addPanel('status-grid', 'Stale data indicator', FB6, stale, true);
 addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
 addPanel('status-grid', 'Problem message', FB6, problemMsg);
+addPanel('status-grid', 'Connected, display name of 15 characters (cut)', FT, withName('kitchen-display', connected));
+addPanel('status-grid', 'Problem message, display name of 15 characters (cut)', FB6, withName('kitchen-display', problemMsg));
 // The update screens read their data from UPD (the panel's UpdateView): each panel sets its own example for the drawing.
 const withUpd = (data, fn) => (fb, t, ctx) => { const keep = Object.assign({}, UPD); Object.assign(UPD, data); fn(fb, t, ctx); Object.assign(UPD, keep); };
 addPanel('update-grid', 'Code, 150 s left', '6×8, 4×6 and 4×6 doubled', withUpd({ code: '012345', secondsLeft: 150 }, updateCode));

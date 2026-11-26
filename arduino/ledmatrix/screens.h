@@ -34,6 +34,9 @@ struct UiState {
   const struct tm *clock = nullptr;
   // Only for Screen::UpdateCode and Screen::UpdateProgress; null otherwise.
   const UpdateView *update = nullptr;
+  // The display name (devicename.h, up to 24 characters): the Connected screen and the problem message show "<name>.local".
+  // Null or empty means the default, "ledmatrix". (The setup screen shows apSsid, which is the same name.)
+  const char *deviceName = nullptr;
 };
 
 // Draws one frame of a screen into the Protomatter back buffer (the caller clears and calls show()).
