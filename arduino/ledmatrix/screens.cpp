@@ -21,7 +21,6 @@ constexpr uint16_t RED = c565(255, 40, 40);
 constexpr uint16_t GREY = c565(130, 130, 140);
 constexpr uint16_t CYAN = c565(0, 200, 230);
 constexpr uint16_t DARKBLUE = c565(0, 40, 90);
-constexpr uint16_t ORANGE = c565(255, 120, 20);
 
 const char DEG6 = (char)248;  // degree sign in the default 6x8 font (CP437 table)
 // Tom Thumb's extended glyphs (with the degree sign) are switched off in the library header, so in
@@ -301,13 +300,6 @@ void connectedScreen(const UiState &ui) {
   tt(2, 16, ui.staIp, WHITE, 62);
   tt(2, 24, "ledmatrix.local", CYAN, 62);
 }
-void staleScreen(float t) {
-  drawWxIcon(4, 8, WxKind::PartCloud, 16);
-  t6(26, 10, "18", WHITE, 26, 2);
-  t6(50, 10, String(DEG6), WHITE, 6);
-  if ((int)(t * 1.5f) % 2 == 0) matrix.fillRect(60, 1, 3, 3, ORANGE);
-  tt(2, 30, "stale data dot", GREY, 62);
-}
 void noWifiScreen() {
   for (int i = 0; i < 12; i++) {
     matrix.drawPixel(3 + i, 9 + i, RED);
@@ -441,7 +433,6 @@ void drawScreen(Screen s, uint8_t layout, uint32_t ms, int flightIdx, const UiSt
     case Screen::Setup: setupScreen(ui); break;
     case Screen::Boot: bootScreen(t); break;
     case Screen::Connected: connectedScreen(ui); break;
-    case Screen::Stale: staleScreen(t); break;
     case Screen::NoWifi: noWifiScreen(); break;
     case Screen::Problem: problemScreen(); break;
     case Screen::UpdateCode: if (ui.update) updateCodeScreen(*ui.update); break;

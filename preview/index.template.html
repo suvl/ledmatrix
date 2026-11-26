@@ -106,7 +106,7 @@ figcaption strong { display: block; color: var(--text); font-weight: 500; font-s
   </section>
 
   <section id="status">
-    <header><h2>Status screens</h2><p>Boot, connected, stale data, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
+    <header><h2>Status screens</h2><p>Boot, connected, no Wi-Fi, and the problem message (5 seconds once a minute after something has failed for an hour; never over a plane or a headline, dark at night).</p></header>
     <div class="grid" id="status-grid"></div>
   </section>
 
@@ -181,7 +181,6 @@ addPanel('setup-grid', 'A · All on one screen', FT, setupA);
 addPanel('setup-grid', 'B · Static, big password (in use)', FB6, setupB);
 addPanel('status-grid', 'Booting', FB6, boot, true);
 addPanel('status-grid', 'Connected', FT, connected);
-addPanel('status-grid', 'Stale data indicator', FB6, stale, true);
 addPanel('status-grid', 'No Wi-Fi', FT, nowifi);
 addPanel('status-grid', 'Problem message', FB6, problemMsg);
 // The update screens read their data from UPD (the panel's UpdateView): each panel sets its own example for the drawing.

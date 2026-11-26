@@ -223,12 +223,6 @@ const boot = (fb, t, ctx) => {
 const connected = (fb, t, ctx) => {
   TT(fb, ctx, 2, 8, 'WIFI OK', GREEN, 60); TT(fb, ctx, 2, 16, '192.168.1.100', WHITE, 62); TT(fb, ctx, 2, 24, 'ledmatrix.local', CYAN, 62);
 };
-const stale = (fb, t, ctx) => {
-  wxIcon(fb, 4, 8, 'part', 16);
-  T6(fb, ctx, 26, 10, '18', WHITE, 26, 2); drawGlcd(fb, 50, 10, '°', WHITE, 1);
-  if (Math.floor(t * 1.5) % 2 === 0) fb.fill(60, 1, 3, 3, [255, 120, 20]);
-  TT(fb, ctx, 2, 30, 'stale data dot', GREY, 62);
-};
 // The message that points to the portal after an hour of failure (screens.cpp problemScreen). Named problemMsg because the
 // portal page shares this scope and lists problems of its own.
 const problemMsg = (fb, t, ctx) => {
