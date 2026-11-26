@@ -106,7 +106,13 @@ Andreas Merkle (web@blue-andi.de)
 
 ## Data sources (see also the README)
 
-IPMA (weather, must be cited as the source), adsb.fi open data (positions, personal non-commercial use),
-adsbdb (routes), Google News (headlines, unofficial feed).
+IPMA (weather in Portugal, must be cited as the source), Open-Meteo.com (weather outside Portugal; CC BY 4.0, credit
+"Weather data by Open-Meteo.com", https://open-meteo.com/; the free API is for non-commercial use only, a commercial
+service needs their paid plan; the data is rounded and reduced to four icons), adsb.fi open data (positions, personal
+non-commercial use), adsbdb (routes), Google News (headlines, unofficial feed).
+
+The outline of Portugal that the service uses to choose between IPMA and Open-Meteo (`service/pt_outline.go`, made by
+`tools/make_pt_outline.py`) is derived from Natural Earth 1:10m Cultural Vectors, Admin 0 - Countries, version 5.1.1
+(public domain, https://www.naturalearthdata.com/). The file's header names the source and the date.
 
 Airline logos are trademarks of their airlines. They are not included in this repository or the published image; the owner converts them privately for personal use.
