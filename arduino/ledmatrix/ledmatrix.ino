@@ -163,7 +163,8 @@ static void logShown(Screen s, const char *callsign) {
   first = false;
   lastScreen = s;
   strlcpy(lastCs, callsign, sizeof(lastCs));
-  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "stale", "nowifi", "problem", "update code", "update progress"};
+  static const char *const names[] = {"flight", "weather", "news", "idle", "setup", "boot", "connected", "nowifi", "problem", "update code", "update progress"};
+  static_assert(sizeof(names) / sizeof(names[0]) == SCREEN_COUNT, "names must list every Screen value, in enum order (screens.h)");
   Serial.printf("SHOW %s %s\n", names[(int)s], callsign);
 }
 
@@ -308,7 +309,7 @@ void setup() {
   pinMode(BUTTON_UP, INPUT_PULLUP);
   pinMode(BUTTON_DOWN, INPUT_PULLUP);
   delay(1500);
-  Serial.println("\nledmatrix: slice 4, live data");
+  Serial.printf("\nledmatrix %s\n", ota::version());  // the version as plain text; never the marker bytes behind it
   settings::begin();  // loads the saved settings; must run before the tasks read them
   identity::begin();  // reads this board's identity record once; must run before the net and data tasks use it
   ota::begin();       // the update module's lock and saved state; must run before the net and data tasks use it
