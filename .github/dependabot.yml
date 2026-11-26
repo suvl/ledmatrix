@@ -3,8 +3,8 @@
 # Three things are kept current: the GitHub Actions of the workflow (pinned by commit hash, so Dependabot
 # moves the hash and the version comment together), the Go modules of the service, and the Docker base images
 # of the service. A week is one review: every ecosystem opens at most a few pull requests, and each group below
-# is one pull request however many dependencies it holds. Security updates are separate (they are switched on
-# in the repository settings) and ignore these limits and this schedule.
+# is one pull request however many dependencies it holds. Dependabot security updates are a separate switch in
+# the repository settings (Advanced Security); when on, they ignore these limits, this schedule and the cooldown.
 #
 # The workflow runs only on a push to main, so a Dependabot pull request has no check of its own: read what it
 # changes, merge it, and look at the run that the merge starts (a failed run leaves the image of the last good
