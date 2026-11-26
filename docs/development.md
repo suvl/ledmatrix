@@ -1,0 +1,603 @@
+# Development: tests, releases and the service on your computer
+
+Checked on macOS on 25 Nov 2026: what was run and what was not is in the table at the end of this page.
+
+This page is for people who change the code or publish firmware releases: how to run every test, how a release is built and what the build pipeline (CI) does, how to build the service image and run the service on your own computer, and how to look inside a build. You do **not** need it to build or run a display: [build.md](build.md) is enough for the firmware, and [hosting.md](hosting.md) runs the service from the public image.
+
+It assumes you have done [build.md](build.md): the tools, the clone of the repository and one successful firmware build. If a Terminal word is new, see the box "Terminal in 2 minutes" in [build.md](build.md#terminal-in-2-minutes). Every command on this page is run from the repository root (`cd ~/ledmatrix`) unless it says otherwise.
+
+## Which case are you?
+
+Two cases come up, and the advice differs where it matters:
+
+- **You use the public image** (`ghcr.io/suvl/ledmatrix-api`, published by the maintainer). You do not release anything. Firmware updates reach your display when the maintainer publishes a release. You use this page for the tests, the local service and for looking inside builds if you change code.
+- **You build your own** firmware and service image. Then you are the maintainer of your own copy: no update ever reaches your display unless you build and publish a release yourself ([Releasing](#5-releasing)), and a self-built image only carries a firmware if you put one in ([5.6](#56-rehearse-a-release-on-your-computer)).
+
+## 1. Tools for development
+
+Tested on macOS. On top of the tools in [build.md](build.md):
+
+| Tool | What it is for | Version | How to check it |
+| --- | --- | --- | --- |
+| **Python 3** | the tests of `tools/` | **3.10 or newer** for all the tests (see the note below) | `python3 --version` |
+| **A C++ compiler** | the host tests (`c++`) | any with C++17; checked: Apple clang 21.0.0, g++ 13.3 | `c++ --version` |
+| **Docker** | builds and runs the service image; the easiest way to run the Go tests | any recent Docker; the checks used OrbStack (Docker Desktop and Colima work the same way) | `docker --version` and `docker info` |
+| **Go** (optional) | only to run the Go tests without Docker | **1.27 or newer** (`service/go.mod`, `service/Dockerfile` and the workflow all say 1.27) | `go version` |
+| **Google Chrome** (optional) | only for the margin check | any recent; checked: 158 | the file `/Applications/Google Chrome.app` exists |
+| **OpenSSL** | makes a random master secret for local tests (`openssl rand -hex 32`) | the one macOS ships is fine | `openssl version` |
+
+Install on macOS: `brew install python`, then Docker from <https://www.docker.com/products/docker-desktop/> or <https://orbstack.dev> (start the app once and wait until it says it is running; `docker info` must show a `Server:` part). Add `go` to the brew line only if you want to run the Go tests without Docker. Not tested here: the `brew install` lines (the tools were already installed).
+
+> **Python 3.9 runs the tools, but not every test.** The Python that comes with macOS (3.9.6) runs `build_web.py`, `make_manifest.py` and `provision.py`; their tests pass on it except one check in `tools/test_provision.py`, which fails with `AttributeError: module 'sys' has no attribute 'stdlib_module_names'` because it needs Python 3.10 or newer. Checked with Python 3.9.6 (that one failure), 3.12.3, 3.14 and 3.15.2 (all pass). Check which Python your Terminal uses with `which python3`: Homebrew's is under `/opt/homebrew/bin` on Apple silicon.
+
+Linux (Ubuntu or Debian), Not tested here except where noted: `sudo apt install git g++ python3 curl ca-certificates` (checked as root in an Ubuntu 24.04.5 x86_64 container: Python 3.12.3, g++ 13.3.0). Install Docker Engine from [Docker's instructions](https://docs.docker.com/engine/install/) and add yourself to the `docker` group (or put `sudo` before `docker`); also install the Docker "buildx" plugin (usually the package `docker-buildx-plugin`), which `docker build` needs here. For Go use the tarball from <https://go.dev/dl/>. For the margin check you need `google-chrome` or `chromium` on the `PATH`.
+
+## 2. A separate arduino-cli setup
+
+Optional; Tested. If you already use arduino-cli or the Arduino IDE for other projects and want this project's board package and libraries kept apart, point arduino-cli at folders of your own. Three environment variables choose the folders, and a fourth passes the Espressif index (the CI workflow does exactly this instead of `arduino-cli config add`):
+
+```
+export ARDUINO_DIRECTORIES_DATA="$HOME/ledmatrix-arduino/data"
+export ARDUINO_DIRECTORIES_USER="$HOME/ledmatrix-arduino/user"
+export ARDUINO_DIRECTORIES_DOWNLOADS="$HOME/ledmatrix-arduino/downloads"
+export ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS="https://espressif.github.io/arduino-esp32/package_esp32_index.json"
+```
+
+They last until you close the Terminal window. With them set, run the commands of [build.md](build.md) (`core update-index`, `core install`, `lib install`, `compile`) in that window: everything lands in the folders above and your real setup is untouched. `arduino-cli config get directories.user` prints the library folder in either setup, which is why the test commands below use it.
+
+Always compile with `--build-path`, as in build.md: without it arduino-cli also keeps a build cache outside those folders (`~/Library/Caches/arduino` on a Mac; Tested).
+
+## 3. The portal and preview pages
+
+Tested on macOS and in the Ubuntu container. Opening `preview/index.html` in a browser: Not tested here (the margin check, [4.4](#44-the-margin-check), exercises the same drawing code in headless Chrome).
+
+The [portal](glossary.md#portal) is the settings page that the display serves from its own memory, and the preview page shows the screens in a browser, drawn by the same code as the panel. Both are built from templates by one script:
+
+```
+python3 tools/build_web.py
+```
+
+A good result, in well under a second:
+
+```
+preview/index.html 38801 bytes; portal_page.h 98634 bytes
+```
+
+| Reads | Writes |
+| --- | --- |
+| `preview/index.template.html`, `portal/portal.template.html` | `preview/index.html` (a plain HTML file: open it by double-click, no web server needed) |
+| `shared/renderer.js`, `shared/fonts.json` (put in place of `__RENDERER__` and `__FONTS__`) | `arduino/ledmatrix/portal_page.h` (the portal page wrapped as a C++ header, so the firmware contains it) |
+| `shared/tz_zones.json` (put in place of `__TZ_TABLE__`) | |
+
+**Edit the templates and the files in `shared/`, never the two generated files.** After a change, run the script and commit the templates and the two generated files together.
+
+**Why the generated files are committed.** The Arduino build only sees the sketch folder and cannot run Python, so `portal_page.h` has to be there already. That is also why a fresh clone builds with no extra step (the clone in build.md compiled without running this script).
+
+**Check that the generated files are current.** Run the script on a clean checkout:
+
+```
+python3 tools/build_web.py
+git status --short
+```
+
+A good result: `git status` prints nothing. If it lists `preview/index.html` or `portal_page.h`, a template was changed without regenerating, or a generated file was edited by hand. The CI workflow does **not** run this script or make this check, so the check is yours. A change that touches only `portal/` or `preview/` does not start the workflow either ([5.2](#52-when-it-runs)).
+
+Two more scripts regenerate files in `shared/`, rarely. `python3 -I tools/extract_fonts.py <folder of the Adafruit GFX library>` rewrites `shared/fonts.json` from the library (Tested in a fresh clone: it rewrote the file identically). `python3 -m pip install tzdata && python3 tools/make_tz.py` rewrites the time zone table `shared/tz_zones.json` (Not tested here). `provision.py` and `burn_key/` give a board its identity ([install.md](install.md)); `make_logos.py` builds the private airline logo set ([hosting.md](hosting.md)).
+
+## 4. The tests
+
+Tested on macOS; the C++, Python and Go tests also in Linux containers (x86_64 Ubuntu 24.04 for C++ and Python, the Debian-based `golang:1.27` image for Go). None of them needs a board, a secret or a connection to a real service. Together they take about a minute, plus the one-time download of the Go image.
+
+| Test | What it checks | Needs | Command (from the repository root) | A pass looks like |
+| --- | --- | --- | --- | --- |
+| Go service tests | the service: signatures, secret settings, routes, caches, firmware routes, parsing of upstream answers | Docker, or Go | see 4.1 | `ok  github.com/suvl/ledmatrix/service  1.0s` |
+| `tools/test_make_manifest.py` | `make_manifest.py` (the release writer) | Python | `python3 -I tools/test_make_manifest.py` | `Ran 67 tests`, `OK` |
+| `tools/test_provision.py` | `provision.py` against the shared known-answer vectors; no serial port is touched | Python 3.10+ | `python3 -I tools/test_provision.py` | `Ran 66 tests`, `OK` |
+| `tools/test_burn_key.py` | the one-off burn sketch's folder: same `partitions.csv`, dry run by default, every [eFuse](glossary.md#efuse) write guarded, no key printed | Python | `python3 -I tools/test_burn_key.py` | `Ran 12 tests`, `OK` |
+| `tools/test_deviceauth.cpp` | the board's request signing, against `shared/device-auth-vectors.json` | C++ compiler, ArduinoJson | see 4.3 | `1504 checks, 0 failed` |
+| `tools/test_problems.cpp` | the problem list, its plain-English text and the one-hour rule | C++ compiler | see 4.3 | `40566 checks, 0 failed` |
+| `tools/test_cycle.cpp` | which plane is shown: the one-shot queue and cycle mode | C++ compiler | see 4.3 | `2088 checks, 0 failed` |
+| `tools/test_protect.cpp` | panel protection: dimming, pixel drift, night blanking | C++ compiler | see 4.3 | `23 of 23 cases passed` |
+| `tools/test_otalogic.cpp` | firmware update logic: versions, the manifest rules, the code and its throttle, probation; with an image path it also checks that image | C++ compiler, ArduinoJson | see 4.3 | `142771 checks, 0 failed` |
+| `tools/check_margins.py` | the margin rule on every screen, and that the board and the preview draw the same pixels | C++ compiler, GFX library, Chrome | see 4.4 | `OK: column 63 and row 31 stay black` |
+
+CI runs the Go tests (with `go vet`), the three Python tests, the five C++ tests and the firmware compile. It does not run `check_margins.py`.
+
+### 4.1 The Go service tests
+
+With Docker (the first run downloads the `golang:1.27` image, 1.3 GB). The Go version is the one in `service/go.mod` and `service/Dockerfile` (1.27 when this page was written); if those files say another version, use it in the commands below:
+
+```
+docker run --rm -v "$PWD":/repo -w /repo/service golang:1.27 go test ./...
+```
+
+This starts a throw-away [container](glossary.md#container) with Go 1.27, gives it your repository as `/repo`, and runs the tests in `service/`. Mount the **whole repository**, as written: the tests read `shared/device-auth-vectors.json`. A good result:
+
+```
+ok  	github.com/suvl/ledmatrix/service	1.000s
+```
+
+It took about 8 seconds, the image download included. It leaves nothing in your repository. The tests are in three files: `auth_test.go` (30 tests: the signature rules and the secret settings, including `MASTER_SECRET_FILE`), `firmware_test.go` (18 tests: the manifest and download routes) and `service_test.go` (11 tests: weather, flights, headlines, caches, logos and the HTTP layer, run against saved sample answers in `service/testdata/`, so they also pass with `docker run --network none`). Add `-count=1 -v` to run without the result cache and list every test: 59 print `--- PASS`. CI also runs `go vet ./...` first, which prints nothing when it finds nothing:
+
+```
+docker run --rm -v "$PWD":/repo -w /repo/service golang:1.27 sh -c "go vet ./... && go test -count=1 ./..."
+```
+
+Natively, with Go 1.27 or newer installed:
+
+```
+cd service
+go vet ./... && go test -count=1 ./...
+cd ..
+```
+
+Tested with Go 1.27.4 unpacked from the official download (not installed with `brew`): `go vet` printed nothing and `go test` printed `ok`. The service has no outside dependencies, so nothing is downloaded.
+
+If your Go is too old you get `go: go.mod requires go >= 1.27 (running go 1.25.14; GOTOOLCHAIN=local)` (Tested with the `golang:1.25` image). A Go installed on your computer would normally fetch the newer toolchain by itself; that was not tried.
+
+### 4.2 The Python tests
+
+```
+python3 -I tools/test_make_manifest.py
+python3 -I tools/test_provision.py
+python3 -I tools/test_burn_key.py
+```
+
+`-I` runs Python in isolated mode: it ignores your environment variables and the current folder, so the run does not depend on your setup (CI uses it too). A good result for each is a row of dots, then:
+
+```
+Ran 67 tests in 0.692s
+
+OK
+```
+
+(66 tests in 5 s and 12 tests in 0.1 s for the other two.) A failure ends with `FAILED (failures=1)` or `(errors=1)` and a Traceback above it.
+
+### 4.3 The C++ host tests
+
+A **host test** compiles part of the firmware's own code as an ordinary program for your computer and runs it. The code under test is the plain logic in the header files, so no board is needed. Two tests include the ArduinoJson library installed in build.md; the first lines below find it. Run all five (each compiles in 1 to 2 seconds):
+
+```
+OUT="$(mktemp -d)"
+JSON="$(arduino-cli config get directories.user)/libraries/ArduinoJson/src"
+c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$JSON" tools/test_deviceauth.cpp -o "$OUT/test_deviceauth" && "$OUT/test_deviceauth" shared/device-auth-vectors.json
+c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_problems.cpp -o "$OUT/test_problems" && "$OUT/test_problems"
+c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix tools/test_cycle.cpp -o "$OUT/test_cycle" && "$OUT/test_cycle"
+c++ -std=c++17 -Iarduino/ledmatrix tools/test_protect.cpp arduino/ledmatrix/protect.cpp -o "$OUT/test_protect" && "$OUT/test_protect"
+c++ -std=c++17 -Wall -Wextra -Iarduino/ledmatrix -I"$JSON" tools/test_otalogic.cpp -o "$OUT/test_otalogic" && "$OUT/test_otalogic"
+```
+
+`-std=c++17` is the language version, `-Wall -Wextra` turn on warnings (the compile should print none), `-I<folder>` says where header files are, `-o` names the program that is made, and `mktemp -d` makes an empty temporary folder so nothing lands in the repository.
+
+A good result: each test prints section names and a last line (look at the last line): `1504 checks, 0 failed`, `40566 checks, 0 failed`, `2088 checks, 0 failed`, `23 of 23 cases passed` and `142771 checks, 0 failed`. A failing check prints its line number and the check itself, then a count, and the program exits with status 1 (so `&&` chains stop and CI fails):
+
+```
+    FAIL line 1570: strcmp(sc.text(), FIRMWARE_VERSION) == 0
+142775 checks, 1 failed
+```
+
+All five passed on the Mac, in the Ubuntu container and in CI.
+
+`test_otalogic` can also check a real build. Give it the firmware image as its one argument:
+
+```
+"$OUT/test_otalogic" ~/ledmatrix-build/firmware/ledmatrix.ino.bin
+```
+
+A good result adds `image 1479792 bytes, says version 0.10.1` and ends `142775 checks, 0 failed`. If the image's version marker differs from `version.h` it fails (the example failure above came from a test build with the wrong version compiled in). CI runs this on every release image.
+
+Optional: run them with **sanitizers**, which catch memory mistakes such as buffer overruns, by adding `-fsanitize=address,undefined` to the `c++` line (and `-fno-sanitize-recover=undefined` for `test_otalogic`). Tested for `test_deviceauth`, `test_problems` and `test_otalogic`: all passed; not tried for the other two.
+
+If the compile says `fatal error: 'ArduinoJson.h' file not found` (g++: `ArduinoJson.h: No such file or directory`), `$JSON` points to the wrong place: `echo "$JSON"` and check that the folder exists. The library must be installed in the same arduino-cli setup you are using now (see [2](#2-a-separate-arduino-cli-setup)).
+
+### 4.4 The margin check
+
+Tested on macOS with Chrome 158. Not tested here on Linux.
+
+The panel slowly shifts the picture one pixel right or down ("pixel drift") so no pixel burns in. For that to work, column 63 and row 31 must stay black on every screen, whatever the data. This check draws every screen with worst-case data and fails if any picture lights those. It does so for the real board code (`screens.cpp`, compiled for your computer against a fake panel and the real Adafruit GFX library) and for the preview renderer (`shared/renderer.js`) in headless Chrome (Chrome without a window), and it checks that both draw exactly the same pixels. It needs a C++ compiler, the GFX library from build.md and Chrome. Chrome is found in `/Applications` on a Mac, or on the `PATH` as `google-chrome` or `chromium`.
+
+```
+python3 -I tools/check_margins.py --gfx "$(arduino-cli config get directories.user)/libraries/Adafruit_GFX_Library"
+```
+
+Chrome is looked for in this order: `--chrome PATH`, the `CHROME` environment variable, the usual Mac location, the `PATH`. `--no-board` skips the board-code half (then you need no compiler or library).
+
+Optional: the check starts Chrome without choosing a profile folder, so it may use your own Chrome profile. To keep it away, make a two-line wrapper that gives Chrome an empty profile folder and pass it with `--chrome` (Tested):
+
+```
+printf '#!/bin/bash\nexec "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$HOME/chrome-clean-profile" --no-first-run "$@"\n' > ~/chrome-clean.sh
+chmod +x ~/chrome-clean.sh
+python3 -I tools/check_margins.py --gfx "$(arduino-cli config get directories.user)/libraries/Adafruit_GFX_Library" --chrome ~/chrome-clean.sh
+```
+
+A good result, in about 8 seconds (trimmed here: the real output has one line per screen and layout):
+
+```
+Board code (screens.cpp, built for the laptop):
+  Flight A       30125 pictures, lit up to column 62 and row 30: ok
+  ...
+Preview and portal renderer (shared/renderer.js, headless Chrome):
+  ...
+  Update code         403 pictures, lit up to column 61 and row 31: ok (may use column 63 and row 31)
+  ...
+  same pixels as the board on the 823 example and made-up screens: yes
+OK: column 63 and row 31 stay black
+```
+
+The two firmware-update screens may use the last column and row because they are never drifted. A failure prints `FAIL` on a line, says which picture lit the margin, and the last line is `FAILED`. If Chrome is missing the tool stops with `Chrome not found: pass --chrome PATH or set CHROME` (from the code; not triggered). If the GFX folder is wrong the board half prints `skipped: Adafruit_GFX_Library not found at ... (use --gfx)` and only the Chrome half runs.
+
+### 4.5 Compile checks
+
+The firmware compile in build.md is itself a test: CI treats a failed compile as a failed release. The one-off key-burn sketch in `tools/burn_key/` is a separate sketch with its own `partitions.csv`. Compiling its safe "dry run" form (which does not even contain the code that burns) shows that it still builds:
+
+```
+arduino-cli compile --fqbn esp32:esp32:adafruit_matrixportal_esp32s3 --jobs 0 --build-path ~/ledmatrix-build/burn_key tools/burn_key
+```
+
+A good result (31 seconds after the firmware had been built): `Sketch uses 369430 bytes (17%) ...` and `Global variables use 55288 bytes (16%) ...`. **Only compile it here.** Uploading it and the real [burn](glossary.md#burn) are covered, with their warnings, in [install.md](install.md) and `tools/burn_key/README.md`.
+
+## 5. Releasing
+
+Checked: each step of the workflow was run by hand on the Mac, and a real CI run was read on GitHub. The workflow itself was not started for this page.
+
+A **release** is a new firmware version that displays offer to install. Releases are built by one GitHub workflow, `.github/workflows/service.yml`, whenever code is pushed to the `main` branch. One run makes both the firmware image and the service image, and puts the first inside the second. A display downloads its updates from the service it is set up with, never from GitHub. The contract is `shared/firmware-update.md`; [architecture.md](architecture.md) explains the design and [operations.md](operations.md) shows what a display's owner sees.
+
+**Who does this.** On the public image, the maintainer does it; you can skip this section. If you build your own, you do it yourself, in your own copy of the repository (a fork), and your own service must run your own image: displays only ever update from the service they are set up with.
+
+### 5.1 The pipeline
+
+```mermaid
+flowchart TD
+  push["Push to main"] --> go["Go: vet and test"]
+  go --> py["Python tests"]
+  py --> tools["Install arduino-cli,<br/>the esp32 core and the libraries<br/>(restored from a cache if the pins are unchanged)"]
+  tools --> host["C++ host tests"]
+  host --> compile["Compile the firmware"]
+  compile --> check["Check the image:<br/>header and version marker"]
+  check --> manifest["make_manifest.py writes<br/>manifest.json and ledmatrix-VERSION.bin<br/>into service/firmware/"]
+  manifest --> artifact["Keep both files as the<br/>'firmware' workflow artifact (30 days)"]
+  manifest --> docker["docker build service<br/>(linux/amd64)"]
+  docker --> push2["Push ghcr.io/suvl/ledmatrix-api<br/>tags: latest and the commit hash"]
+```
+
+A step that fails stops everything after it, so a failing test never produces an image. The tool versions are pinned in the `env:` block at the top of the workflow (arduino-cli 1.6.0, esp32 core 3.3.13, the four libraries); if this page and the workflow disagree, the workflow is right.
+
+### 5.2 When it runs
+
+It starts on a push to `main` that changes a file under `service/`, `arduino/` or `shared/`, or `tools/make_manifest.py`, or the workflow file itself, and it can be started by hand (Actions tab, "ledmatrix-api image", "Run workflow"). A push that changes only documents, `portal/`, `preview/` or other files in `tools/` does not start it. (Read from the file; not triggered.) Two things follow from reading the file:
+
+- The last step pushes the tags `latest` **and** the commit hash whatever branch the run was started on, and a manual run pushes them again for the commit it runs on. Start a manual run from `main` only.
+- The image name `ghcr.io/suvl/ledmatrix-api` is written into the last step. In a fork, change those two tags to your own account: a fork's workflow has no right to write to someone else's package, so the push would most likely be refused (not tried).
+
+### 5.3 Make a release
+
+1. **Change the version.** Open `arduino/ledmatrix/version.h` and raise the number (rules in [7.2](#72-the-version-number-and-the-version-marker)). Raise the last number for a fix, the middle one for a new feature. Never reuse a number: a release is immutable, and displays only update to a version strictly newer than theirs.
+2. **Build and test on your computer** (build.md and [4](#4-the-tests)), and try the build on your own display through the forced `.bin` upload first ([operations.md](operations.md), "The forced `.bin` upload").
+3. **Commit and push to `main`.** The first line of the commit message becomes the release notes the portal shows (cut to 200 characters), so write it for a reader:
+
+   ```
+   git add arduino/ledmatrix/version.h
+   git commit -m "Release 0.10.2: fix the clock after a power cut"
+   git push origin main
+   ```
+
+   Add the files you changed, too. A release is just a push: there is no "publish" button.
+4. **Watch the run** on GitHub: your repository, the **Actions** tab, the run named after your commit ([5.4](#54-read-a-run)). The first run that compiled the firmware took 4 minutes 17 seconds; the workflow caches the Arduino tools between runs, keyed on the pinned versions.
+5. **Deploy the new image.** Pushing changes no running display: the image only sits on ghcr.io. Take the image tag from the run (or the repository's package page), not from `git rev-parse HEAD`: a commit that changes none of the watched paths (a documents-only commit, for example) builds no image of its own. Pin your service to that tag and deploy it as described in [operations.md](operations.md), "Update the service itself".
+6. **Check** that the service now offers the new version and still refuses strangers: the manifest shows the new `version`, an unsigned data request answers 401 `missing`, and the display's portal finds the update after **Check now** ([operations.md](operations.md), "Firmware updates").
+
+### 5.4 Read a run
+
+On GitHub: **Actions**, then **ledmatrix-api image**, then the run. A green tick on the job `build` means everything passed. Click the job to see its steps:
+
+| Step | What it does | If it is red |
+| --- | --- | --- |
+| Test | `go vet` and `go test` for `service/` | a service test failed: the failing test's name is printed |
+| Python tests | the three `python3 -I tools/test_*.py` | same |
+| Arduino settings, Cache | sets the folders and restores the cache | rare; re-run the job |
+| Install arduino-cli | downloads 1.6.0 and checks its [SHA-256](glossary.md#sha-256) | the download failed or the file changed: re-run; if it fails again, check the pinned checksum in the workflow |
+| Install the esp32 core and the libraries | the commands of build.md | a pin no longer exists: fix the version in the workflow's `env:` block |
+| Host tests (C++, no hardware) | the five tests of [4.3](#43-the-c-host-tests) | a test failed: the failing line is printed |
+| Compile the firmware | the compile of build.md | a compile error, with file and line |
+| Check the compiled image | `test_otalogic <image>` | the image's version marker does not match `version.h` |
+| Write the manifest and the image | `make_manifest.py` ([5.5](#55-the-manifest-and-why-make_manifestpy-refuses-a-mismatch)) | it prints one plain sentence saying what is wrong |
+| Keep the firmware as a workflow artifact | uploads `manifest.json` and `ledmatrix-*.bin` | |
+| `docker/...` steps | build and push the image | a Dockerfile or login problem |
+
+Where to look for the result:
+
+- **The run's summary page** shows a line like ``Firmware: `version=0.10.1 size=1479472 sha256=4fc514cf...` `` (the numbers of the 25 Nov 2026 run): the published version, the image size in bytes and its fingerprint, the same ones the manifest carries.
+- **Artifacts**, at the bottom of the run page: `firmware` holds `manifest.json` and `ledmatrix-<version>.bin`, kept for 30 days. Download it to look at what was published or to flash it by hand. (A second, technical artifact ends in `.dockerbuild`; ignore it.)
+- **Annotations** at the top: the real run showed two yellow notices that are harmless: "Node.js 20 is deprecated ..." (about GitHub's own actions) and "Restore cache failed: Dependencies file is not found ... go.sum" (the service has no outside dependencies, so there is no `go.sum`).
+- **The compile step's log** ends with the same two lines as your own build: in the 25 Nov 2026 run `Sketch uses 1479317 bytes (70%) ...` and `Global variables use 106064 bytes (32%) ...`.
+
+### 5.5 The manifest, and why `make_manifest.py` refuses a mismatch
+
+The release has two files: the image `ledmatrix-<version>.bin` and a small [manifest](glossary.md#manifest), `manifest.json`, that says what the newest version is and how to check the download:
+
+```
+{"version":"0.10.1","file":"ledmatrix-0.10.1.bin","size":1479792,"sha256":"dfa92005...","notes":"..."}
+```
+
+A display reads the manifest once a day, and offers an update if the version is newer. After writing the new image to flash it **reads the image back, looks for the version marker inside it ([7.2](#72-the-version-number-and-the-version-marker)) and refuses the image if the marker's version is not the manifest's**. So the version in the manifest and the version inside the image must always agree. `tools/make_manifest.py` enforces that before anything is published. It is the script the workflow uses, and you can run it yourself:
+
+```
+python3 -I tools/make_manifest.py ~/ledmatrix-build/firmware/ledmatrix.ino.bin --version-from arduino/ledmatrix/version.h --notes="My test build" --out ~/ledmatrix-build/release
+```
+
+A good result: one line, and two files in the folder:
+
+```
+version=0.10.1 size=1479792 sha256=dfa920050f407655a16040ff6a7d51d80216cf4382322bda4edc1a3e0ea55365
+```
+
+Your numbers will differ: the size can differ by a few hundred bytes between machines, and the SHA-256 differs even between two builds of the same source made in two different folders (Checked: same size, different fingerprint). A build is not a reproducible file. What matters is that the manifest's fingerprint and size are those of the file you publish, and `make_manifest.py` makes sure of that.
+
+It checks first and writes nothing if a check fails: the version must be `MAJOR.MINOR.PATCH`; the file must be an intact ESP32-S3 program image of the right size (more than 100 KB and at most one 2 MB slot, with a correct checksum and SHA-256: this rejects a truncated file and the 8 MB merged image); the image must carry **exactly one** version marker and it must say the version being published; and a version already published to that folder is not replaced by a different image (a release is immutable). The marker check is never skipped, not even by `--force`. Release notes longer than 200 characters are not refused: the script cuts them at a word boundary and ends them with `...` (it is the service that refuses a manifest whose notes are longer).
+
+What a mismatch looks like. Here the image says 0.10.1 but the command asks to publish it as 0.10.2 (Tested):
+
+```
+make_manifest: the image says it is version 0.10.1 but it would be published as 0.10.2, and the board refuses an image whose version differs from the manifest's: rebuild after changing version.h, or give the right version
+```
+
+It exits with status 1 and writes nothing. The usual cause: `version.h` was changed but the firmware was not compiled again, so an old build is being published. The fix is the message: compile again, then run the script again. The other refusals read the same way, for example `the image is larger than one app slot (2097152 bytes): is it the app .bin and not a merged flash image?` (Tested with `ledmatrix.ino.merged.bin`) and `the version '0.10' is not MAJOR.MINOR.PATCH ...` (Tested). Running the script a second time on the same image prints the same line and changes nothing.
+
+### 5.6 Rehearse a release on your computer
+
+Tested on macOS, in a copy of the `service` folder instead of the repository's own so that the repository stayed clean. `service/firmware/` is ignored by git, so using the real one leaves `git status` clean too.
+
+These are the workflow's last steps by hand: write the release files into `service/firmware/`, build the service image with them inside, run it and ask for the manifest. (A self-built image carries a firmware only if you do this: the folder holds just its `README.md` in a fresh clone.)
+
+```
+python3 -I tools/make_manifest.py ~/ledmatrix-build/firmware/ledmatrix.ino.bin --version-from arduino/ledmatrix/version.h --notes="Local rehearsal" --out service/firmware
+docker build -t ledmatrix-api service
+docker run --rm -d --name ledmatrix-api-local -e AUTH_OFF=1 -p 127.0.0.1:8080:8080 ledmatrix-api
+curl -s http://127.0.0.1:8080/v1/firmware/manifest
+curl -s http://127.0.0.1:8080/v1/firmware/ledmatrix-0.10.1.bin | shasum -a 256
+docker stop ledmatrix-api-local
+rm service/firmware/manifest.json service/firmware/ledmatrix-*.bin
+```
+
+Replace `0.10.1` in the file name with the version in `version.h`; on Linux use `sha256sum` instead of `shasum -a 256`. A good result: the service logs `firmware: version 0.10.1 is published (...)`, the manifest request prints the JSON with your `notes`, and the SHA-256 of the downloaded file is **the same** as the `sha256` in the manifest. The last line removes the files again. [6.3](#63-run-it) explains `AUTH_OFF`.
+
+## 6. The service image and running it on your computer
+
+Tested on macOS (OrbStack, Apple silicon), including a build for `linux/amd64`. You do not need this to run a display: [hosting.md](hosting.md) runs the public image.
+
+The [service](glossary.md#service) is a small Go program packaged as a Docker [image](glossary.md#docker-image): a sealed copy of the program and what it needs, which Docker starts as a [container](glossary.md#container).
+
+### 6.1 Build the image
+
+```
+docker build -t ledmatrix-api service
+```
+
+This reads `service/Dockerfile` and follows it. First stage: a Go 1.27 image compiles the service into one self-contained program (`CGO_ENABLED=0`, so it needs nothing else on the machine). Second stage: starts from a tiny base image ("distroless", `gcr.io/distroless/static-debian13:nonroot`: no shell, no package manager, a non-root user) and copies in the program and the `service/firmware/` folder. `-t ledmatrix-api` names the image.
+
+A good result: the output ends with `naming to docker.io/library/ledmatrix-api ... done`. It took 8 to 10 seconds with the base images already on the computer (the first time Docker downloads them, which adds the 1.3 GB Go image). `docker images ledmatrix-api` shows the size: 18.1 MB (20.5 MB with a firmware inside). With a fresh clone the image has no firmware to offer and the update routes answer 404; that is fine for a local try.
+
+**One sentence per CPU.** `docker build` makes an image for your own computer's CPU: arm64 on an Apple silicon Mac, amd64 on an Intel or AMD computer. The public image and CI are `linux/amd64` only. To make that one on an arm64 Mac (Tested; it also ran):
+
+```
+docker buildx build --platform linux/amd64 -t ledmatrix-api:amd64 --load service
+```
+
+An image built for the wrong CPU fails on a server with `exec format error`.
+
+### 6.2 Three ways to give the service its secret
+
+Every request to the service must be signed by a display's [device key](glossary.md#device-key). The service checks the signature against a [master secret](glossary.md#master-secret) that it is given in the environment variable `MASTER_SECRET`, or in a file whose absolute path is in `MASTER_SECRET_FILE` (the recommended way for a real service). To try the service on your own computer set **exactly one** of these:
+
+- **`AUTH_OFF=1` (the default for a quick local try):** the service checks no signature at all and prints a loud warning when it starts. **Use it only on your own computer, never on a service that anyone else can reach, and never on a server.** Publishing the port on `127.0.0.1` only (see below) means only your own computer can reach it.
+- **A test `MASTER_SECRET`**: a throw-away random text of at least 32 characters. The service then behaves like a real one: an unsigned request is refused.
+- **A test `MASTER_SECRET_FILE`**: the same kind of secret kept in a file, whose absolute path (as the container sees it) you give. The file holds only the secret (at most 4 KB; spaces and a final newline are removed). It keeps the secret out of the environment: Tested, `docker inspect` shows no `MASTER_SECRET` for a container started this way, and shows it for one started with `-e MASTER_SECRET`.
+
+The service never runs open by accident and never guesses which one you meant. These combinations were tried; each answers in plain words and does not start:
+
+| What was set | What the service said |
+| --- | --- |
+| nothing | ``MASTER_SECRET is not set and neither is MASTER_SECRET_FILE, so the service will not start; set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 (AUTH_OFF=1 is for local development only); create a secret with `openssl rand -hex 32` `` |
+| `AUTH_OFF=1` and `MASTER_SECRET` | `both AUTH_OFF=1 and MASTER_SECRET are set; set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 (AUTH_OFF=1 is for local development only)` |
+| `MASTER_SECRET` and `MASTER_SECRET_FILE` | `both MASTER_SECRET and MASTER_SECRET_FILE are set; set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 (AUTH_OFF=1 is for local development only)` |
+| a `MASTER_SECRET` shorter than 32 characters | ``MASTER_SECRET holds a secret shorter than 32 characters (after removing surrounding whitespace); create one with `openssl rand -hex 32` `` |
+| `MASTER_SECRET_FILE=master` (not an absolute path) | `MASTER_SECRET_FILE must be the absolute path of a file, such as /run/secrets/master-secret (the value is not shown)` |
+| `MASTER_SECRET_FILE` pointing at a file that is not in the container | `MASTER_SECRET_FILE "/run/secrets/master" cannot be read: no such file` |
+
+An image built before the file option existed (the public `latest` image may be one) prints the older single message `MASTER_SECRET is not set, so the service will not start; create one with ...` for the "nothing" case and does not know `MASTER_SECRET_FILE`. If the file variant says "MASTER_SECRET is not set", pull a newer image.
+
+The **real** master secret is made and backed up once, in [install.md](install.md), "Make the master secret and back it up", and never goes on a command line, into a chat, a ticket or a file in the repository. For local tests make a different, throw-away one.
+
+### 6.3 Run it
+
+Two Terminal windows help here: press Command+T for a new tab to ask the service questions while the first one shows its log.
+
+**Option A (the default): no signatures, a quick look.**
+
+```
+docker run --rm -e AUTH_OFF=1 -p 127.0.0.1:8080:8080 ledmatrix-api
+```
+
+`-p 127.0.0.1:8080:8080` publishes the container's port 8080 on port 8080 of **your computer only** (`service/README.md` writes `-p 8080:8080`, which would also open the unsigned service to other computers on your network). `--rm` removes the container when it stops. A good result in this window:
+
+```
+WARNING: AUTH_OFF=1, request signatures are NOT checked. Use this only on your own computer, never on a service that other people can reach.
+firmware: nothing is published, there is no manifest.json in the firmware folder
+ledmatrix-api listening on :8080
+```
+
+In the second window (`curl` fetches a web address and prints the answer):
+
+```
+curl -i http://127.0.0.1:8080/healthz
+curl -s http://127.0.0.1:8080/v1/firmware/manifest
+curl -s "http://127.0.0.1:8080/v1/weather?lat=38.72&lon=-9.14"
+```
+
+A good result: `HTTP/1.1 200 OK` and `ok`; then `{"error":"no firmware is published"}` (none was added); then a short line of weather JSON such as `{"loc":"Lisboa","t":12,"hi":16,...,"src":"IPMA",...}` (weather works for Portugal only; the call goes out to IPMA and the numbers will differ). A request for planes (`/v1/flights?lat=38.72&lon=-9.14&radius_km=30&n=3`) also worked and returned live planes. Stop the service with **Ctrl+C** in the first window (Tested: the container stops and is removed).
+
+**Option B: a test master secret in the environment.**
+
+```
+export MASTER_SECRET="$(openssl rand -hex 32)"
+docker run --rm -e MASTER_SECRET -p 127.0.0.1:8080:8080 ledmatrix-api
+```
+
+`-e MASTER_SECRET` with no value passes on the variable from your Terminal, so the secret is not typed on the command line (it is still in the container's environment, where `docker inspect` can show it: fine for a throw-away test). In the second window:
+
+```
+curl -s -w ' [%{http_code}]\n' http://127.0.0.1:8080/healthz
+curl -s -w ' [%{http_code}]\n' "http://127.0.0.1:8080/v1/weather?lat=38.72&lon=-9.14"
+curl -s -w ' [%{http_code}]\n' http://127.0.0.1:8080/v1/firmware/manifest
+```
+
+A good result:
+
+```
+ok [200]
+{"error":"The request is not signed.","reason":"missing"} [401]
+{"error":"no firmware is published"} [404]
+```
+
+The refusal (401) shows that the service checks signatures. `/healthz` and the two firmware routes are open on purpose: a display whose key is refused must still be able to fetch a fix. Stop it with Ctrl+C, then `unset MASTER_SECRET`.
+
+**Option C: a test master secret in a file** (the way a Docker or Kubernetes secret works):
+
+```
+mkdir -p ~/ledmatrix-test-secret && chmod 700 ~/ledmatrix-test-secret
+(umask 077; openssl rand -hex 32 > ~/ledmatrix-test-secret/master-secret)
+chmod 644 ~/ledmatrix-test-secret/master-secret
+docker run --rm -v ~/ledmatrix-test-secret/master-secret:/run/secrets/master-secret:ro -e MASTER_SECRET_FILE=/run/secrets/master-secret -p 127.0.0.1:8080:8080 ledmatrix-api
+```
+
+This makes a throw-away secret in a private folder outside the repository, shows that one file inside the container at `/run/secrets/master-secret` (`-v host-path:container-path:ro`, `ro` = read only), and tells the service where to read it (`MASTER_SECRET_FILE` is a path **inside the container**). The same three `curl` lines as in Option B give the same answers. Stop it with Ctrl+C and delete the folder when you are done.
+
+The permission rule is the one in [hosting.md](hosting.md) ("The secret file and its permissions"): the service runs in the container as user 65532, so on Linux the file must be readable by everyone (`chmod 644`) while the folder around it stays private (`chmod 700`); with a file that only you can read the service stops with `MASTER_SECRET_FILE "..." cannot be read: permission denied`. That message was not reproduced here with Docker on Linux; on the Mac with OrbStack a mode 600 file and the 644 file above were both read without trouble.
+
+Making a **signed** request by hand (to see a 200) is not shown here: the scheme is `shared/device-auth.md`, and a display does it for you.
+
+**If something goes wrong**
+
+- `Bind for 127.0.0.1:8080 failed: port is already allocated` (Tested): something already uses port 8080. Stop it, or publish on another port (`-p 127.0.0.1:8081:8080`) and use 8081 in the `curl` lines.
+- `Cannot connect to the Docker daemon`: start Docker Desktop or OrbStack. Not tested here.
+- You cannot get a shell inside the container: there is none in the distroless image, on purpose. Start with `-d --name ledmatrix-api-local` and use `docker logs ledmatrix-api-local`.
+- `docker build` prints `Step 1/14 : FROM --platform=$BUILDPLATFORM golang...` and then `failed to parse platform : "" is an invalid OS component of ""`: Docker used its old build engine because its command-line tool has no "buildx" plugin, which the `Dockerfile` needs. Docker Desktop and OrbStack include it; on Linux install `docker-buildx-plugin` and check that `docker buildx version` prints a version. The error was reproduced with a Docker command line that had no plugins; the fix was not tried.
+
+## 7. Inside a build
+
+Tested on macOS.
+
+### 7.1 What is in the build folder
+
+```
+ls -l ~/ledmatrix-build/firmware
+```
+
+| File | Size (0.10.1) | What it is |
+| --- | --- | --- |
+| `ledmatrix.ino.bin` | 1,479,792 bytes | **The firmware image**: what the board runs, what an update carries and what `make_manifest.py` publishes. At most 2,097,152 bytes. |
+| `ledmatrix.ino.bootloader.bin`, `ledmatrix.ino.partitions.bin`, `boot_app0.bin` | 23,344 / 3,072 / 8,192 bytes | The other pieces a USB flash writes; `flash_args` lists where each goes (`0x0`, `0x8000`, `0xe000`; the image goes to `0x10000`). |
+| `ledmatrix.ino.merged.bin` | 8,388,608 bytes | All of those joined into one picture of the whole 8 MB flash. **Not** what an update uses: `make_manifest.py` refuses it. |
+| `partitions.csv` | 1,020 bytes | The partition table that was really used. |
+| `ledmatrix.ino.elf`, `ledmatrix.ino.map` | 19 MB, 26 MB | Debugging files. |
+
+### 7.2 The version number and the version marker
+
+The compiler writes the number from `version.h` into the firmware image itself, as a **version marker**: the bytes `LEDMATRIX-FW-VERSION`, then the version, between two invisible control characters. Read it back out of a build:
+
+```
+LC_ALL=C grep -a -o $'LEDMATRIX-FW-VERSION\x02[0-9.][0-9.]*' ~/ledmatrix-build/firmware/ledmatrix.ino.bin | cat -v
+```
+
+A good result: `LEDMATRIX-FW-VERSION^B0.10.1` (`^B` is the invisible character). The version in `version.h` is `MAJOR.MINOR.PATCH`: three numbers separated by dots, each 1 to 4 digits, no leading zeros (`0.10.0`, not `0.010.0`) and no words such as `-beta`. A display offers an update only when the published version is strictly newer than the one it runs. The marker is why a release cannot say one version and carry another ([5.5](#55-the-manifest-and-why-make_manifestpy-refuses-a-mismatch)).
+
+### 7.3 Decode the partition table
+
+[build.md](build.md) checks that the build has the `ident` partition with one `grep`. To see the whole table the build wrote into `ledmatrix.ino.partitions.bin`:
+
+```
+python3 -I - ~/ledmatrix-build/firmware/ledmatrix.ino.partitions.bin <<'EOF'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+for i in range(0, len(d), 32):
+    e = d[i:i + 32]
+    if e[:2] != b"\xaa\x50":
+        break
+    kind, sub, off, size = struct.unpack_from("<BBII", e, 2)
+    print("%-8s type %d subtype 0x%02x offset 0x%06X size %4d KB%s" % (e[12:28].rstrip(b"\0").decode(), kind, sub, off, size // 1024, "  read-only" if e[28] & 2 else ""))
+EOF
+```
+
+A good result:
+
+```
+nvs      type 1 subtype 0x02 offset 0x009000 size   20 KB
+otadata  type 1 subtype 0x00 offset 0x00E000 size    8 KB
+ota_0    type 0 subtype 0x10 offset 0x010000 size 2048 KB
+ota_1    type 0 subtype 0x11 offset 0x210000 size 2048 KB
+uf2      type 0 subtype 0x00 offset 0x410000 size  256 KB
+ffat     type 1 subtype 0x81 offset 0x450000 size 3768 KB
+ident    type 1 subtype 0x40 offset 0x7FE000 size    8 KB  read-only
+```
+
+A build made without the sketch's `partitions.csv` (Tested with a copy of the sketch folder that lacked it) has no `ident` line and `ffat` at 3776 KB: the stock table. [architecture.md](architecture.md) explains what each partition is for.
+
+## 8. Clean up
+
+Tested for the folder names (read from arduino-cli with a throw-away home folder) and for `cache clean`. Removing the folders yourself, and `docker rmi`, are Not tested here.
+
+| What | macOS | Linux | Size |
+| --- | --- | --- | --- |
+| arduino-cli's settings file | `~/Library/Arduino15/arduino-cli.yaml` | `~/.arduino15/arduino-cli.yaml` | tiny |
+| Board package, tools, lists ("data folder") | `~/Library/Arduino15` | `~/.arduino15` | 3.9 GB |
+| Libraries ("user folder") | `~/Documents/Arduino/libraries` | `~/Arduino/libraries` | 5 MB |
+| Downloaded archives | inside arduino-cli's folders; `arduino-cli cache clean` removes them (Tested: freed 1.1 GB, the installed core stayed) | same | 1.1 GB |
+| arduino-cli's build cache (only without `--build-path`) | `~/Library/Caches/arduino` | not checked | about 80 MB per sketch |
+| Your build output | `~/ledmatrix-build/` | same | about 110 MB per sketch |
+| Docker images | inside Docker | inside Docker | `golang:1.27` 1.3 GB, `ledmatrix-api` 18 MB |
+
+`~/Documents/Arduino` is also where the Arduino IDE keeps your own sketches: delete only `libraries/Adafruit_*` and `libraries/ArduinoJson` there to remove this project's libraries. To remove the images: `docker rmi ledmatrix-api golang:1.27`. To forget everything arduino-cli installed, delete the data folder (this removes the board package for every project that uses it). A fresh compile ignoring earlier work: add `--clean` to the compile command.
+
+## 9. Common problems
+
+| What you see | What it means | The fix |
+| --- | --- | --- |
+| `make_manifest: the image says it is version X but it would be published as Y ...` | `version.h` was changed after the last compile, or the wrong `--version` was given. | Compile again and run the script again ([5.5](#55-the-manifest-and-why-make_manifestpy-refuses-a-mismatch)). |
+| `FAIL line 1570: strcmp(sc.text(), FIRMWARE_VERSION) == 0` at the end of `test_otalogic <image>` | The image was built with a different version number than the one the test was compiled with. | Compile the firmware again, and compile the test again. |
+| `AttributeError: module 'sys' has no attribute 'stdlib_module_names'` in `test_provision.py` | Python older than 3.10 (macOS's own is 3.9.6). | Use a newer Python ([1](#1-tools-for-development)). |
+| `go: go.mod requires go >= 1.27 (running go 1.25.14; ...)` | Your Go is older than the service needs. | Install Go 1.27 or newer, or use the Docker command of [4.1](#41-the-go-service-tests). |
+| `Bind for 127.0.0.1:8080 failed: port is already allocated` | Something else uses port 8080. | Stop it or use another port ([6.3](#63-run-it)). |
+| `MASTER_SECRET is not set and neither is MASTER_SECRET_FILE, so the service will not start ...` (or `both ... are set`) | The service fails closed on purpose and wants exactly one of the three settings. | Set exactly one of `MASTER_SECRET`, `MASTER_SECRET_FILE` or (local try only) `AUTH_OFF=1` ([6.2](#62-three-ways-to-give-the-service-its-secret)). |
+| `MASTER_SECRET_FILE must be the absolute path of a file ...` or `MASTER_SECRET_FILE "..." cannot be read: no such file` | The value must be a full path **inside the container**, and the file must be mounted there with `-v`. | Use a path such as `/run/secrets/master-secret` and mount the file to it ([6.3](#63-run-it), Option C). For `permission denied` on Linux see the permission rule there. |
+| `Chrome not found: pass --chrome PATH or set CHROME` | Chrome is not in the usual place. (From the code; not triggered.) | Pass `--chrome` with the path of the Chrome program. |
+| `exec format error` when the image starts on a server | The image was built for the other CPU type. | Build with `--platform linux/amd64` ([6.1](#61-build-the-image)). |
+| `docker build` fails with `failed to parse platform` | Docker has no buildx plugin. | See [6.3](#63-run-it), "If something goes wrong". |
+
+If a problem is not here, or a fix does not work, open an issue at <https://github.com/suvl/ledmatrix/issues> and say which step failed and what the last lines said. Problems with building the firmware are in [build.md](build.md).
+
+## What was run
+
+All on 25 Nov 2026. "Mac" is an Apple silicon Mac (macOS 27.0.1, Apple clang 21.0.0, git 2.54.0, Python 3.15.2, arduino-cli 1.6.0, Docker 29.8.2 with OrbStack, Chrome 158); "Ubuntu" is an Ubuntu 24.04.5 x86_64 container (emulated on that Mac). The firmware, tools and Python/C++ tests were run on the repository as committed at `1f9b6a5` (firmware version 0.10.1). The service parts (Go tests, image, local run) were run again afterwards on the service code with Go 1.27, the `distroless static-debian13` base image and `MASTER_SECRET_FILE`, which was not yet committed at that moment (the numbers below that differ say so).
+
+| What | Where | Result |
+| --- | --- | --- |
+| `python3 -I tools/test_make_manifest.py`, `test_provision.py`, `test_burn_key.py` | Mac with Python 3.15.2 and 3.14; Ubuntu with 3.12.3 | 67, 66 and 12 tests OK; with Python 3.9.6 `test_provision.py` has 1 error (`sys.stdlib_module_names`), the other two pass |
+| The five C++ host tests (compiled with `-Wall -Wextra`, no warnings) | Mac and Ubuntu (g++ 13.3.0) | all pass; a deliberate wrong-version build of `test_otalogic` failed as in 4.3 |
+| The sanitizer variants of `test_deviceauth`, `test_problems`, `test_otalogic` | Mac | pass |
+| `test_otalogic` with the real image as argument | Mac, Ubuntu | `says version 0.10.1`, `142775 checks, 0 failed` |
+| `tools/check_margins.py`, also with the wrapper of 4.4 | Mac | passed in 8.4 s: 823 screens identical to the board |
+| `python3 tools/build_web.py` (repository, fresh clone, container); `tools/extract_fonts.py` in a fresh clone | Mac, Ubuntu | no file changed |
+| `tools/burn_key` compile (dry run, compile only) | Mac | 31 s: 369430 bytes (17%), 55288 bytes (16%) |
+| `docker run ... golang:1.27 go test ./...` (also `go vet`, the `-v` count, the `sh -c` form, `--network none`) on the Go 1.27 service code | Mac (Linux container) | `ok`, 59 tests, vet clean, repository unchanged, no network needed |
+| The same with `golang:1.25` on the committed code (54 tests); `golang:1.24` on it | Mac | `ok`; the `go.mod requires go >= 1.25` message |
+| `golang:1.25` on the Go 1.27 code | Mac | the `go.mod requires go >= 1.27 (running go 1.25.14 ...)` message |
+| Native `go vet` and `go test` with Go 1.27.4 (unpacked, not installed with brew) | Mac | `ok` |
+| `make_manifest.py` with the real image (good), with a wrong `--version`, with the merged image, with `--version 0.10` | Mac | one line `version=... size=... sha256=...`; three refusals with the sentences in 5.5; nothing written |
+| Release rehearsal: image and manifest copied into a copy of `service/`, image built, container run, manifest and download fetched | Mac | the manifest was served and the downloaded file's SHA-256 equalled the manifest's |
+| `docker build` of `service/` (also `--no-cache`); `docker buildx build --platform linux/amd64` | Mac | 8 to 10 s, 18.1 MB; the amd64 image started and answered `/healthz` |
+| Run with `AUTH_OFF=1`; with a `MASTER_SECRET`; with a `MASTER_SECRET_FILE` (mode 600 and 644 files mounted into the container; `docker inspect` for the environment); with none, with two of the three, with a short secret, with a relative path, with a missing file; with the port taken; Ctrl+C; no shell in the image | Mac | as in section 6; unsigned request: 401 `missing`; `/healthz` and the firmware routes open; the file variant leaves no `MASTER_SECRET` in the environment |
+| `docker build` with a Docker command line that has no buildx plugin | Mac | the `failed to parse platform` error |
+| Reading the real CI run of 25 Nov 2026 with `gh run view` (read only) | GitHub | steps, summary line, artifacts and annotations as in 5.4 |
+| Decoding `ledmatrix.ino.partitions.bin` with the snippet of 7.3; the marker grep of 7.2; `arduino-cli cache clean` | Mac | as shown |
+
+**Not tested here:** `brew install` of any tool; `arduino-cli upload` and every board step; opening `preview/index.html` in a browser; `tools/make_tz.py`; `docker` when the daemon is not running; a real (not emulated) Linux computer, and Linux steps beyond those in the Ubuntu container; Docker Engine on Linux, including a `MASTER_SECRET_FILE` that the container user cannot read; the margin check on Linux; the workflow on GitHub (read, not started); signed requests by hand.

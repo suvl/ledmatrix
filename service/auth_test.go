@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -785,6 +786,213 @@ func TestAuthConfig(t *testing.T) {
 	}
 	if len(au.revoked) != 2 || !au.revoked["aabbccddeeff"] || !au.revoked["112233445566"] || au.publicHost != "ledmatrix.example.com" || au.off {
 		t.Errorf("parsed configuration: revoked %v, public host %q, off %v", au.revoked, au.publicHost, au.off)
+	}
+}
+
+// ---- MASTER_SECRET_FILE ----------------------------------------------------------------------------------
+
+func writeSecretFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "master-secret")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// wantStartError starts with env, expects a refusal naming want, and checks that no message repeats a secret.
+func wantStartError(t *testing.T, name string, env envMap, want string, secrets ...string) {
+	t.Helper()
+	au, err := authFromEnv(env.get, silent)
+	if err == nil || au != nil {
+		t.Errorf("%s: must refuse to start", name)
+		return
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("%s: error %q, want it to say %q", name, err, want)
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the error repeats a secret: %q", name, err)
+		}
+	}
+}
+
+func TestMasterSecretFile(t *testing.T) {
+	v := loadVectors(t)
+	secret32 := strings.Repeat("f", 32)
+
+	// the file holds the secret, with the newline an editor or `echo` adds, or with whitespace around it
+	for name, content := range map[string]string{
+		"just the secret":        v.MasterSecret,
+		"a trailing newline":     v.MasterSecret + "\n",
+		"CR LF":                  v.MasterSecret + "\r\n",
+		"whitespace around it":   v.MasterWithWS,
+		"exactly 32 characters":  secret32,
+		"32 characters, padded":  "\n\t " + secret32 + " \n\n",
+		"4096 bytes in all":      strings.Repeat("a", 4095) + "\n",
+		"an interior line break": secret32 + "\n" + secret32,
+	} {
+		path := writeSecretFile(t, content)
+		var logged logCapture
+		au, err := authFromEnv(envMap{"MASTER_SECRET_FILE": path}.get, logged.logf)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if au.off || string(au.master) != trimWS(content) {
+			t.Errorf("%s: the secret is the file's content without the whitespace around it", name)
+		}
+		if len(logged.all()) != 0 {
+			t.Errorf("%s: nothing is logged at start: %q", name, logged.all())
+		}
+	}
+
+	// the same secret from the file and from the environment gives the vector's device key
+	for name, env := range map[string]envMap{
+		"file":        {"MASTER_SECRET_FILE": writeSecretFile(t, v.MasterWithWS)},
+		"environment": {"MASTER_SECRET": v.MasterWithWS},
+	} {
+		au, err := authFromEnv(env.get, silent)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := hex.EncodeToString(deviceKey(au.master, v.DeviceID)); got != v.DeviceKeyHex {
+			t.Errorf("%s: device key %s, want %s", name, got, v.DeviceKeyHex)
+		}
+	}
+
+	// the other settings still apply with a file
+	au, err := authFromEnv(envMap{"MASTER_SECRET_FILE": writeSecretFile(t, secret32), "REVOKED_DEVICES": "aabbccddeeff", "PUBLIC_HOST": "Example.com:443"}.get, silent)
+	if err != nil || !au.revoked["aabbccddeeff"] || au.publicHost != "example.com" {
+		t.Errorf("revoked list and public host with a file: %v %+v", err, au)
+	}
+	wantStartError(t, "a bad revoked ID with a file", envMap{"MASTER_SECRET_FILE": writeSecretFile(t, secret32), "REVOKED_DEVICES": "nope"}, "REVOKED_DEVICES entry 1")
+}
+
+func TestMasterSecretFileIsReadOnce(t *testing.T) {
+	path := writeSecretFile(t, testMaster)
+	au, err := authFromEnv(envMap{"MASTER_SECRET_FILE": path}.get, silent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	au.now = fixedClock(testNow)
+	os.WriteFile(path, []byte("another-master-secret-0123456789abcdef"), 0o600)
+	os.Remove(path)
+	if got := serve(echoMux(au), signedRequest(t, "GET", weatherURI, testNow, "")); got.code != 200 {
+		t.Errorf("a service started from a file keeps its secret when the file changes or goes: %d %s", got.code, got.raw)
+	}
+	if got := serve(echoMux(au), signWith("another-master-secret-0123456789abcdef", testDevice, testHost, "GET", weatherURI, testNow, "")); got.code != 401 {
+		t.Errorf("the file's later content must not be accepted: %d", got.code)
+	}
+}
+
+func TestMasterSecretFileProblems(t *testing.T) {
+	content := "short-secret-in-the-file"
+	short := writeSecretFile(t, content)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "nope", "master-secret")
+	toolarge := writeSecretFile(t, strings.Repeat("a", 4097))
+
+	wantStartError(t, "short secret", envMap{"MASTER_SECRET_FILE": short}, "shorter than 32 characters", content, short)
+	wantStartError(t, "31 characters and a newline", envMap{"MASTER_SECRET_FILE": writeSecretFile(t, strings.Repeat("a", 31)+"\n")}, "shorter than 32 characters")
+	wantStartError(t, "empty file", envMap{"MASTER_SECRET_FILE": writeSecretFile(t, "")}, "shorter than 32 characters")
+	wantStartError(t, "only whitespace", envMap{"MASTER_SECRET_FILE": writeSecretFile(t, " \r\n\t\n")}, "shorter than 32 characters")
+	wantStartError(t, "missing file", envMap{"MASTER_SECRET_FILE": missing}, missing+`" cannot be read: no such file`)
+	wantStartError(t, "a directory", envMap{"MASTER_SECRET_FILE": dir}, dir+`" is not a regular file`)
+	wantStartError(t, "more than 4 KB", envMap{"MASTER_SECRET_FILE": toolarge}, "larger than 4 KB", strings.Repeat("a", 64))
+	wantStartError(t, "a relative path", envMap{"MASTER_SECRET_FILE": "relative-secret-file"}, "must be the absolute path", "relative-secret-file")
+	wantStartError(t, "a ./ path", envMap{"MASTER_SECRET_FILE": "./master-secret"}, "must be the absolute path")
+	// a secret pasted into the variable by mistake is not echoed
+	pasted := "0123456789abcdef0123456789abcdef0123456789abcdef"
+	wantStartError(t, "the secret pasted as the path", envMap{"MASTER_SECRET_FILE": pasted}, "must be the absolute path", pasted)
+	wantStartError(t, "whitespace only as the path", envMap{"MASTER_SECRET_FILE": " \n"}, "must be the absolute path")
+
+	if os.Geteuid() != 0 { // root can read anything, so this case needs another user
+		locked := writeSecretFile(t, testMaster)
+		os.Chmod(locked, 0)
+		wantStartError(t, "unreadable file", envMap{"MASTER_SECRET_FILE": locked}, `cannot be read: permission denied`, testMaster)
+	}
+}
+
+// A Kubernetes secret volume holds the key as a symbolic link to a file in a hidden folder; the
+// service must follow it, and a link that leads nowhere is a missing file.
+func TestMasterSecretFileThroughSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "..data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "..data", "master-secret"), []byte(testMaster+"\n"), 0o600)
+	link := filepath.Join(dir, "master-secret")
+	if err := os.Symlink(filepath.Join("..data", "master-secret"), link); err != nil {
+		t.Skip("no symbolic links here:", err)
+	}
+	au, err := authFromEnv(envMap{"MASTER_SECRET_FILE": link}.get, silent)
+	if err != nil || string(au.master) != testMaster {
+		t.Fatalf("through a symbolic link: %v", err)
+	}
+	dangling := filepath.Join(dir, "dangling")
+	os.Symlink(filepath.Join(dir, "gone"), dangling)
+	wantStartError(t, "a dangling link", envMap{"MASTER_SECRET_FILE": dangling}, "cannot be read: no such file")
+}
+
+// Exactly one of MASTER_SECRET, MASTER_SECRET_FILE and AUTH_OFF=1.
+func TestExactlyOneSecretSource(t *testing.T) {
+	secret := strings.Repeat("e", 32)
+	path := writeSecretFile(t, strings.Repeat("g", 32))
+	all := envMap{"MASTER_SECRET": secret, "MASTER_SECRET_FILE": path, "AUTH_OFF": "1"}
+	var logged logCapture
+	for _, c := range []struct {
+		name  string
+		keys  []string
+		start bool
+		off   bool
+	}{
+		{"nothing", nil, false, false},
+		{"MASTER_SECRET", []string{"MASTER_SECRET"}, true, false},
+		{"MASTER_SECRET_FILE", []string{"MASTER_SECRET_FILE"}, true, false},
+		{"AUTH_OFF", []string{"AUTH_OFF"}, true, true},
+		{"MASTER_SECRET and MASTER_SECRET_FILE", []string{"MASTER_SECRET", "MASTER_SECRET_FILE"}, false, false},
+		{"MASTER_SECRET and AUTH_OFF", []string{"MASTER_SECRET", "AUTH_OFF"}, false, false},
+		{"MASTER_SECRET_FILE and AUTH_OFF", []string{"MASTER_SECRET_FILE", "AUTH_OFF"}, false, false},
+		{"all three", []string{"MASTER_SECRET", "MASTER_SECRET_FILE", "AUTH_OFF"}, false, false},
+	} {
+		env := envMap{}
+		for _, k := range c.keys {
+			env[k] = all[k]
+		}
+		au, err := authFromEnv(env.get, logged.logf)
+		if c.start {
+			if err != nil || au.off != c.off {
+				t.Errorf("%s: must start (off=%v): %v", c.name, c.off, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: must refuse to start", c.name)
+			continue
+		}
+		for _, name := range c.keys { // the message names every setting that is in the way
+			if len(c.keys) > 1 && !strings.Contains(err.Error(), strings.Replace(name, "AUTH_OFF", "AUTH_OFF=1", 1)) {
+				t.Errorf("%s: the error should name %s: %q", c.name, name, err)
+			}
+		}
+		for _, secret := range []string{secret, path, strings.Repeat("g", 32)} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%s: the error repeats a value: %q", c.name, err)
+			}
+		}
+		if !strings.Contains(err.Error(), "exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1") {
+			t.Errorf("%s: the error should say what is allowed: %q", c.name, err)
+		}
+	}
+	// the warning is logged for AUTH_OFF=1 alone and never for the others
+	if n := len(logged.all()); n != 1 {
+		t.Errorf("%d warnings logged over all combinations, want 1 (AUTH_OFF=1 alone)", n)
+	}
+	// an empty variable is the same as an unset one
+	if _, err := authFromEnv(envMap{"MASTER_SECRET": secret, "MASTER_SECRET_FILE": "", "AUTH_OFF": ""}.get, silent); err != nil {
+		t.Errorf("empty settings count as unset: %v", err)
 	}
 }
 

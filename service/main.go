@@ -12,9 +12,10 @@
 // Every /v1 request must be signed by the board (X-Device, X-Timestamp, X-Signature; scheme v1 in
 // shared/device-auth.md, code in auth.go). /healthz is open.
 //
-// Configuration (environment): LISTEN (default :8080); MASTER_SECRET (required, at least 32
-// characters; the device keys are derived from it) or AUTH_OFF=1 (local development only: nothing is
-// checked; the service refuses to start with neither, or with both); REVOKED_DEVICES (optional,
+// Configuration (environment): LISTEN (default :8080); exactly one of MASTER_SECRET (at least 32
+// characters; the device keys are derived from it), MASTER_SECRET_FILE (absolute path of a file that
+// holds it, read once at start) or AUTH_OFF=1 (local development only: nothing is checked; the service
+// refuses to start with none of them, or with more than one); REVOKED_DEVICES (optional,
 // comma-separated device IDs); PUBLIC_HOST (optional, the host name the board uses, when a proxy
 // rewrites the Host header); LOGO_DIR (optional folder of <IATA>.bin logo files); FIRMWARE_DIR
 // (folder with manifest.json and the firmware image, default /firmware).

@@ -1,0 +1,453 @@
+# Security
+
+Checked on macOS on 25 Nov 2026: what was run and what was not is in the table at the end of this page.
+
+This page explains what protects a LedMatrix display and its data [service](glossary.md#service) at home, what does not, which parts you must keep up to date and how often, how to look after the secrets, what stays private, what to do when something goes wrong, and how to report a vulnerability. It is for a beginner who runs this project on a home network. It describes the code in this repository as it was on 25 November 2026 ([firmware](glossary.md#firmware) version 0.10.1). It does not build, install or host anything: for that see [build.md](build.md), [install.md](install.md), [hosting.md](hosting.md) and [operations.md](operations.md). For how the parts fit together see [architecture.md](architecture.md). Questions and problems: <https://github.com/suvl/ledmatrix/issues> (never put a secret there, and never the details of a vulnerability: section 7).
+
+Every host name, address, ID and secret on this page is a placeholder: `apis.example.com` (your service), `192.0.2.10` (an address), `aabbccddeeff` (a [device ID](glossary.md#device-id)), `example-master-secret-...` (never a real secret).
+
+**Roles, as in the [README](../README.md).** **You** build your own display. **The maintainer** publishes firmware releases and the public service image (the steps are in [development.md](development.md), "Releasing"). With **the public image** you run the service as the maintainer publishes it, and a new firmware reaches your display when you run a newer image. With **your own build** no update arrives unless you build and publish a release yourself, and then you are the maintainer too. Where the advice differs, the page says which one it means.
+
+## Before you start
+
+You need to know three things about your own setup, because the answers change which parts of this page matter to you:
+
+1. **Where does your service run, and can people outside your home reach it?** If it only answers on your home network (the main path in [hosting.md](hosting.md): a home server with a private address and a real HTTPS name), the section about strangers on the internet mostly does not apply. If it runs on a rented server or on Google Cloud Run, it does.
+2. **Who shares your Wi-Fi?** The display's web page (the [portal](glossary.md#portal)) has no password. Everyone who can join your Wi-Fi can use it.
+3. **Where is your [master secret](glossary.md#master-secret) and where is its backup?** If you cannot answer this, read section 4 first.
+
+If you read nothing else, do these eight things:
+
+1. Never forward a port from your router to the display, and never put the display on the internet. The portal has no password.
+2. Give visitors the guest Wi-Fi, not your main Wi-Fi.
+3. Make the master secret as [install.md](install.md), "Make the master secret", says: one file outside the repository that only you can read, and a backup that is not on that computer. The copy that the service reads follows the rule in [hosting.md](hosting.md), "The secret file and its permissions" (section 4).
+4. Press **Update** only when you expect a new version: on the public image, after the maintainer has published a release and you have run the new image; on your own build, after you published one. And only when the host named in the notice is your own service (section 6.3).
+5. Write down the device ID of every display you set up, so that you can block a lost one (section 6.2).
+6. Run the monthly check in section 3.4.
+7. Turn on two-factor sign-in (a second proof besides your password, such as a code from an authenticator app or a security key) for your GitHub, domain registrar and DNS provider accounts (section 3).
+8. Read the known limits (section 2) once, so that none of them surprises you.
+
+## 1. How the system is protected
+
+### 1.1 Three doors with three different locks
+
+The display and the service meet at three places. Each has its own lock.
+
+```mermaid
+flowchart LR
+  P["Your phone or computer<br/>on your home Wi-Fi"] -->|"http, no password<br/>an update needs the code on the panel"| D["The display<br/>(the portal)"]
+  D -->|"https, every request signed<br/>flights, weather, headlines, logos"| S["Your service"]
+  D -->|"https, not signed<br/>firmware manifest and image"| S
+  S -->|"https"| U["Public data sources<br/>adsb.fi, adsbdb, IPMA, Google News"]
+  O["Anyone on the internet<br/>(if the service is reachable)"] -->|"https: only /healthz and the<br/>firmware routes answer"| S
+```
+
+| Door | Where | The lock | Why it is built this way |
+| --- | --- | --- | --- |
+| The portal | On the display: `http://ledmatrix.local`, plain HTTP | Your home network. No password. Anything that changes the program also needs the [update code](glossary.md#update-code) that only the panel shows | The project's author chose no stored password: the code shown on the panel proves that someone is standing in front of the display, like the setup Wi-Fi password does (decision: issue 21) |
+| The data routes | On the service: `/v1/weather`, `/v1/flights`, `/v1/headlines`, `/v1/logo/<code>` | Every request is signed by the display with its own key. Without a valid signature the answer is `401` | The service should only work for your displays (decision: issue 37) |
+| The firmware routes | On the service: the [manifest](glossary.md#manifest) at `/v1/firmware/manifest`, the image at `/v1/firmware/<file>`, and `/healthz` | None. Open on purpose | See 1.4 |
+
+### 1.2 The portal: plain HTTP, no password
+
+The display serves its settings page itself at `http://ledmatrix.local` (the name works through [mDNS](glossary.md#mdns)). It is plain `http`, not `https`, and it has no password. The only lock is that you must be on the same home network ([LAN](glossary.md#lan)). The display only ever makes outgoing connections (to your service, to two time servers and, only when you press **Test connections**, to two test hosts); the code does not ask the router to open any port (a search of the firmware sources for UPnP finds nothing), and the display's own Wi-Fi network exists only while it is in [setup mode](glossary.md#setup-mode).
+
+What anyone on the network can do with the portal, and what they cannot, is in section 1.8. The firmware does not show the Wi-Fi password, the [device key](glossary.md#device-key) or the update code in any answer: `GET /api/settings` has no Wi-Fi fields, `/status` shows the network name but not its password, and no update answer holds the code (`settings.cpp`, `net.cpp`, `shared/firmware-update.md`).
+
+### 1.3 The data routes: signed requests
+
+Every request the display makes to the data routes carries three extra headers: its device ID, the time, and a **signature**. The signature is an [HMAC](glossary.md#hmac)-SHA-256 fingerprint. In plain words: the display and the service share a secret for that display (the device key). The display mixes the request (the method, the host name, the address with its query, the time) with the key and sends the result. The service does the same calculation and compares. A caller who does not have the key cannot make a matching signature, and a request that was changed on the way no longer matches. The key itself never travels. The full scheme is in [`shared/device-auth.md`](../shared/device-auth.md).
+
+The service checks four things, always in this order (`service/auth.go`):
+
+1. The three headers are there and well formed.
+2. The signature matches (compared in constant time).
+3. The device is not on the [revoked list](glossary.md#revoked-list).
+4. The time is within 2 minutes of the service's clock.
+
+A caller who cannot sign is told only whether the request was unsigned, badly formed or wrongly signed. The service's time and the revoked status are only revealed to a caller whose signature is valid.
+
+**Tested** (service image running locally, requests signed by a small script that follows the contract):
+
+| Request | Answer |
+| --- | --- |
+| No signature headers | `401`, reason `missing` |
+| Signed with a different secret | `401`, reason `bad_signature` (no time in the answer) |
+| Signed correctly, time 200 s in the past | `401`, reason `clock_skew`, and the answer carries the service's time |
+| Signed correctly | accepted (`404 no logo` for a logo that does not exist, which is only possible after the signature passed) |
+| Device ID on `REVOKED_DEVICES`, valid signature | `401`, reason `revoked`; a different ID with a valid signature was accepted |
+| The service started with `PUBLIC_HOST=apis.example.com`; request signed for the host `127.0.0.1` | `401`, reason `bad_signature`; the same request signed for `apis.example.com` was accepted |
+
+**A refusal is soft.** A display whose key is refused keeps its last data, retries every 5 minutes, never wipes anything, never restarts because of it, and says why in its [problem list](glossary.md#problem-list). The service never bans a device for good; only your own revoked list blocks one.
+
+**Why protect public data at all?** The flights, weather and headlines are public. The signature is there so that strangers cannot use your service as a free relay to providers whose terms say "personal, non-commercial use" (see [`service/README.md`](../service/README.md)), so that you can block a lost display, and so that the service fails closed: with no secret it does not start.
+
+### 1.4 The firmware routes: open on purpose
+
+The two firmware routes (`/v1/firmware/manifest` and `/v1/firmware/<file>`) ignore the signature headers completely. This is deliberate, for three reasons:
+
+- **A display whose key is refused must still be able to fetch a fix.** If a wrong secret or a revoked ID also cut the update path, a deployed display could end up unrepairable except over USB (decision: issue 37, point 2).
+- **The image is not secret.** The repository is public and the firmware is built from it. The image holds no key: the identity lives in a separate [flash](glossary.md#flash) [partition](glossary.md#partition) that updates never touch.
+- **The protection is not the route.** What protects the display is its own checks and the code on the panel (1.7).
+
+**Tested:** `GET /v1/firmware/manifest` without any signature answered `200` with the five fields `version`, `file`, `size`, `sha256` and `notes`.
+
+What an open route costs: anyone who can reach the service can download the image (it is about 1.4 MB), and can use up the service's limited download slots. Downloads have their own limit of 8 at once, then `503`, apart from the limit of 32 for the data routes, so a flood of downloads cannot starve signed data requests (`service/firmware.go`, `service/main.go`).
+
+### 1.5 The device key and the master secret
+
+You make one secret, the **master secret** (text, at least 32 characters, from `openssl rand -hex 32`). Each display's key is worked out from it: **device key = HMAC-SHA-256(master secret, device ID)**. The device ID is the board's factory MAC address. The service stores no device keys. It keeps the master secret and your revoked list, and works the key out again for each request.
+
+What follows from this design:
+
+- **A new display needs no change on the service.** Any well-formed ID has a key. There is no list of allowed devices, only a list of blocked ones.
+- **One display's key does not reveal another's, and does not reveal the master secret.** HMAC is a one-way mix. Someone who holds the key of one display (a thief, say) cannot work back to the master secret or forward to the key of a different display.
+- **The master secret is the one secret that matters.** Whoever holds it can sign as any device (1.8). Whoever loses it, after the [burn](glossary.md#burn), locks the burned displays out of the service for good (section 6.1).
+
+### 1.6 The eFuse burn
+
+During [provisioning](glossary.md#provisioning) the display's key first sits as a file in the read-only `ident` flash partition (the interim software key). The burn then copies the key into the chip's [eFuse](glossary.md#efuse): one-time-programmable bits inside the chip. The key is marked read-protected and write-protected, and the chip's HMAC unit can use it to sign, but no program, flash tool or person can read it back (`tools/burn_key/README.md`). Afterwards `tools/provision.py --burned` removes the software key from flash.
+
+The burn **does** close one door: reading the key off the flash chip with a cable and a flash tool.
+
+The burn does **not** close another. Two protections that the [ESP32](glossary.md#esp32) chip offers are not used here: **secure boot** (the chip starts only programs that you signed) and **flash encryption** (the flash chip's contents are scrambled, so a cable cannot read them). Without secure boot a person who holds the display can put their own program on it, and that program can ask the chip's HMAC unit to sign any message. They never learn the key, but they can use it for as long as they hold the display. That is why a lost display must be revoked (section 6.2). This limit was written down when the decision was made (issue 37).
+
+It is **irreversible**: the key cannot be changed, so the master secret cannot be rotated for a burned display (limit L8). It was done once, on the author's own board, on 25 Nov 2026; the runbook and what it showed are in `tools/burn_key/README.md`.
+
+### 1.7 The update path: what is checked before the new program runs
+
+An update changes the program that runs on the display, so it gets the most checks (`shared/firmware-update.md`, `arduino/ledmatrix/ota.cpp`):
+
+| Step | What is checked | What it protects against |
+| --- | --- | --- |
+| Who asks | A random 6-digit code is shown only on the panel. You type it in the portal. It lives 3 minutes, allows 3 wrong tries, and is compared in constant time. After 3 wrong tries a new start is refused for 60 seconds, then 120, doubling up to 1 hour | Someone on the network starting an update; the code is never in an answer, a log, `/status` or the serial output |
+| Where from | Always `https://<saved service host>/v1/firmware/...`, port 443, a [certificate](glossary.md#certificate) that must chain to the built-in list of certificate authorities (the [CA bundle](glossary.md#ca-bundle)) and match the host name, no redirects followed (`connectDual` and `liveHttpsStream` in `live.cpp`; the host name is handed to the [TLS](glossary.md#tls) library for the certificate check, `mbedtls_ssl_set_hostname` in the core's `ssl_client.cpp`; the firmware never calls the core's insecure mode) | A plain-HTTP download; a redirect to another host |
+| Which file | The manifest's `file` must look like `ledmatrix-<version>.bin`; only a version strictly newer than the running one is offered | A downgrade; a path or host smuggled in through the manifest |
+| Is it intact | The [SHA-256](glossary.md#sha-256) and the size must match the manifest. The image must pass ESP-IDF's image validation (header, segments, checksum, the image's own appended SHA-256), be an image for the ESP32-S3 with one app slot, and say that it is the version the manifest announced (a version marker inside the image, read back from flash before the switch) | A damaged download; an image for another chip; a build published under the wrong version |
+| Is it good | The new image runs on [probation](glossary.md#probation): within 3 minutes it must join Wi-Fi, serve the portal, draw 100 frames with none over 1 second, and get one HTTP answer from the service. Otherwise, or after 3 crashes, the display goes back to the previous image ([rollback](glossary.md#rollback)) | An image that starts but does not work |
+| The escape route | A `.bin` uploaded in the portal needs the same code, checked before the first byte is written. It gets the image checks but there is no manifest to compare with | |
+
+**What these checks do not prove.** The SHA-256 comes from the same server as the image, so it shows that the file is not damaged, not that it comes from you. The rollback catches an image that does not work, not one that works and is hostile. See limits L2 and L3.
+
+### 1.8 Who can do what
+
+This table is about what each kind of person can do **today, with the code as it is**. "Can" means the code allows it. Details and what to do about each row follow the table.
+
+| Who | What they can do | What they cannot do |
+| --- | --- | --- |
+| **Someone on your Wi-Fi** | Open the portal and read your saved location, settings, the display's ID, the Wi-Fi network name and the problem list. Change any setting, including your location and the service address. Press "Forget this Wi-Fi network" (the display wipes its Wi-Fi and restarts into setup mode; it shows nothing new until you join it to your Wi-Fi again). Start an update, which puts a code on the panel and can use up your tries. Point the display at a server of their own (L2) | Read the Wi-Fi password, the device key or the master secret. Install firmware without the code that only the panel shows. Read the encrypted traffic to your service. Use your service's data routes (they cannot sign) |
+| **Someone on the internet who finds your service** | Ask `/healthz`. Download the firmware manifest and image (public anyway). Fill the service's limited slots and write refusal lines to its log (capped). Find your service's name in public certificate logs (unless you use a wildcard certificate) | Get any flights, weather, headlines or logos (`401`). Learn whether a device ID exists or is revoked, or the service's time. Guess a key (256 bits). Change anything on a display |
+| **Someone who steals the display** | Read the saved Wi-Fi password, your location and the service address from the flash chip over USB (not encrypted). On a display whose key is not burned, also read the device key. Put their own program on it and, if the key is burned, ask the chip to sign requests as your display until you revoke its ID | Learn the master secret. Sign for your other displays. Read a burned key out of the chip with software or a flash tool |
+| **Someone who gets your master secret** | Work out the key of any display and sign requests as any device; use your data service for free. Nothing in the service's log tells their requests from your own displays' | Open, change or update any display. Read your Wi-Fi. Push firmware. The secret alone gives them no access to a display or to your server |
+| **Someone who controls your DNS, or a certificate authority** | If they control your name in the *public* DNS (a stolen registrar or DNS account): send the display to a server of theirs that has a valid certificate; show false flights, weather and headlines; collect each signed request (device ID, signature, time, and your location in the address); offer a "newer firmware" under the name your own notice shows. It installs only if someone types the code from the panel | Learn the master secret or a device key from the signatures. Install anything without the code. If they control only your *home router's* DNS: get a valid certificate for your name, so the display refuses the connection and shows a certificate problem |
+
+**Someone on your Wi-Fi.** Treat your Wi-Fi password like the key to the portal. Give visitors the guest network (it normally keeps guests away from your other devices; check the router's "client isolation" or "guest" setting). Use WPA2 or WPA3 (the two current security standards for Wi-Fi passwords) with a long password. The Wi-Fi library's default minimum is WPA2, so the display will not join an open or older network (`WiFiSTA.h` in core 3.3.13); A WPA3-only network was not tested (Not tested here), so choose the mixed WPA2/WPA3 mode if your router offers it. On a network where everyone knows one WPA2 password, people may be able to read each other's plain-HTTP traffic; WPA3 closes that. Everything you type in the portal, including the update code, crosses your Wi-Fi as plain HTTP. The code works once and only for 3 minutes, so a copy taken from the air is of little use after you have typed it (`CodeAuth::check` in `otalogic.h` spends the code on the first correct entry).
+
+**Someone on the internet.** If your service is public, expect strangers to find it: a name that has its own public certificate appears in public certificate logs (the "Certificate Transparency" logs, where certificate authorities must record what they issue; the [project's site](https://certificate.transparency.dev/) explains them), so treat the name as public. A wildcard certificate keeps individual names out of the logs. Run the service behind a [reverse proxy](glossary.md#reverse-proxy) that gives it HTTPS, as in [hosting.md](hosting.md), and keep Go and the base image current (section 3).
+
+**Someone who steals the display.** Revoke its ID and change your Wi-Fi password (section 6.2). Assume that the finder can learn roughly where you live from the saved location.
+
+**Someone who gets your master secret.** Section 6.1 says what to do and, honestly, what is stuck.
+
+**Someone who controls your DNS or a CA.** This is the weakest link in the design (L3). What helps: two-factor sign-in and registrar lock on the domain and DNS accounts, a CAA record, and the habit in section 6.3: you know when a new version should arrive, so one you did not expect is a warning, whatever host the notice names.
+
+## 2. Known limits
+
+These are things the design does not do. Each was checked in the code or the contract.
+
+**L1. The portal is plain HTTP on your LAN with no password.** Anyone on your Wi-Fi can read and change the settings, wipe the Wi-Fi with "Forget" (`/forget`, no check, `net.cpp`), and start the update-code screen. The display also does not check where a request comes from: The firmware has no `Origin` or `Referer` check (a search of the firmware sources finds none). So a web page that you open in a browser on your network can, in principle, make your browser send requests to the display. Modern browsers add their own protections against web pages reaching devices on a home network; these were not tested (Not tested here), and the display does not depend on them. What reduces the risk: the guest Wi-Fi for visitors, a strong Wi-Fi password, and never exposing the display to the internet. A firmware update is still protected by the panel code.
+
+**L2. Anyone on the LAN can change the saved service host, and that host is also where updates come from.** The display trusts the host saved in its settings. Someone on your network could point it at a server of their own (they need a normal, valid certificate for that name, which is easy to get for a domain they own) and publish a "newer" version. What stands in the way: the update needs the code shown only on the panel, and the portal's notice names the host next to the Update button ("From: ... Only update if this is your own service."). A **signed manifest** (a public key pinned in the firmware) would close this gap. It is not built: the author decided "no signature for now" (issue 21). The data requests are also affected: a display pointed at another host sends that host its device ID, signature, time and your location.
+
+**L3. The update's authenticity rests on DNS, the certificate authorities and your host.** The display trusts every root certificate in its built-in list (the source file of the list has 146 of them) and the DNS answer for your service name. A person who controls your public DNS, or a certificate authority that issues a certificate for your name by mistake, can stand in for your service (section 1.8). The checks in 1.7 prove that a file is intact, not that it is yours. A signed manifest would also close this.
+
+**L4. A crash before `setup()` starts is not caught by the rollback.** The rollback runs from inside the new program, so a fault in the very first start-up code (core initialisation, static constructors) cannot be caught. The image has passed the validation and the SHA-256 check, and it comes from the same build as the running one, which makes this unlikely. The recovery is a USB flash from your computer ([install.md](install.md)).
+
+**L5. The boot counter and the throttle live in RAM.** The count of crashes during probation is in a part of memory that survives a crash and a restart, but not a power cut. The update-code throttle (60 s, doubling to 1 hour) is in ordinary RAM and starts afresh after any restart. The 3-minute health check does not depend on either.
+
+**L6. A captured signed request can be replayed for 2 minutes.** Anyone who sees a signed request (on the stretch between your proxy and the service, say, if they are on different machines) can send the same bytes again while the timestamp is still within the window. **Tested:** one signed request sent twice, 5 seconds apart, was accepted both times. What a replay gets: public flight, weather or headline data. It cannot change anything. Between the display and your proxy the traffic is encrypted. Setting `PUBLIC_HOST` (section 4) also stops a signature made for another host name from working against your service (tested, 1.3).
+
+**L7. The revoked list needs a restart, and the service does not record who used it.** `REVOKED_DEVICES` is read when the service starts (`authFromEnv` in `service/auth.go`); edit it and restart. The service logs refusals with the device ID, but a request that succeeds is logged without any device ID or address (section 5). So a stolen display or a leaked secret that is used successfully leaves no trace in the service's own log.
+
+**L8. The master secret cannot be rotated for a display whose key is burned.** The chip's key is the one made from the old secret and it can never be changed. A new secret locks that display out of the data service (it can still get firmware updates, because those routes are open). Section 6.1 lists the options. There are only six key blocks on the chip, and one burn uses a block for good.
+
+**L9. A stolen display gives up more than its key.** Secure boot and flash encryption are not used, so a person with USB access can read the whole flash chip: the saved Wi-Fi password and your location (stored in plain text in the `nvs` partition, see [NVS](glossary.md#nvs); the partition table has no key store for encrypting it), and, on a display that is not burned, the device key in the `ident` partition. The partition is marked read-only, but that is a rule for the firmware's own code; a flash tool writes raw flash. With a burned key a thief cannot read the key but can ask the chip to sign (section 1.6).
+
+**L10. The clock comes from plain NTP.** The display asks `pool.ntp.org` and `time.cloudflare.com` for the time with NTP (the protocol devices use to ask for the time), which is not authenticated, as on most devices. Someone who can forge those answers can make the clock wrong. That makes secure connections fail (certificates have dates) and the service answers `clock_skew` (the display repairs the signing time from the service's answer). It also weakens the check of a certificate's dates.
+
+**L11. Setup mode is short but open to anyone in Wi-Fi range.** The display's own network uses WPA2 with a generated password of 8 characters from a 32-character alphabet (about 40 bits), new each time setup mode starts, shown on the panel and printed on the USB [serial port](glossary.md#serial-port). Your home Wi-Fi password is typed into a plain-HTTP form over that network (`net.cpp`). Do setup when nobody you do not know is within Wi-Fi range.
+
+**L12. The update chain is only as strong as your GitHub account and your deploy step.** Whoever can push to `main` decides what the next image carries; whoever can deploy your service image decides which firmware your displays are offered. On the public image you also trust the maintainer's GitHub account and the image registry; on your own build you trust your own. On 25 Nov 2026, 46 of the repository's 60 commits carried a valid signature and 14 did not (`git log --format=%G?`). A signed commit shows who made it, if you trust the key. Section 3 says how to protect the account.
+
+**L13. Third parties see your browser when you use the portal.** The map and the place search contact other servers (section 5).
+
+**L14. The service holds one master secret.** There is no second secret and no list of allowed devices. A leak cannot be narrowed down to one display.
+
+## 3. What you must keep up to date
+
+Security fixes only help if you install them. Some parts reach your display only when a new firmware is released; some run on your computer or server; some are accounts. This section lists every part, how often to look, and where.
+
+### 3.1 Found and fixed on 25 Nov 2026
+
+These findings are dated. They will age; the method in 3.2 to 3.4 will not.
+
+- **Go 1.25 was no longer supported.** Go supports each release until two newer ones exist; Go 1.27 came out on 19 Aug 2026, the same day as the last Go 1.25 release (1.25.14). The [Docker image](glossary.md#docker-image) that the workflow built for commit 1f9b6a5 held a program compiled with go1.25.14 (`go version` on the program, taken out of the image, says so). Go's own scanner `govulncheck` (database updated 24 Nov 2026) reported for Go 1.25.14: "Your code is affected by 12 vulnerabilities from the Go standard library", in `net/http` (HTTP/1 and HTTP/2 server crashes, no limit on the size of parsed `Range` headers, memory and CPU exhaustion), `net/textproto`, `crypto/tls` and `crypto/x509`. The fixes are in Go 1.26.9 to 1.26.11 and in 1.27. How easy each one is to use against this service was not assessed; many of the titles describe crashes and resource exhaustion, which a stranger could cause if the service is public.
+- **The base image was a Debian 12 one that its project no longer lists.** `service/Dockerfile` used `gcr.io/distroless/static-debian12:nonroot`. Its last push was 21 Aug 2026; the distroless project's README now lists only Debian 13 images as published and updated (`static-debian13:nonroot` was pushed 22 Nov 2026). Sources in Background.
+- **Fixed.** `service/Dockerfile`, `.github/workflows/service.yml`, `service/go.mod` and the test command in `service/README.md` now say Go 1.27, and the Dockerfile uses `gcr.io/distroless/static-debian13:nonroot`. The service's 59 tests pass on Go 1.27.4 with the race detector, and `govulncheck` finds nothing in the new code. **The lesson: pin a supported Go and scan again every month with `govulncheck ./...` (3.3).** A change in the files is not a change in what runs: **a service that still runs an image built before the change has the problems above until you run a newer image** ([hosting.md](hosting.md), "Keep it running", "Update the service and Caddy").
+- **Still open** (details in 3.2 and Background): the GitHub Actions are pinned by major-version tag, not by commit, and several are two or three major versions behind, and there is no Dependabot configuration (GitHub's service that proposes updates to dependencies); the root-certificate list inside the display's core is from Mozilla's list as of Feb 2025; arduino-esp32 4.0.0 came out on 19 Nov 2026 (this project uses 3.3.13 from 17 Nov 2026, the newest of the 3.3 line; do not jump to a new major version without a test, which is Not tested here).
+
+### 3.2 The table
+
+**Who does what.** On the public image the maintainer looks after the display-side rows (the core, the libraries, the portal's libraries, the [bootloader](glossary.md#bootloader)) and the rows that make the service image (Go, base images, Actions, build tools). Your part is to run the newest public image and to look after the host, Caddy, the certificate, the router and your accounts. On your own build every row is yours.
+
+| Part, and what this project uses | How often to look | How to check and update | Where to watch |
+| --- | --- | --- | --- |
+| **arduino-esp32 core 3.3.13**, which carries the TLS library (mbedTLS 3.6.7), the portal's web server and the list of trusted certificate authorities | Monthly. Immediately if a fix concerns TLS, Wi-Fi or the web server. A new 3.3.x release has come every 1 to 2 months | Newest version: the releases page. To move: change `ESP32_CORE_VERSION` in `.github/workflows/service.yml` and your local install, build, run the host tests, release (see Background and [build.md](build.md)) | [arduino-esp32 releases](https://github.com/espressif/arduino-esp32/releases) |
+| **Arduino libraries**: ArduinoJson 7.4.3, Adafruit Protomatter 1.7.1, Adafruit GFX 1.13.0, Adafruit BusIO 1.17.4 (pinned in the workflow) | Every 3 months, and together with a core update. ArduinoJson matters most: it reads text sent by your network (the portal's settings) and by your service | Compare the pin with the newest release; change the pin in the workflow and in your install; build and test. Adafruit GFX 2.0.0, a new major version, came out on 23 Nov 2026 (Not tested here) | [ArduinoJson](https://github.com/bblanchon/ArduinoJson/releases), [Protomatter](https://github.com/adafruit/Adafruit_Protomatter/releases), [GFX](https://github.com/adafruit/Adafruit-GFX-Library/releases), [BusIO](https://github.com/adafruit/Adafruit_BusIO/releases) |
+| **The portal's browser libraries**: Leaflet 1.9.4 and tz-lookup 11.8.0, loaded by your browser from `unpkg.com` and `cdn.jsdelivr.net` with integrity hashes | Every 3 to 6 months, or on an advisory. Leaflet 1.9.4 is still the newest stable one | Change the address and the `integrity=` hash in `portal/portal.template.html`, run `tools/build_web.py`, release a new firmware. The hash can be recomputed (3.3) | [Leaflet](https://github.com/Leaflet/Leaflet/releases), [tz-lookup](https://github.com/photostructure/tz-lookup/releases) |
+| **The bootloader** (Adafruit's prebuilt TinyUF2 on the board) | Once a year, or on an advisory. It is not part of the [over-the-air](glossary.md#ota) update, so a new bootloader means a USB step. Not tested here | Adafruit's instructions for the Matrix Portal S3 | [TinyUF2 releases](https://github.com/adafruit/tinyuf2/releases) |
+| **Go and the service's dependencies**: the Go version named in `service/go.mod`, `service/Dockerfile` and the workflow (see 3.1); `service/go.mod` lists no other modules, only Go's standard library | Monthly: Go publishes fixes about monthly and a new release every 6 months (Feb and Aug) | Run the scanner (3.3). When the Go in those files is no longer supported, move to a supported one, run the service tests, rebuild the image, deploy | [Go release history](https://go.dev/doc/devel/release), [golang-announce](https://groups.google.com/g/golang-announce) |
+| **The vulnerability scan**: `govulncheck ./...` on `service/` (Go's own scanner; it reports only known problems in code that the service actually calls) | Monthly, and before every release of the service. Immediately after a Go security release | The command in 3.3. A good result ends with `No vulnerabilities found.` If it lists findings, move to the Go version that fixes them, run the tests, rebuild, deploy | [Go vulnerability database](https://pkg.go.dev/vuln/) and [golang-announce](https://groups.google.com/g/golang-announce) |
+| **[Container](glossary.md#container) base images**, both named in `service/Dockerfile`: the `golang` image of the build stage (not shipped) and the distroless `static` image (shipped) | Monthly: rebuild the image so that it picks up the newest base (public image: the maintainer does this; you run the newest image) | Run the workflow by hand (3.3): it has no schedule, so a month with no push builds nothing. It republishes the same commit tag and `latest` with a newer base. A rebuild of the same firmware version is not a release; displays only update to a strictly newer version. Then run the new image (`docker compose pull api`, then `docker compose up -d`; [hosting.md](hosting.md), "Keep it running", "Update the service and Caddy") | [distroless](https://github.com/GoogleContainerTools/distroless), [golang on Docker Hub](https://hub.docker.com/_/golang) |
+| **GitHub Actions** used by the workflow: `actions/checkout@v4`, `actions/setup-go@v5`, `actions/cache@v4`, `actions/upload-artifact@v4`, `docker/setup-buildx-action@v3`, `docker/login-action@v3`, `docker/build-push-action@v6` | Quarterly, or let Dependabot propose changes weekly | Pinned by tag, which the action's author can move. Safer: pin to the full commit hash, which GitHub's guide recommends; see Background | Each action's releases page; [GitHub: secure use of Actions](https://docs.github.com/en/actions/reference/security/secure-use) |
+| **Build tools on your computer**: arduino-cli 1.6.0 (checked against a SHA-256 in the workflow; 1.6.0 was the newest release on 25 Nov 2026), Python 3, Docker | With your computer's updates; arduino-cli every 6 months | The workflow's arduino-cli pin has a checksum: change the version and the checksum together | [arduino-cli releases](https://github.com/arduino/arduino-cli/releases) |
+| **The host's operating system and Docker** (the machine that runs the service) | Turn on automatic security updates; look monthly that they ran and restart when asked. Docker Engine published five releases (29.9.1 to 29.10.1) between 14 Oct and 24 Nov 2026 | macOS: System Settings, General, Software Update. Debian or Ubuntu: the `unattended-upgrades` package. Docker: your package manager or Docker Desktop's updater. Not tested here on Linux | [Apple security releases](https://support.apple.com/en-us/100100), [Ubuntu notices](https://ubuntu.com/security/notices), [Debian security](https://www.debian.org/security/), [Docker security announcements](https://docs.docker.com/security/security-announcements/), [Docker Engine releases](https://docs.docker.com/engine/release-notes/) |
+| **Caddy** (or the reverse proxy you chose), and its DNS module | Monthly. Caddy's 2.11 line had releases on 1 and 3 Oct and on 4 and 5 Nov 2026. Immediately on an advisory | The Compose file in [hosting.md](hosting.md) builds a local Caddy image with your DNS provider's module. A plain `docker pull` does not refresh an image you built yourself: rebuild it with `docker compose build --pull caddy`, then `docker compose up -d` ([hosting.md](hosting.md), "Keep it running", "Update the service and Caddy") | [Caddy releases](https://github.com/caddyserver/caddy/releases), [Caddy advisories](https://github.com/caddyserver/caddy/security/advisories) |
+| **Kubernetes** (only if you use it; `service/deploy/ledmatrix-api.yaml` is written for k3s and an Envoy Gateway): the cluster tool, the Gateway, the cluster's own machines | Monthly for patch releases. Kubernetes supports its newest three minor versions for about a year each (1.37, 1.36 and 1.35 on 25 Nov 2026), so plan a minor upgrade at least yearly | Follow your cluster tool's upgrade guide (Not tested here) | [Kubernetes security](https://kubernetes.io/docs/reference/issues-security/security/), [Kubernetes releases](https://kubernetes.io/releases/), [k3s releases](https://github.com/k3s-io/k3s/releases), [Envoy Gateway releases](https://github.com/envoyproxy/gateway/releases) |
+| **Your HTTPS certificate** | Monthly: confirm that it renews. Caddy renews by itself while your DNS token works | `openssl s_client -connect apis.example.com:443 -servername apis.example.com </dev/null 2>/dev/null \| openssl x509 -noout -dates` prints the start and end dates. The display shows a certificate problem if it expires (3.3) | Your CA's announcements (Background) |
+| **Your router and Wi-Fi** | Every 3 months; turn on automatic updates if the router has them. Replace a router that no longer gets updates | WPA2 or WPA3 with a long password; switch off WPS and remote administration; keep a guest network for visitors | Your router maker's support page |
+| **Your [domain name](glossary.md#domain-name): the registrar and DNS provider accounts** | Review every 6 months | Two-factor sign-in, registrar lock, automatic renewal of the domain (a domain that lapses can be registered by someone else, who can then get a valid certificate for it), a CAA record (3.3), and a DNS token limited to one zone | The providers' own notices |
+| **Your GitHub account and repository** | Review every 6 months | Two-factor sign-in (passkey, security key or authenticator app); review tokens and SSH keys; Dependabot alerts; protect `main` against force pushes; sign your commits | [GitHub security advisories for your repository](https://docs.github.com/en/code-security) |
+| **Your own computer** (where you build, flash and keep the master secret) | With its updates | Disk encryption (FileVault on macOS), a screen lock, a current OS | The OS vendor |
+
+### 3.3 How to run the checks
+
+**Go and its scanner.** Go's official scanner `govulncheck` checks which known problems in the standard library your code actually calls. Run it on the service from the repository root (see [build.md](build.md), "Terminal in 2 minutes"). **Tested:** the scan runs in a container with the folder mounted read-only.
+
+```
+docker run --rm -v "$PWD/service":/src:ro -w /src golang:1.27 sh -c \
+  'GOBIN=/tmp/bin go install golang.org/x/vuln/cmd/govulncheck@latest && /tmp/bin/govulncheck ./...'
+```
+
+What it does: starts a throwaway container with the newest Go (the first run downloads the Go image, about 1.3 GB according to [development.md](development.md), "The Go service tests"; "Clean up" there removes it again), installs the scanner, and scans the service's code against the vulnerability database. A good result ends with `No vulnerabilities found.` (**Tested:** that is what it printed with Go 1.27.4 on the files that say Go 1.27.) If it prints findings, move to a newer Go. The newest scanner needs Go 1.26 or later, so for the old Go 1.25.14 the scan needed an older scanner (`govulncheck@v1.1.4`), which printed the 12 findings of 3.1. On Linux the command is the same (Not tested here).
+
+**Which Go compiled the image you run?** `docker create --name x <image>`, then `docker cp x:/ledmatrix-api .`, then `docker rm x`, then `docker run --rm -v "$PWD":/b:ro golang:1.27 go version /b/ledmatrix-api`. **Tested:** for the image built for commit 1f9b6a5 it printed `go1.25.14`; for an image built from the new files, `go1.27.4`.
+
+**Rebuilding the image by hand (your own build).** Run the workflow from the repository's Actions page ("Run workflow"). It builds the commit at the head of the branch you pick and publishes the image again under `latest` and under the commit-hash tag. So a commit tag names one commit, not one set of bytes: a rebuild of the same commit replaces what that tag points to, with a newer base image. The firmware version in it is unchanged, and displays only update to a strictly newer version, so a rebuild is not a release.
+
+**The portal's browser libraries.** Both script tags carry an `integrity=` hash, so a browser refuses a file that does not match, even if the server that hosts it were taken over. **Tested:** the hashes of `leaflet@1.9.4` and `tz-lookup@11.8.0` were recomputed with `openssl dgst -sha256 -binary FILE | openssl base64 -A` (SHA-384 for tz-lookup), and both matched the values in `portal/portal.template.html`. Use the same command to make the hash for a new version, and write it as `sha256-<result>`.
+
+**A CAA record.** By default every public certificate authority may issue a certificate for your name (Let's Encrypt's [CAA page](https://letsencrypt.org/docs/caa/) says so). A CAA record is a DNS record in which you name the only authorities that may. For a Let's Encrypt setup it looks like `example.com. CAA 0 issue "letsencrypt.org"` (check your DNS provider's form). The standard is [RFC 8659](https://rfc-editor.org/rfc/rfc8659). It does not stop someone who controls your DNS, because they could change it, but it limits the damage of a bug in a different authority. Not tested here.
+
+**Your certificate.** The `openssl s_client` command in the table was **tested** against a public example host and printed `notBefore=` and `notAfter=` lines. If your service answers only on your home network, run it from a computer on that network.
+
+### 3.4 A monthly routine (about 30 minutes)
+
+1. Open the releases pages of arduino-esp32, Go, Caddy and Docker (or let GitHub mail you: on each repository choose **Watch**, **Custom**, **Releases** and **Security alerts**).
+2. Run `govulncheck` (3.3). If it finds something, update Go.
+3. Public image: run the newest one (`docker compose pull api`, then `docker compose up -d`). Your own build: run the workflow by hand so that the image gets the newest base (3.3), then run the new image. Either way, check that an unsigned request is refused ([operations.md](operations.md), "Firmware updates").
+4. Let the host install its updates, and restart it if asked. Check that the service and Caddy came back.
+5. Check the certificate's end date (3.3). It should be more than 30 days away.
+6. Open the portal's Problems section. A display that has been failing for an hour shows a message on the panel; read it.
+7. Once a quarter also check the router, the libraries and the Actions. Twice a year review the account settings in the table and check that you can read your master-secret backup (section 4).
+
+**Immediately** (the same day): when a vulnerability is published for something you run and it concerns the network, TLS, the web server or the container.
+
+**Hearing about problems without reading everything:** the [golang-announce](https://groups.google.com/g/golang-announce) list, [Debian](https://www.debian.org/security/) or [Ubuntu](https://ubuntu.com/security/notices) security announcements for your host, and the **Watch** setting above. Dependabot alerts for your repository need no reading until one arrives.
+
+## 4. Secrets
+
+| Secret | Where it lives | Rule |
+| --- | --- | --- |
+| **The master secret** | A file on your computer outside the repository; for the service, a file it can read (`MASTER_SECRET_FILE`) or its environment (`MASTER_SECRET`); one offline backup | Section 4.1 |
+| **A device key image file** (made by `provision.py`) | Briefly, on your computer, until the board has been flashed | Section 4.2 |
+| **The DNS provider's token** (used by Caddy to prove that you own the name, the [DNS challenge](glossary.md#dns-challenge)) | In `.env` next to the Compose file, or a Kubernetes Secret | Create it with the narrowest rights: edit DNS records of one zone only. It can change where your name points, which is as serious as the master secret (section 1.8, the DNS row). Never in the repository |
+| **Your GitHub sign-in, tokens and the registry login** | Your password manager | Two-factor sign-in; no token that you do not use |
+| **The Wi-Fi password** | In your head or password manager; on the display's flash (not encrypted, L9) | Use a Wi-Fi password that you do not use anywhere else |
+| **The update code** | Shown on the panel for 3 minutes | Not stored anywhere else. Never type it unless you started the update |
+
+### 4.1 The master secret
+
+**Make it and back it up** as [install.md](install.md), "Make the master secret", says. It leaves one file, `~/ledmatrix-secrets/master-secret` (64 hexadecimal characters, readable only by you), and explains the backup. This page does not repeat the recipe.
+
+**Keep it.**
+
+- **Never** in the repository, in a ticket, an issue, a chat message, a screenshot, a log or an email. Every example in this project is a placeholder.
+- **Never on a command line.** A command line is stored in your shell history and is visible to other users of the machine in the process list. That is why `provision.py` takes only the path of a file (`--secret-file`) and the service takes the secret from a file or from its environment, not from an argument. `provision.py` also refuses a secret file that is inside the repository.
+- **Back it up outside that computer, now.** A password manager, or paper in a safe place. After the burn, a lost master secret cannot be recovered and the burned display is locked out of the service for good (section 6.1). Losing the secret is worse than leaking it. Once a year check that you can read the backup.
+- **Treat the file as a password.** FileVault (macOS) or disk encryption on the machine that holds it.
+
+**Give it to the service.** The service reads the secret from one of three places and refuses to start unless exactly one is set (`service/README.md`, `service/auth.go`):
+
+- **`MASTER_SECRET_FILE`: the absolute path of a file that holds only the secret**, for example `/run/secrets/master-secret`. This is the recommended way ([hosting.md](hosting.md) and the Compose example in `deploy/compose/` use it). The path may also be a symbolic link to a regular file, which is what a mounted Docker or Kubernetes secret usually is. The file may be at most 4 KB; spaces and line ends around the secret are removed; it needs at least 32 characters. The service reads it once, at start, so after changing the secret you restart the service. The secret is then not in the container's environment, in `docker inspect` or in a Kubernetes manifest.
+- **`MASTER_SECRET`: the secret itself, in the environment.** It is simpler and still works.
+- `AUTH_OFF=1`: no secret and no check; for your own computer only (4.3).
+
+The file option needs an image built from the commit that added it or later. An older image, including an older public image, does not know it: with only `MASTER_SECRET_FILE` set it stops with `MASTER_SECRET is not set, so the service will not start` and does not run, so a mistake fails closed. If you see that message while you use the file variant, your image is older: pull again (**tested** with the image published for commit 1f9b6a5).
+
+**Why the file is safer. Tested** (Docker 29.8.2 and Compose 5.5.0, with an image built from `service/` on 25 Nov 2026):
+
+- With the secret in the environment (`--env-file`, tested on the published image), the value was in the `docker inspect` output (one match). So anyone who can run `docker inspect` on that host can read the master secret, and so can anything else that dumps a container's environment.
+- With a file mounted read-only at `/run/secrets/master-secret` and `MASTER_SECRET_FILE=/run/secrets/master-secret`, the service started, accepted a correctly signed request, and `docker inspect` showed only the path: the secret's value was found 0 times. The same worked with a Compose file-based secret (`secrets:` with `file: ./master-secret`), mounted read-only.
+- **The mode rule.** The service runs as user 65532 inside its container, not as you, and on Linux Docker hands the file over with the owner and mode it has on the host. The rule is the one in [hosting.md](hosting.md), "The secret file and its permissions": the service's copy of the secret must be readable by that user, inside a folder that only you can enter. Your own master secret file, the one in `~/ledmatrix-secrets`, stays readable only by you. On macOS a mode 600 file was readable by the service; Linux is Not tested here.
+
+**One small gap in the error messages.** If you paste the secret itself into `MASTER_SECRET_FILE` by mistake and it happens to start with `/` (a secret in base64 text can), the service takes it for a path and the error message `MASTER_SECRET_FILE "..." cannot be read` repeats it in the log. A hex secret from `openssl rand -hex 32` cannot start with `/`, and a value that is not an absolute path is never shown. Put the path there, not the secret.
+
+Keep the group of people who may control Docker on that host small: on Linux, Docker's own documentation treats that group as having the rights of an administrator ([Docker daemon attack surface](https://docs.docker.com/engine/security/#docker-daemon-attack-surface)).
+
+- **Kubernetes:** `kubectl create secret generic ledmatrix-api --from-file=master-secret=...`, then either `secretKeyRef` into `MASTER_SECRET` (the environment) or a secret volume with `MASTER_SECRET_FILE` (the file), as in [hosting.md](hosting.md), "Path 4: Kubernetes (appendix)". By default a Kubernetes Secret is stored unencrypted in the cluster's data store, and anyone allowed to read Secrets, or to create a Pod in the namespace, can read it ([Kubernetes documentation](https://kubernetes.io/docs/concepts/configuration/secret/), read 25 Nov 2026). Turn on encryption at rest if others use the cluster. Not tested here.
+- **Check that the service refuses to run without a secret. Tested**, on an image built from `service/` on 25 Nov 2026:
+  - nothing set: `MASTER_SECRET is not set and neither is MASTER_SECRET_FILE, so the service will not start; set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 ...` (an older image prints the shorter `MASTER_SECRET is not set, so the service will not start; create one with ...`)
+  - a secret under 32 characters, from the environment or from a file: `... holds a secret shorter than 32 characters (after removing surrounding whitespace) ...`
+  - `MASTER_SECRET_FILE` with a relative path: `MASTER_SECRET_FILE must be the absolute path of a file, such as /run/secrets/master-secret (the value is not shown)`; with a path that does not exist: `MASTER_SECRET_FILE "/run/secrets/nope" cannot be read: no such file`. Neither message ever shows the file's content.
+  - more than one of the three set: `both MASTER_SECRET and MASTER_SECRET_FILE are set; set exactly one of ...`
+
+**`PUBLIC_HOST`.** Set `PUBLIC_HOST=apis.example.com` (your service's name) on the service. The service then uses that name, not the request's `Host` header, when it checks a signature, so a signature that was made for another host name is refused (tested, 1.3). Leave it out only if you do not mind. It is optional because Caddy passes the `Host` header through unchanged.
+
+### 4.2 The device key image file
+
+`tools/provision.py --out <file>` writes an 8 KB identity image that holds the display's device key. It creates the file with mode 600 outside the repository and deletes it after a successful `--flash` (`--keep` keeps it; a failed flash keeps it so you can try again). If it says "flashed, but the image file could not be deleted", delete it by hand. It never prints a key or the secret. The line it prints, `device=<id> crc32=<hex>`, is the device ID: **write it down** (section 6.2). The image is the same key you could rebuild from the master secret and the ID, so the file is as sensitive as one display's key, and it is not needed after flashing.
+
+### 4.3 `AUTH_OFF`: never on a service others can reach
+
+`AUTH_OFF=1` turns the signature check off. It exists so that you can try the service on your own computer. **With it on, anyone who can reach the service can use every data route.** The service tries to keep you from doing it by accident. **Tested:**
+
+- With `AUTH_OFF=1` alone it started and logged: `WARNING: AUTH_OFF=1, request signatures are NOT checked. Use this only on your own computer, never on a service that other people can reach.`
+- With `AUTH_OFF=1` together with a `MASTER_SECRET` it refused to start: `both AUTH_OFF=1 and MASTER_SECRET are set; set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 (AUTH_OFF=1 is for local development only)`. (The image published before the file option said `set only one` at the end; the meaning is the same.)
+- With none of the three it refused to start.
+
+A detail that catches beginners: `docker run -p 8080:8080` publishes the port on **every** network interface of your computer, so other people on your Wi-Fi can reach it. **Tested:** `docker port` showed `0.0.0.0:18198` and `[::]:18198` for a plain `-p 18198:8080` (and the same form for another port with `AUTH_OFF=1`, which was stopped after a second). For a local test with `AUTH_OFF=1` write `-p 127.0.0.1:8080:8080`, which only your own computer can reach, and stop the container when you are done. The example in `service/README.md` uses the plain form; this page recommends the `127.0.0.1` form.
+
+## 5. What is private, and what the service sees and logs
+
+[architecture.md](architecture.md) section 8 has the full tables of what is stored where and what leaves the display. This section adds what was checked about the service's logs and what the browser does.
+
+**What the service sees.** Every request from the display: the display's public IP address (at the proxy), its device ID, the time, your location to 4 decimals (about 11 m) in the address, the radius and altitude limits, your headline topics, and the airline codes of nearby planes (from the logo requests).
+
+**What the service logs.** The code writes the kinds of line listed below (`service/main.go`, `service/auth.go`, `service/firmware.go`). **Tested**, after an unsigned request to `/v1/weather?lat=38.70&lon=-9.10`, a signed request, a wrong-key request, and a firmware manifest request. The service printed these lines (the device ID and the times are test values; the lines for the other test requests are left out):
+
+```
+2026/11/25 22:28:23 GET "/healthz" 200 0ms
+2026/11/25 22:28:23 auth refused: device=- reason=missing
+2026/11/25 22:28:23 GET "/v1/weather" 401 0ms
+2026/11/25 22:28:23 GET "/v1/logo/ZZ" 404 1ms
+2026/11/25 22:28:23 auth refused: device=aabbccddeeff reason=bad_signature
+2026/11/25 22:28:28 GET "/v1/firmware/manifest" 200 0ms
+```
+
+- **The access log** has the time, the method, the path in quotes, the status and the duration. **The query string is not in it**: the coordinates `38.70` and `-9.10` did not appear anywhere in the log. The path is quoted so that a hostile path cannot forge a log line. There is no client address and no device ID in it.
+- **The airline code is in the path** (`/v1/logo/TP`). So the log shows which airlines' logos your display asked for, and when. That says something about the flights over your home.
+- **Refusal lines** carry the device ID (if it is well formed, else `-`) and the reason, never a key, a signature or the secret. They are limited to one per device and reason per minute and 30 lines a minute in all, so a scanner cannot fill the log.
+- **Other lines:** start-up lines (the listening address, the firmware version it found) and upstream errors, which name the data provider's host but never a URL, so no coordinates.
+- **What it does not log:** the query string, the client address, any header, a key, a signature, or the secret. It writes nothing to disk; the log goes to the container's standard output or error (Go's logger writes to standard error; Docker keeps both).
+
+**What the layers around it log is up to them.** Docker keeps the service's output (the Compose file in [hosting.md](hosting.md) rotates it at 10 MB for 3 files). Caddy writes an access log only if you turn it on with the `log` directive ([Caddy docs](https://caddyserver.com/docs/caddyfile/directives/log)); the example Caddyfile deliberately has none, because a request's address carries the display's coordinates. A rented server's front door, a load balancer or a Kubernetes gateway may log the full address, query string included, by default. Google Cloud Run writes a log entry for every request, and [hosting.md](hosting.md) (the Cloud Run section) explains what that entry holds and what to do about it. Check the log settings of whatever sits in front of your service and turn off or shorten what includes the query string.
+
+**What the data providers see.** adsb.fi gets your location rounded to 2 decimals (about 1 km) and the service's address, not yours. adsbdb gets call signs. Google News gets your topic words, with `when:1d` added. IPMA gets a city number and public files and no coordinates at all (`service/flights.go`, `service/headlines.go`, `service/weather.go`).
+
+**What the portal shows other websites, in your browser.** When you open the portal, your browser downloads Leaflet from `unpkg.com`, tz-lookup from `cdn.jsdelivr.net`, and, as soon as the settings have loaded, map pictures for your saved location from `tile.openstreetmap.org` (`initMap()` runs right after the settings arrive, `portal.template.html`). A search in the box sends what you typed to `nominatim.openstreetmap.org`. Those servers see your browser's IP address and the map area you look at. This is your browser, not the display. Without internet the page still works: type the coordinates and choose the zone from the list. The connection test sends a plain request from the display to `api6.ipify.org` and `api64.ipify.org`, which learn your public address.
+
+**The device ID** is the board's factory network address. It is not secret, but it is unique to that board and it travels with every request, so do not post it next to your location. This repository uses `aabbccddeeff` everywhere.
+
+**The firmware manifest is public, and it carries your commit message.** The workflow writes `git log -1 --format=%s` (the subject line of the last commit) into the manifest's `notes` (at most 200 characters), and the portal shows it. So **never put anything private in a commit subject.**
+
+**Not private by design:** the portal on your network (anyone on it sees your settings), and the display's flash, which holds your Wi-Fi password and location in plain text (L9).
+
+## 6. If something goes wrong
+
+If you are unsure what to do, ask in an issue at <https://github.com/suvl/ledmatrix/issues>, and leave out every secret.
+
+### 6.1 The master secret leaked
+
+First work out what the secret gives. With it, someone can sign requests as any display and use your data service. They cannot open, change or update a display. If your service answers only on your home network, a leaked secret is of little use to anyone outside it. If your service is public, it lets strangers use it as a free relay. The service does not record who made a successful request (L7), so you cannot see from its log whether the secret was used.
+
+Then decide: **rotate** or **accept**.
+
+If you rotate:
+
+1. Make a new master secret (4.1) and back it up offline.
+2. Put it where the service reads it (the file named by `MASTER_SECRET_FILE`, or `MASTER_SECRET`) and restart the service. The file is read only at start. **From now on, every display that still has a key from the old secret is refused** (`bad_signature`). Each display's problem list says: "The service does not accept this board's key. Either the service is set up for other boards, or this board must be provisioned again over USB." (`problems.h`). The displays keep showing their last data and keep retrying every 5 minutes.
+3. **Displays whose key is not burned:** provision each one again over USB with the new secret, as in [install.md](install.md), "Provision the display". Each is accepted again at once. Check each display's problem list afterwards.
+4. **Displays whose key is burned:** their chip holds a key made from the old secret, and that can never change (L8). With the new secret they are refused for good. They still receive firmware updates (those routes are open) and still show their last data and the clock. Your options, honestly:
+   - **Accept the leak for those displays.** Keep the old secret on the service and make the service unreachable from outside: keep it on your home network, or restrict it to your own address at the proxy (most proxies can; for Caddy see the `remote_ip` matcher in its [documentation](https://caddyserver.com/docs/caddyfile/matchers#remote-ip)). Not tested here.
+   - **Run a second copy of the service** with the old secret on a different name that only your home network can reach, and point the burned displays at it in the portal's service address setting. The display signs for whatever host is saved, and the service checks against the name it was told. Not tested here.
+   - **Replace the board** with a fresh one and provision it with the new secret (a new board is not burned until you choose to burn it).
+   - **A second burn.** In principle new firmware could burn a second key into another of the six blocks (the research note `wayfinder/research/efuse-hmac-feasibility.md` says a second HMAC key can go into another free block). It is not built, not tested, and irreversible. It is a decision for the maintainer.
+
+If you accept: nothing changes on the displays; only tighten who can reach the service.
+
+### 6.2 A display was lost or stolen
+
+1. **Revoke its device ID.** Add it to `REVOKED_DEVICES` (comma-separated, 12 lowercase hexadecimal characters each) and restart the service. The exact steps for Docker Compose and for Kubernetes are in [operations.md](operations.md) ("Revoke a display, and allow it again"). A revoked display is refused with the reason `revoked` even with a correct signature (tested, 1.3). **You need the ID.** It is in the portal ("This board's ID"), in `http://ledmatrix.local/status` (the `device` field) and in the line `provision.py` printed. Write it down when you set each display up. After the restart, a refusal line `auth refused: device=<id> reason=revoked` in the service's log shows that the block works if the thief tries.
+2. **Change your Wi-Fi password.** The thief can read the saved one from the flash (L9).
+3. **Assume your location is known**, because it is saved on the display.
+4. Revoking blocks the data service only. The firmware routes stay open to everyone (1.4), and your other displays are not affected.
+5. If you get the display back, do not trust it as it is: flash firmware that you built yourself ([install.md](install.md)) before using it again, and take its ID off the list only then.
+
+### 6.3 An update notice you did not expect, or a code on the panel you did not ask for
+
+A new firmware version reaches a display only after a newer service image runs on your service ([operations.md](operations.md), "Firmware updates"). So you know when a notice should appear:
+
+- **On the public image:** only after the maintainer has published a release and you have pulled and started the new image. If a notice appears and you did not do that, or the maintainer announced nothing, do not press Update.
+- **On your own build:** only after you built and published a release ([development.md](development.md), "Releasing"). You are the maintainer.
+
+- **A "New firmware available" notice you did not expect:** do not press Update. Read the line "From: ..." under the notice. It must be your own service's name, exactly. If it is another name, someone changed the saved service address (L2): set it back in the Data service section of the portal, change your Wi-Fi password, and think about who has been on your network. If the name is yours, something is wrong with the service, your DNS or your account: do not update; check your service's manifest (`curl https://apis.example.com/v1/firmware/manifest`), your DNS records and your registrar and GitHub accounts (section 1.8).
+- **A code on the panel that you did not ask for:** someone on your network (or you, by accident) started an update. **Do not type the code anywhere.** Press Cancel in the portal's Firmware section, or wait: the code is gone after 3 minutes. If this keeps happening, someone is on your Wi-Fi: change the password.
+- **You installed something you did not intend:** the rollback only catches an image that does not work, not a hostile one. Treat the display as compromised: flash your own build over USB ([install.md](install.md)), change the Wi-Fi password, and revoke the display's ID if you cannot be sure (6.2). If the image could have read the key of a display that is not burned, treat that display's key as exposed.
+- **A code on the panel that you did ask for but the portal refuses it:** see the "If something goes wrong" notes in [operations.md](operations.md) (3 tries, 3 minutes, and the throttle).
+
+### 6.4 Someone got into the machine that runs the service
+
+That machine holds the master secret (in a file or in the service's environment, depending on how you gave it to the service) and decides which firmware your displays are offered. Stop the service. Treat the master secret as leaked (6.1). On the public image, pull it again and compare it with what the maintainer announced; on your own build, build a fresh image from a clean checkout and run that. **Do not press Update on any display until you have checked the manifest's version against the release you expect.** Look at the images and tokens on your registry and on GitHub. A display that has already installed a version you do not recognise must be flashed over USB.
+
+## 7. Reporting a vulnerability
+
+There is no private reporting channel yet and no `SECURITY.md` in the repository. (GitHub's own settings page was not checked, so private reporting may already be switched on.)
+
+**If you found a problem:** do not publish the details in a public issue. Open an issue at <https://github.com/suvl/ledmatrix/issues> that says only "I have a security report; please tell me how to send it privately", with no details, no secrets and no screenshots of your settings, and wait for an answer.
+
+**Not built or set up yet**
+
+- GitHub's private vulnerability reporting and a `SECURITY.md`. On GitHub: the repository's **Settings**, then **Advanced Security** (in the "Security and quality" section), then **Private vulnerability reporting**, then **Enable** ([GitHub: configuring private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository), read 25 Nov 2026; for the policy file see GitHub's [security policy guide](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository)).
+- A signed firmware manifest, which would close limits L2 and L3.
+- Actions pinned by commit hash and a `.github/dependabot.yml` (3.1 and Background).
+- A way to change the key of a burned display (L8).
+
+## Background: notes behind section 3
+
+These notes explain why the rows of the table in 3.2 are what they are. Nothing here needs action by itself.
+
+**The core, the TLS library and the certificate list.** The display's secure connections use mbedTLS, which is part of the arduino-esp32 core's pre-built libraries. You cannot update it separately: you update the core. The core installed here (3.3.13) reports mbedTLS 3.6.7 (`build_info.h` in the core). On 16 Nov 2026 the mbedTLS project published 3.6.8 with "fixes for security issues": its release notes list 21 advisories ([release notes](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.8)). Several concern TLS 1.3, which this core's configuration leaves switched off (`# CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 is not set` in the core's `sdkconfig`). Others name things that a display like this one does: a use-after-free in a TLS 1.2 **client** during renegotiation (the core's configuration has renegotiation on, `CONFIG_MBEDTLS_SSL_RENEGOTIATION=y`) and a type confusion in the Subject Alternative Names of a certificate that is being verified. Whether any of them can be reached on the display was not assessed. The core carries Espressif's own copy of mbedTLS, so look in the core's release notes for when a fix arrives. The release notes also say that the 3.6 line is supported until 28 March 2027. So expect the core to move to a newer mbedTLS through a newer ESP-IDF. Look at the arduino-esp32 release notes for "IDF" lines: the core's releases follow ESP-IDF's.
+
+The list of trusted certificate authorities (the CA bundle) is built into the same libraries: the full Mozilla list (`CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y`). Espressif's documentation says the list is kept up to date by periodic sync with Mozilla's ([ESP-IDF documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/api-reference/protocols/esp_crt_bundle.html), read 25 Nov 2026). In practice it can lag. The core 3.3.13 libraries were built from ESP-IDF's `release/v5.5` branch (commit a45de8c, 15 Nov 2026, from the core's `versions.txt`). The list file on that branch says in its header "Certificate data from Mozilla as of: Tue Feb 25 04:12:03 2025 GMT". The branch's history of that file shows a change on 5 Mar 2025 and then two on 22 Oct 2026 (one titled "drop the vulnerable root that cross-signs eMudhra", one "Update esp_crt_bundle certificates"); the header date did not change. ESP-IDF's development branch has a copy dated 20 Oct 2026, so the data in the core's list is about 20 months older than that newest copy. The installed core's library contains ISRG Root X1 and X2 and no ISRG Root Y roots (checked with `strings` on its `libmbedtls.a`). Three consequences:
+
+- A certificate authority that Mozilla distrusts after the core was built can stay trusted on your display until you update the core.
+- A **new root** that your CA starts to use is unknown to the display until a core that has it is released and installed. Let's Encrypt, which the example Caddyfile uses, announced new "Generation Y" roots on 24 Nov 2025 ([announcement](https://letsencrypt.org/2025/11/24/gen-y-hierarchy.html)). Its "Chains of Trust" page (updated 11 Nov 2026) lists ISRG Root YR as cross-signed by ISRG Root X1 ([page](https://letsencrypt.org/certificates/)), so a chain that ends at X1 still works for a display that has X1. [hosting.md](hosting.md), "Why an RSA key, and the certificate chain" (in its Background section), explains the chain the example setup gets. The same page says ISRG Root X1 is trusted until 4 Jun 2030: **plan to move to a newer core well before then**. The display was not tested against a Generation Y chain beyond what hosting.md reports (Not tested here). The symptom of a root the display lacks would be a certificate message in the problem list and in the connection test.
+- So: after any announcement from your CA about roots or chains, press **Test connections** in the portal and read the problem list.
+
+How often does a new core appear? From the releases page (read 25 Nov 2026): 3.3.0 on 23 Jul 2025 up to 3.3.13 on 17 Nov 2026, 14 releases in about 16 months, roughly every 1 to 2 months in 2026. The 3.3.12 notes include "Harden security and fix hangs" for the web server, which is the portal's server. That is a reason not to stay on an old core.
+
+**Base images.** The final image is distroless `static`: no shell, no package manager, only the program, the certificate authorities Go needs to call the data providers, and a few system files. That leaves little to patch, which is the point, but the certificate list and the system files still come from the Debian release of the tag. The distroless project tracks Debian's own support and lists only Debian 13 images as currently published ([README](https://github.com/GoogleContainerTools/distroless), read 25 Nov 2026; support rule in its [SUPPORT_POLICY.md](https://github.com/GoogleContainerTools/distroless/blob/main/SUPPORT_POLICY.md)). The registry's tag list gives the push dates: `static-debian12:nonroot` on 21 Aug 2026, `static-debian13:nonroot` on 22 Nov 2026. `service/Dockerfile` now uses `static-debian13:nonroot`. The tags are not pinned by digest, so each rebuild takes the newest base. That is what you want for patches, and it is why a monthly rebuild matters.
+
+**GitHub Actions.** The workflow refers to actions as `actions/checkout@v4`: a tag that the action's author can move to new code. If an action were taken over, the new code would run with this workflow's permissions (`contents: read`, `packages: write`, and the `GITHUB_TOKEN`). GitHub's secure-use guide calls a workflow dependency lockfile the strongest protection, and lists pinning every action to a full-length commit hash for repositories that cannot use one, because an attacker would then need a SHA-1 collision to slip other code in ([guide](https://docs.github.com/en/actions/reference/security/secure-use), read 25 Nov 2026; lockfiles were not tried). On 25 Nov 2026 the newest majors were: checkout v7 (the workflow uses v4), setup-go v7 (v5), cache v6 (v4), upload-artifact v7 (v4), setup-buildx-action v4 (v3), login-action v4 (v3), build-push-action v7 (v6), from each action's releases page. The workflow does use good practice elsewhere: the arduino-cli download is checked against a SHA-256, the Arduino libraries are installed at exact versions, and the image is pushed with the commit hash as a tag. To let GitHub propose updates, add a `.github/dependabot.yml` with the `github-actions`, `docker` and `gomod` ecosystems (see [Dependabot options](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference)). There is no `dependabot.yml` yet.
+
+## What was run, and what was not
+
+| What | How, and what came back |
+| --- | --- |
+| **Tested** on macOS on 25 Nov 2026 (Apple silicon, Docker 29.8.2, Compose 5.5.0) | |
+| Signature checks | The CI image for commit 1f9b6a5 under emulation, requests signed by a small script that follows `shared/device-auth.md`: no headers, wrong secret, 200 s clock skew, correct signature, revoked ID and a `PUBLIC_HOST` mismatch all answered as in 1.3 |
+| Replay | The same signed bytes sent twice, 5 s apart: both accepted (L6) |
+| Firmware manifest | Unsigned request: `200` with `version`, `file`, `size`, `sha256`, `notes` |
+| Service log | After an unsigned request with coordinates, a signed one, a wrong-key one and a manifest request: the lines quoted in section 5; the coordinates appear nowhere |
+| Start-up refusals | Nothing set, secret under 32 characters, `AUTH_OFF=1` with a secret, more than one of the three, relative path, missing file: the messages quoted in 4.1 and 4.3 |
+| `MASTER_SECRET_FILE` | An image built from `service/` of that day: a mounted file and a Compose file secret both worked and `docker inspect` held the secret 0 times; with `--env-file` it held it once. The older image with only the file variant: `MASTER_SECRET is not set` |
+| Port binding | `docker run -p 8080:8080`-style publishing listens on `0.0.0.0` and `[::]` (`docker port`) |
+| The secret recipe in `service/deploy/ledmatrix-api.yaml` | A file of 64 bytes, mode `-rw-------` |
+| Portal library hashes | Leaflet 1.9.4 and tz-lookup 11.8.0 recomputed: both match `portal/portal.template.html` |
+| Certificate dates | `openssl s_client ... \| openssl x509 -noout -dates` against a public example host printed `notBefore=` and `notAfter=` |
+| `govulncheck` | Go 1.25.14 with `govulncheck@v1.1.4`: 12 findings; Go 1.27.4 with the newest scanner: none. `go version` on the program in the CI image: `go1.25.14`; on one built from the new files: `go1.27.4` |
+| Mermaid diagram in 1.1 | Checked with a Mermaid parser: it parses |
+| **Read from the code, not run on the display** | Every statement about what the display does. The real display was not touched. The tests that were run on the real board (wrong codes refused, a crashing image rolled back on the fourth boot, an update while the key is refused) are in `shared/firmware-update.md` |
+| **Looked up on the web on 25 Nov 2026** | Release dates, versions and support rules in section 3 and Background, each with its link: GitHub releases pages, the Go release history, the distroless README and registry tags, ESP-IDF's certificate-list history, the mbedTLS 3.6.8 notes, Let's Encrypt's chains and CAA pages, GitHub's documentation, Kubernetes' release and Secret pages |
+| **Not tested here** | Linux (including the secret file's permissions); Kubernetes; Google Cloud Run; a Wi-Fi network that uses only WPA3; arduino-esp32 4.0.0 or any newer core; the TinyUF2 bootloader update; a Let's Encrypt "Generation Y" chain on the display beyond what hosting.md reports; a CAA record; an address allow-list at the proxy; a second copy of the service for burned displays; a second burn; GitHub's settings page; workflow lockfiles |

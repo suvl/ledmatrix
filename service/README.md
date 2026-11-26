@@ -15,7 +15,7 @@ cheap request instead of fetching and parsing large responses from several serve
 
 Run locally (no secret needed, nothing is checked; for your own computer only):
 `docker build -t ledmatrix-api service && docker run -e AUTH_OFF=1 -p 8080:8080 ledmatrix-api`.
-Test: `docker run --rm -v "$PWD":/src -w /src/service golang:1.25 go test ./...` (mount the whole repository: the tests read
+Test: `docker run --rm -v "$PWD":/src -w /src/service golang:1.27 go test ./...` (mount the whole repository: the tests read
 `shared/device-auth-vectors.json`).
 
 ## Authentication
@@ -30,10 +30,11 @@ Configuration (environment):
 | Variable | Meaning |
 | --- | --- |
 | `LISTEN` | listen address, default `:8080` |
-| `MASTER_SECRET` | **Required** (or `AUTH_OFF=1`). Text only you know, at least 32 characters; whitespace around it (space, tab, CR, LF) is removed. Every device key is derived from it: key = HMAC-SHA256(master secret, device ID). The service keeps no device keys, only this secret. |
+| `MASTER_SECRET` | **Exactly one of `MASTER_SECRET`, `MASTER_SECRET_FILE` and `AUTH_OFF=1` is required.** Text only you know, at least 32 characters; whitespace around it (space, tab, CR, LF) is removed. Every device key is derived from it: key = HMAC-SHA256(master secret, device ID). The service keeps no device keys, only this secret. |
+| `MASTER_SECRET_FILE` | The same secret, read from a file instead of the environment, so a Docker or Kubernetes secret mounted as a file works (for example `/run/secrets/master-secret`) and the secret never appears in the environment, `docker inspect` or `kubectl describe`. The value is the file's absolute path; the file holds only the secret (at most 4 KB; a trailing newline and other whitespace around it are removed; at least 32 characters after that). It is read once, at start: change the secret, restart the service. A missing, unreadable or oversized file, or a directory, stops the service from starting with a message that names the path and never the content. |
 | `REVOKED_DEVICES` | Optional. Comma-separated device IDs (12 lowercase hex characters, the board's MAC) that are refused with `revoked` even with a valid signature. A bad ID stops the service from starting. Remove an ID to let the device back in: nothing is ever banned for good. |
 | `PUBLIC_HOST` | Optional. The host name the display uses, for when a proxy rewrites the `Host` header. When set it is used instead of the request's `Host` in the signed text (lower case, no port). |
-| `AUTH_OFF` | `1` turns the check off, for local development only; the service logs a loud warning at start. It refuses to start if `MASTER_SECRET` is also set, and it refuses to start with neither (it never runs open by accident). |
+| `AUTH_OFF` | `1` turns the check off, for local development only; the service logs a loud warning at start. It refuses to start if `MASTER_SECRET` or `MASTER_SECRET_FILE` is also set, and it refuses to start with none of the three (it never runs open by accident); more than one of the three is also refused, because it would be ambiguous which one is meant. |
 | `LOGO_DIR` | Optional folder of `<IATA>.bin` logo files. |
 
 Make a master secret with `openssl rand -hex 32` and keep it out of the repository, tickets, logs and chat. **Back it up

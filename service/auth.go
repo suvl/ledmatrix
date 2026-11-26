@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,32 +63,15 @@ type authenticator struct {
 }
 
 // authFromEnv reads and checks the configuration. It refuses (returns an error) rather than guess:
-// no secret and no explicit AUTH_OFF=1, a secret that is too short, both at once, a bad revoked ID.
-// No message contains the value of MASTER_SECRET.
+// no secret and no explicit AUTH_OFF=1, more than one of MASTER_SECRET, MASTER_SECRET_FILE and
+// AUTH_OFF=1, a secret that is too short, a file that cannot be read, a bad revoked ID. No message
+// contains the master secret, the content of the secret file or what is in MASTER_SECRET.
 func authFromEnv(get func(string) string, logf func(string, ...any)) (*authenticator, error) {
 	au := &authenticator{now: time.Now, logf: logf}
-	rawSecret := get("MASTER_SECRET")
-	switch trimWS(get("AUTH_OFF")) {
-	case "1":
-		au.off = true
-	case "", "0":
-	default:
-		return nil, errors.New("AUTH_OFF must be 1 (local development only) or left unset")
-	}
-	if au.off && rawSecret != "" {
-		return nil, errors.New("both AUTH_OFF=1 and MASTER_SECRET are set; set only one (MASTER_SECRET for a real service, AUTH_OFF=1 for local development)")
-	}
-	if !au.off {
-		if rawSecret == "" {
-			return nil, errors.New("MASTER_SECRET is not set, so the service will not start; create one with `openssl rand -hex 32` (for local development only, set AUTH_OFF=1 instead)")
-		}
-		secret := trimWS(rawSecret)
-		if utf8.RuneCountInString(secret) < minSecretChars {
-			return nil, fmt.Errorf("MASTER_SECRET is shorter than %d characters (after removing surrounding whitespace); create one with `openssl rand -hex 32`", minSecretChars)
-		}
-		au.master = []byte(secret)
-	}
 	var err error
+	if au.off, au.master, err = masterFromEnv(get); err != nil {
+		return nil, err
+	}
 	if au.revoked, err = parseRevoked(get("REVOKED_DEVICES")); err != nil {
 		return nil, err
 	}
@@ -99,6 +85,96 @@ func authFromEnv(get func(string) string, logf func(string, ...any)) (*authentic
 		logf("WARNING: AUTH_OFF=1, request signatures are NOT checked. Use this only on your own computer, never on a service that other people can reach.")
 	}
 	return au, nil
+}
+
+const maxSecretFileBytes = 4 << 10
+
+// masterFromEnv returns the master secret (or off=true for AUTH_OFF=1). Exactly one of MASTER_SECRET,
+// MASTER_SECRET_FILE and AUTH_OFF=1 must be set. The secret is trimmed (see trimWS) and must have at
+// least minSecretChars characters, whether it comes from the environment or from the file.
+func masterFromEnv(get func(string) string) (off bool, master []byte, err error) {
+	switch trimWS(get("AUTH_OFF")) {
+	case "1":
+		off = true
+	case "", "0":
+	default:
+		return false, nil, errors.New("AUTH_OFF must be 1 (local development only) or left unset")
+	}
+	secret, file := get("MASTER_SECRET"), get("MASTER_SECRET_FILE")
+	var set []string
+	if off {
+		set = append(set, "AUTH_OFF=1")
+	}
+	if secret != "" {
+		set = append(set, "MASTER_SECRET")
+	}
+	if file != "" {
+		set = append(set, "MASTER_SECRET_FILE")
+	}
+	const one = "set exactly one of MASTER_SECRET, MASTER_SECRET_FILE or AUTH_OFF=1 (AUTH_OFF=1 is for local development only)"
+	switch len(set) {
+	case 0:
+		return false, nil, errors.New("MASTER_SECRET is not set and neither is MASTER_SECRET_FILE, so the service will not start; " + one + "; create a secret with `openssl rand -hex 32`")
+	case 2:
+		return false, nil, fmt.Errorf("both %s and %s are set; %s", set[0], set[1], one)
+	case 3:
+		return false, nil, fmt.Errorf("%s, %s and %s are all set; %s", set[0], set[1], set[2], one)
+	}
+	where := "MASTER_SECRET"
+	switch {
+	case off:
+		return true, nil, nil
+	case file != "":
+		where = "the file named by MASTER_SECRET_FILE"
+		if secret, err = readSecretFile(trimWS(file)); err != nil {
+			return false, nil, err
+		}
+	}
+	secret = trimWS(secret)
+	if utf8.RuneCountInString(secret) < minSecretChars {
+		return false, nil, fmt.Errorf("%s holds a secret shorter than %d characters (after removing surrounding whitespace); create one with `openssl rand -hex 32`", where, minSecretChars)
+	}
+	return false, []byte(secret), nil
+}
+
+// readSecretFile reads the file named by MASTER_SECRET_FILE once, at most maxSecretFileBytes. The
+// path must be absolute, which is what a mounted Docker or Kubernetes secret has; a value that is not
+// is never echoed, in case the secret itself was pasted here by mistake. Errors name the path, never the content.
+func readSecretFile(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", errors.New("MASTER_SECRET_FILE must be the absolute path of a file, such as /run/secrets/master-secret (the value is not shown)")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("MASTER_SECRET_FILE %q cannot be read: %s", path, fileProblem(err))
+	}
+	defer f.Close()
+	fi, err := f.Stat() // of what the path leads to: a mounted secret is usually a symbolic link
+	if err != nil {
+		return "", fmt.Errorf("MASTER_SECRET_FILE %q cannot be read: %s", path, fileProblem(err))
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("MASTER_SECRET_FILE %q is not a regular file", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxSecretFileBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("MASTER_SECRET_FILE %q cannot be read: %s", path, fileProblem(err))
+	}
+	if len(b) > maxSecretFileBytes {
+		return "", fmt.Errorf("MASTER_SECRET_FILE %q is larger than %d KB; it must hold only the secret", path, maxSecretFileBytes>>10)
+	}
+	return string(b), nil
+}
+
+// fileProblem names why a file could not be read without repeating the system's error text.
+func fileProblem(err error) string {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "no such file"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission denied"
+	}
+	return "an I/O error"
 }
 
 // trimWS removes the whitespace the contract names (space, tab, CR, LF) and nothing else.

@@ -1,0 +1,31 @@
+# Caddy in front of ledmatrix-api. Guide: docs/hosting.md
+{
+	# The display trusts only the certificate authorities built into its software, and its chip checks an RSA-2048 key
+	# about six times faster than an ECDSA one (about 0.4 s against 2.3 s for the first secure connection, measured on the
+	# board; see wayfinder/research/arduino-milestone.md). Caddy makes ECDSA keys unless told otherwise.
+	key_type rsa2048
+
+	# Ask Let's Encrypt only. Its RSA chain ends in ISRG Root X1, which is on the display's list. Delete this line and
+	# Caddy may also fall back to ZeroSSL, whose chain has not been checked against the display.
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+# The name the display will use, from SERVICE_HOST in .env.
+{$SERVICE_HOST} {
+	tls {
+		# The DNS challenge: Caddy proves it owns the name by adding a temporary record at your DNS provider, so this
+		# computer does not have to be reachable from the internet. "cloudflare" and the token variable belong to the
+		# Cloudflare module; another provider has its own line (see that module's page). For a public server that uses
+		# the HTTP challenge instead, delete the "dns" line.
+		dns cloudflare {env.CF_API_TOKEN}
+
+		# Ask these public resolvers when checking that the record exists. Needed when your router answers for your
+		# domain itself (split DNS), because it would not know the temporary record.
+		resolvers 1.1.1.1
+	}
+
+	# Forward everything to the service. The Host header goes through unchanged, which the display's signature needs.
+	# There is deliberately no "log" directive: a request's address carries the display's coordinates, and Caddy does not
+	# write an access log unless asked.
+	reverse_proxy api:8080
+}
