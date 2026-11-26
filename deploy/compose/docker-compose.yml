@@ -1,0 +1,99 @@
+# The LedMatrix data service (ledmatrix-api) behind Caddy, which gets and renews the HTTPS certificate by itself.
+# Guide: docs/hosting.md (read it first). This folder holds placeholders only: your own values go in a file called
+# .env next to this one (copy .env.example to .env, then run: chmod 600 .env), and the master secret goes in a file called
+# master_secret next to this one (docs/hosting.md says how to set its permissions). Never commit either.
+#
+#   docker compose up -d --build     start (the first run builds the Caddy image, which takes a minute or two)
+#   docker compose ps                what is running and whether it is healthy
+#   docker compose logs -f           watch the logs (Ctrl+C stops watching, not the service)
+#   docker compose down              stop and remove the containers (the certificate and the logos stay)
+
+name: ledmatrix
+
+services:
+  api:
+    # The public image carries the service and the matching firmware (docs/hosting.md, "The image").
+    image: ${LEDMATRIX_IMAGE:-ghcr.io/suvl/ledmatrix-api:latest}
+    # The public image exists for linux/amd64 only. This line makes Docker use it on every machine: natively on Intel/AMD,
+    # under emulation on Apple Silicon and other ARM machines (the emulation must be installed on an ARM Linux machine).
+    # If you build the image yourself for your own processor, set LEDMATRIX_PLATFORM in .env to match (docs/hosting.md).
+    platform: ${LEDMATRIX_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+    environment:
+      LISTEN: ":8080"
+      # The master secret is read from the secret file below (Docker mounts it at /run/secrets/master_secret), so it is not
+      # in the container's environment. The service refuses to start without it.
+      #
+      # To use an environment variable instead (it then shows up in "docker inspect"): delete the next line, the
+      # "secrets:" entry under this service and the "secrets:" section at the bottom, and put this line here:
+      #   MASTER_SECRET: "${MASTER_SECRET:?MASTER_SECRET is not set - put it in .env}"
+      # then add MASTER_SECRET=... to .env. Use one way, never both: the service refuses to start if both are set.
+      MASTER_SECRET_FILE: /run/secrets/master_secret
+      # Optional: comma-separated device IDs the service refuses (see docs/hosting.md). Empty means none.
+      REVOKED_DEVICES: ${REVOKED_DEVICES:-}
+      # Optional: only needed if something between the display and the service rewrites the Host header. Caddy does not.
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      LOGO_DIR: /logos
+    volumes:
+      # Your private logo folder (files named <IATA>.bin, 512 bytes each), read-only. It may be empty or missing:
+      # the service then answers "no logo" and the display draws a badge instead.
+      - ./logos:/logos:ro
+    secrets:
+      - master_secret
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  caddy:
+    # Caddy with the module for your DNS provider built in (the DNS challenge needs it). This builds the image from the
+    # three lines below the first time; DNS_MODULE (in .env) names the module. The default is the Cloudflare one.
+    build:
+      args:
+        DNS_MODULE: ${DNS_MODULE:-github.com/caddy-dns/cloudflare}
+      dockerfile_inline: |
+        FROM caddy:2-builder AS builder
+        ARG DNS_MODULE
+        RUN xcaddy build --with $${DNS_MODULE}
+        FROM caddy:2
+        COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+    image: ledmatrix-caddy:local
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "443:443"
+      # Port 80 is not needed with the DNS challenge. Open it only if you delete the "dns" line in the Caddyfile and let
+      # Caddy prove the name over HTTP instead (a public server, docs/hosting.md, path 2).
+      # - "80:80"
+    environment:
+      SERVICE_HOST: "${SERVICE_HOST:?SERVICE_HOST is not set - copy .env.example to .env and fill it in}"
+      # The DNS provider's credential. The name and the number of variables depend on the provider (see its module's page).
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and Caddy's account key live here. Keep this volume: without it Caddy asks for a new certificate
+      # on every start, and the certificate authority limits how often it will give one.
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      # Healthy when Caddy's container can reach the service's /healthz over the Compose network.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://api:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+secrets:
+  master_secret:
+    # A text file that holds only your master secret (at least 32 characters). By default it is a file called
+    # master_secret next to this one; MASTER_SECRET_PATH in .env can point elsewhere. Never commit it.
+    file: ${MASTER_SECRET_PATH:-./master_secret}
+
+volumes:
+  caddy_data:
+  caddy_config:

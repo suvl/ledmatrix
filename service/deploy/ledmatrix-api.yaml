@@ -6,10 +6,14 @@
 # Master secret (create it BEFORE deploying; the display signs every request with a key derived from it, see
 # shared/device-auth.md). Make one and keep an OFFLINE BACKUP: after the display's chip key is burned a lost master
 # secret cannot be recovered, and the display would be locked out of this service for good.
-#   (umask 077; openssl rand -hex 32 | tr -d '\n' > ~/ledmatrix-master-secret)   # 64 characters; the file stays outside the repository
-#   kubectl create secret generic ledmatrix-api --from-file=master-secret=$HOME/ledmatrix-master-secret
-# The pod does not start without that secret (the service also refuses to start without MASTER_SECRET), so the API is
-# never left open by accident. Optional settings, as plain env entries below: REVOKED_DEVICES (comma-separated device
+#   Make the secret as described in docs/install.md ("Make the master secret and back it up"; the file stays outside the
+#   repository), then:
+#   kubectl create secret generic ledmatrix-api --from-file=master-secret=$HOME/ledmatrix-secrets/master-secret
+# The pod does not start without that secret (the service also refuses to start without a master secret), so the API is
+# never left open by accident. The secret below reaches the service as an environment variable. To keep it out of the
+# environment instead, mount the same secret as a file (a secret volume plus a volumeMount, e.g. at /run/secrets) and
+# set MASTER_SECRET_FILE=/run/secrets/master-secret in place of the MASTER_SECRET entry: exactly one of the two.
+# Optional settings, as plain env entries below: REVOKED_DEVICES (comma-separated device
 # IDs the service refuses) and PUBLIC_HOST (the name the display uses, if a proxy rewrites the Host header).
 # AUTH_OFF=1 exists for running the service on your own computer; do not use it here.
 # Firmware images are part of the image (/firmware, see service/README.md): there is nothing to mount or create for them.
