@@ -26,6 +26,7 @@ struct Settings {
   int32_t altMinFt = 0;
   int32_t altMaxFt = 45000;
   char queries[5][41] = {};   // headline topics
+  uint8_t headlineEdition = 0;  // index into editions::LIST (editions.h): the Google News language and region; 0 = Portuguese (Portugal), the service's default
   char serviceHost[64] = "";  // host name of the data service (ledmatrix-api); empty = demo screens only
   char tzName[40] = "Europe/Lisbon";                // IANA name, shown in the portal
   char tzPosix[48] = "WET0WEST,M3.5.0/1,M10.5.0/2";  // the rule the clock actually uses

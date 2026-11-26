@@ -7,6 +7,7 @@
 
 #include "cycle.h"
 #include "deviceauth.h"
+#include "editions.h"
 #include "identity.h"
 #include "ota.h"
 #include "otalogic.h"
@@ -548,11 +549,15 @@ bool fetchWeather(const Settings &cfg, bool &refused) {
 bool fetchNews(const Settings &cfg, bool &refused) {
   bool anyOk = false, anyFail = false;
   static bool firstPass[5] = {true, true, true, true, true};
+  // The language and region the owner picked ("&hl=..&gl=..&ceid=.."), the same for every topic. The default edition is what the
+  // service used when the board sent nothing, so a board that never saved the setting asks for the same headlines as before.
+  char edition[96];
+  if (!editions::queryString(cfg.headlineEdition, edition, sizeof(edition))) edition[0] = 0;  // cannot happen: the longest is 55 bytes
   for (int i = 0; i < 5; i++) {
     if (!cfg.queries[i][0]) continue;
     char body[2048];
     Reply r;
-    String path = "/v1/headlines?n=3&q=" + urlEncode(cfg.queries[i]);
+    String path = "/v1/headlines?n=3&q=" + urlEncode(cfg.queries[i]) + edition;
     if (serviceGet(cfg, path, body, sizeof(body), r) < 0) { if (r.authProblem) refused = true; setError(ProblemKind::Headlines, r.error); anyFail = true; continue; }
     JsonDocument doc;
     if (deserializeJson(doc, body)) { setError(ProblemKind::Headlines, PROBLEM_RAW_UNEXPECTED); anyFail = true; continue; }
@@ -589,7 +594,8 @@ bool fetchNews(const Settings &cfg, bool &refused) {
 
 uint32_t settingsKey(const Settings &c) {
   char buf[200];
-  snprintf(buf, sizeof(buf), "%s|%d%d%d|%.4f|%.4f|%u|%d|%d", c.serviceHost, c.showFlights, c.showWeather, c.showNews, c.lat, c.lon, c.radiusKm, (int)c.altMinFt, (int)c.altMaxFt);
+  // the headline edition is in the key: another language or region refreshes the headlines at once
+  snprintf(buf, sizeof(buf), "%s|%d%d%d|%.4f|%.4f|%u|%d|%d|%u", c.serviceHost, c.showFlights, c.showWeather, c.showNews, c.lat, c.lon, c.radiusKm, (int)c.altMinFt, (int)c.altMaxFt, (unsigned)c.headlineEdition);
   uint32_t h = fnv(buf);
   for (int i = 0; i < 5; i++) h ^= fnv(c.queries[i]) + i;
   return h;

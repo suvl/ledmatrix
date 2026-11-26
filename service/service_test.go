@@ -25,6 +25,7 @@ type stub struct {
 	routeHits  atomic.Int32
 	newsHits   atomic.Int32
 	newsBody   atomic.Value // string
+	newsQuery  atomic.Value // string; the raw query of the last news request
 	aggHits    atomic.Int32
 	aggStatus  atomic.Int32 // IPMA forecast status; 200 by default
 	adsbStatus atomic.Int32
@@ -109,6 +110,7 @@ func newStub(t *testing.T) *stub {
 	})
 	mux.HandleFunc("/rss/search", func(w http.ResponseWriter, r *http.Request) {
 		s.newsHits.Add(1)
+		s.newsQuery.Store(r.URL.RawQuery)
 		w.Write([]byte(s.newsBody.Load().(string)))
 	})
 	s.srv = httptest.NewServer(mux)

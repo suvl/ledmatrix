@@ -183,6 +183,9 @@ func (a *app) routes() http.Handler {
 		if l := len([]rune(q.Q)); l < 1 || l > 80 {
 			return nil, badRequest("q must be 1 to 80 characters")
 		}
+		if err := q.validateEdition(); err != nil {
+			return nil, badRequest(err.Error())
+		}
 		var err error
 		if q.N, err = intParam(r, "n", 1, 5, 3); err != nil {
 			return nil, err
