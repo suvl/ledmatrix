@@ -149,8 +149,7 @@ setup mode, the settings portal, live data from the service, signed requests, pa
   was run.
 - Any board or panel other than the two named above.
 
-**No licence has been chosen yet.** Until one is, the author keeps all rights; these documents assume you build a
-display for yourself. Ask in an issue before sharing copies.
+**Licence:** Apache License 2.0, see [Licence](#licence) below.
 
 **Known limits** (the security ones are explained in [docs/security.md](docs/security.md)):
 
@@ -163,6 +162,25 @@ display for yourself. Ask in an issue before sharing copies.
   lives in memory.
 - After the key is burned, a lost master secret locks the display out of your service for good. Back it up offline.
 - Not every commit in the history is signed.
+
+## Licence
+
+LedMatrix is licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 João Trigo Soares (suvl); see
+[NOTICE](NOTICE).
+
+In plain words: you may use, change and share this project, including for business, as long as you keep the licence
+and the notice and say what you changed. The licence includes a patent grant and **no warranty**: you build and power
+a display at your own risk, so follow the manufacturers' guides for the electrical parts.
+
+What the licence does **not** cover:
+
+- **Other people's code.** The libraries and font data this project uses keep their own licences, listed in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **The data the service fetches.** Each source has its own terms. The aircraft data from adsb.fi is for personal,
+  non-commercial use, so using this project commercially needs your own arrangement for that data. Check the terms of
+  the weather, route and headline sources as well.
+- **Airline logos and names, and product names** such as Adafruit and Waveshare. They belong to their owners. No airline
+  logo is in this repository.
 
 ## Credits
 
