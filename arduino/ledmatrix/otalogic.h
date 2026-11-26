@@ -11,7 +11,8 @@
 //   Flow           the update state machine (idle ... probation) and which portal calls are legal in which state
 //   CheckSchedule  when the board looks for an update by itself (about 5 minutes after the clock is set, then daily)
 //   Health         the probation checklist: what must have happened within 3 minutes of a boot after an update
-//   probationStep  the boot-time decision of the rollback mechanism: on probation or not, the boot counter, "kept restarting"
+//   probationStep  the boot-time decision of the rollback mechanism: on probation or not, the boot counter (kept in NVS, carrying the image's
+//                  identity), "kept restarting"
 //   imageHeaderOk  a first look at the image header (the real validation is the ESP-IDF one, in ota.cpp)
 //   Fail, failRaw  every way an update can fail, and the raw text (problems.h) that becomes its plain sentence
 //
@@ -745,48 +746,80 @@ class Health {
 // ---- the rollback mechanism's boot-time decision ---------------------------------------------------------------------------
 // The board's bootloader does not roll back (bench test, shared/firmware-update.md), so the application does, with the OTA state record
 // it keeps itself. An image on probation (the slot's state is NEW or PENDING_VERIFY: the updater's esp_ota_set_boot_partition sets NEW; an
-// image flashed over USB is UNDEFINED and never on probation) counts its boots in RTC no-init memory, which survives a panic, a watchdog
-// reset and a software reset but not a power-on reset. More than 3 boots of the same probation: it kept crashing, go back.
+// image flashed over USB is UNDEFINED and never on probation) counts its boots, and more than 3 boots of the same probation (3 crashes or power
+// cuts) means it is not working: go back.
+//
+// The count is in NVS (ticket 47), so a power cut cannot defeat the rollback (the RTC no-init memory it used to live in is wiped by a power-on
+// reset). It exists ONLY while an image is on probation, and it carries the identity of the image it counts for, so a count left by another image
+// (a probation that ended in a way that did not clear it) never counts against a new one. Flash writes: at most one per boot on probation and one
+// to clear it, so at most 4 for one update (boots 1 to 3 write; the 4th boot rolls back without writing; the image that comes back, or the
+// image that was marked good, erases it). The pure decision is here; ota.cpp reads and writes the NVS key.
 enum class ImageState : uint8_t { Undefined, New, PendingVerify, Valid, Invalid, Aborted };
 inline bool isProbation(ImageState s) { return s == ImageState::New || s == ImageState::PendingVerify; }
 
-static const uint32_t BOOT_MAGIC = 0x4F544142u;     // "OTAB": marks the counter as one this firmware wrote
 static const uint32_t PROBATION_MAX_BOOTS = 3;
 static const char WHY_RESTART_LOOP[] = "The new version kept restarting.";
 
-// Lives in RTC no-init memory, so it has NO initialisers (a constructor would wipe it at every start) and holds garbage after a power-on
-// reset: only a record with the magic is a count.
+// What is kept in NVS (one 64-bit item: the image in the high half, the count in the low half; an absent item is "no count"). `image` is never 0.
 struct BootRecord {
-  uint32_t magic;
-  uint32_t boots;
+  uint32_t image = 0;   // which image this count is for (imageIdentity)
+  uint32_t boots = 0;   // the number of the last boot of that image on probation (1 to PROBATION_MAX_BOOTS)
 };
+inline uint64_t packBootRecord(const BootRecord &r) { return ((uint64_t)r.image << 32) | r.boots; }
+inline BootRecord unpackBootRecord(uint64_t v) {
+  BootRecord r;
+  r.image = (uint32_t)(v >> 32);
+  r.boots = (uint32_t)v;
+  return r;
+}
+
+// Who is this image? From the first bytes of the SHA-256 of the app's ELF file (esp_app_desc_t::app_elf_sha256: it changes with any change of
+// the program) and the address of the slot it runs from, so the same program in the other slot, or another program in the same slot, is a different
+// image. FNV-1a over the address (4 bytes) and the digest bytes. Never 0 (0 means "no image" in a BootRecord).
+inline uint32_t imageIdentity(const uint8_t *digest, size_t n, uint32_t slotAddress) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < 4; i++) h = (h ^ (uint8_t)(slotAddress >> (8 * i))) * 16777619u;
+  for (size_t i = 0; digest && i < n; i++) h = (h ^ digest[i]) * 16777619u;
+  return h ? h : 1;
+}
+
+// What ota.cpp found in NVS: nothing there (the normal case), a count, or an error reading it (the store could not be read at all).
+enum class CountRead : uint8_t { Missing, Found, Unreadable };
+// What to do with the NVS item after this boot's decision: leave it, write `record`, or erase it.
+enum class CountSave : uint8_t { Keep, Write, Erase };
+
 struct ProbationStep {
   bool onProbation = false;
   uint32_t boots = 0;       // this boot's number within the probation: 1 for the first
   bool rollback = false;    // more than PROBATION_MAX_BOOTS: go back now
+  CountSave save = CountSave::Keep;
+  BootRecord record;        // what to write when save is Write
 };
 
-// Called first thing in setup(). Updates the record: not on probation, it is reset (so the first boot of the next probation starts at 1,
-// whatever the old image left there); on probation, the count goes up by one, or starts at 1 when there is no valid count (a power-on reset).
-inline ProbationStep probationStep(bool onProbation, BootRecord &rec) {
+// Called first thing in setup(), with what ota.cpp read from NVS (`stored` matters only when read is Found).
+//  - Not on probation: no count may exist; one that does (a probation that ended without clearing it) is erased, so the next probation starts at 1.
+//  - On probation, the count goes up by one when it is a count of THIS image; otherwise it starts at 1: nothing was there, it is another
+//    image's, it is not a number this firmware could have written (0, or above the maximum: a count is never kept once it asks for a rollback),
+//    or NVS could not be read. A read failure never rolls back by itself: it counts as the first boot, the conservative reading.
+//  - The 4th boot rolls back and writes nothing: if the rollback cannot be done (no previous image) the 4th boot is worked out again from the
+//    count of 3 at the next restart, and the image that does come back erases the count.
+inline ProbationStep probationStep(bool onProbation, uint32_t image, CountRead read, const BootRecord &stored) {
   ProbationStep r;
   if (!onProbation) {
-    rec.magic = BOOT_MAGIC;
-    rec.boots = 0;
+    r.save = read == CountRead::Missing ? CountSave::Keep : CountSave::Erase;
     return r;
   }
-  uint32_t boots = (rec.magic == BOOT_MAGIC && rec.boots < 0xFFFFFFF0u) ? rec.boots + 1 : 1;
-  rec.magic = BOOT_MAGIC;
-  rec.boots = boots;
+  uint32_t boots = 1;
+  if (read == CountRead::Found && image != 0 && stored.image == image && stored.boots >= 1 && stored.boots <= PROBATION_MAX_BOOTS) boots = stored.boots + 1;
   r.onProbation = true;
   r.boots = boots;
   r.rollback = boots > PROBATION_MAX_BOOTS;
+  if (!r.rollback) {
+    r.save = CountSave::Write;
+    r.record.image = image;
+    r.record.boots = boots;
+  }
   return r;
-}
-// The image was marked good: the count starts again.
-inline void probationOver(BootRecord &rec) {
-  rec.magic = BOOT_MAGIC;
-  rec.boots = 0;
 }
 
 // A saved "this version failed here" record stops mattering when this image (or a newer one) is the one running.

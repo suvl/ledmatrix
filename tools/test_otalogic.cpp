@@ -1282,65 +1282,248 @@ static void testServiceReached() {
 }
 
 // ---- the rollback mechanism's boot-time decision ----------------------------------------------------------------------------
+// A stand-in for the NVS item that ota.cpp's readCount / writeCount / clearCount reach. A "restart" of the board loses everything but this
+// (RAM, RTC memory, the lot): that is the point of keeping the count in flash. `ops` counts what reaches the flash (a write of the value that
+// is already there does not, as in the real store), and a failure can be switched on for the reads or for the writes.
+struct FakeCount {
+  bool present = false;
+  uint64_t raw = 0;
+  bool failRead = false, failWrite = false;
+  int ops = 0;
+  CountRead read(BootRecord &out) const {
+    if (failRead) return CountRead::Unreadable;
+    if (!present) return CountRead::Missing;
+    out = unpackBootRecord(raw);
+    return CountRead::Found;
+  }
+  void put(uint64_t v) {
+    if (failWrite) return;
+    if (!present || raw != v) ops++;
+    present = true;
+    raw = v;
+  }
+  void erase() {
+    if (failWrite) return;
+    if (present) ops++;
+    present = false;
+    raw = 0;
+  }
+  void apply(const ProbationStep &s) {  // what probationBoot() does with the decision
+    if (s.save == CountSave::Write) put(packBootRecord(s.record));
+    else if (s.save == CountSave::Erase) erase();
+  }
+  void clear() {  // clearCount(): the image was marked good, or an update was installed (reads first: nothing there, nothing written)
+    BootRecord ignored;
+    if (read(ignored) != CountRead::Missing) erase();
+  }
+};
+// One start of the board: read the item, decide, apply.
+static ProbationStep bootOnce(FakeCount &n, bool onProbation, uint32_t image) {
+  BootRecord stored;
+  CountRead rd = n.read(stored);
+  ProbationStep s = probationStep(onProbation, image, rd, stored);
+  n.apply(s);
+  return s;
+}
+
 static void testProbationStep() {
-  SECTION("probation: the boot counter");
-  BootRecord rec;
-  // an image that is not on probation (a USB flash, a marked-good image): nothing counts, the record is reset to zero
-  rec.magic = 0xDEADBEEF; rec.boots = 77;  // garbage, as after a power-on reset
-  ProbationStep a = probationStep(false, rec);
-  CHECK(!a.onProbation && a.boots == 0 && !a.rollback);
-  CHECK(rec.magic == BOOT_MAGIC && rec.boots == 0);
-  rec.magic = BOOT_MAGIC; rec.boots = 3;  // a stale count from an old probation
-  a = probationStep(false, rec);
-  CHECK(!a.onProbation && !a.rollback && rec.boots == 0);
+  static const uint32_t X = 0x1A2B3C4Du, Y = 0x5E6F7081u;  // two images
 
-  // the first boot of an updated image: the old image left a zero count; boot 1, 2, 3 are fine, the 4th goes back
-  rec.magic = BOOT_MAGIC; rec.boots = 0;
-  for (uint32_t n = 1; n <= PROBATION_MAX_BOOTS; n++) {
-    ProbationStep p = probationStep(true, rec);
-    CHECK(p.onProbation && p.boots == n && !p.rollback && rec.boots == n && rec.magic == BOOT_MAGIC);
+  SECTION("probation: not on probation, no count is kept");
+  FakeCount none;
+  ProbationStep a = bootOnce(none, false, X);  // an ordinary start of an image that is good, or flashed over USB: nothing there, nothing written
+  CHECK(!a.onProbation && a.boots == 0 && !a.rollback && a.save == CountSave::Keep && none.ops == 0 && !none.present);
+  FakeCount left;  // a count left by a probation that ended without clearing it (a power cut after the image was marked good)
+  left.put(packBootRecord({X, 2}));
+  left.ops = 0;
+  a = bootOnce(left, false, X);
+  CHECK(!a.onProbation && !a.rollback && a.save == CountSave::Erase && !left.present && left.ops == 1);
+  FakeCount other;  // the same, left by another image
+  other.put(packBootRecord({Y, 3}));
+  a = bootOnce(other, false, X);
+  CHECK(!a.onProbation && a.save == CountSave::Erase && !other.present);
+  FakeCount broken;  // the store cannot be read at all: an erase is tried (it may work), nothing is decided
+  broken.failRead = true;
+  a = bootOnce(broken, false, X);
+  CHECK(!a.onProbation && !a.rollback && a.save == CountSave::Erase);
+
+  SECTION("probation: boots 1 to 3 are fine, the 4th goes back");
+  FakeCount n;
+  for (uint32_t k = 1; k <= PROBATION_MAX_BOOTS; k++) {
+    ProbationStep p = bootOnce(n, true, X);
+    CHECK(p.onProbation && p.boots == k && !p.rollback && p.save == CountSave::Write);
+    CHECK(p.record.image == X && p.record.boots == k);
+    CHECK(n.present && unpackBootRecord(n.raw).image == X && unpackBootRecord(n.raw).boots == k);
   }
-  ProbationStep p4 = probationStep(true, rec);
-  CHECK(p4.onProbation && p4.boots == 4 && p4.rollback);
   CHECK(PROBATION_MAX_BOOTS == 3);
-  ProbationStep p5 = probationStep(true, rec);  // still failing to go back (no previous image): keeps asking
-  CHECK(p5.rollback && p5.boots == 5);
-
-  // after a power-on reset the memory is garbage: the count starts at 1, whatever the garbage says
-  for (uint32_t garbage : {0u, 1u, 3u, 4u, 0xFFFFFFFFu, 0x12345678u}) {
-    BootRecord g;
-    g.magic = garbage; g.boots = 2;
-    ProbationStep s = probationStep(true, g);
-    CHECK(s.onProbation && s.boots == 1 && !s.rollback && g.magic == BOOT_MAGIC && g.boots == 1);
+  CHECK(n.ops == 3);
+  ProbationStep p4 = bootOnce(n, true, X);
+  CHECK(p4.onProbation && p4.boots == 4 && p4.rollback && p4.save == CountSave::Keep);  // nothing is written for the boot that goes back
+  CHECK(n.ops == 3 && unpackBootRecord(n.raw).boots == 3);
+  // the rollback cannot be done (no previous image): the next starts reach the same decision again, without writing
+  for (int k = 0; k < 5; k++) {
+    ProbationStep again = bootOnce(n, true, X);
+    CHECK(again.rollback && again.boots == 4 && again.save == CountSave::Keep);
   }
-  // a valid magic with a huge count does not wrap
-  BootRecord big;
-  big.magic = BOOT_MAGIC; big.boots = 0xFFFFFFFFu;
-  ProbationStep bs = probationStep(true, big);
-  CHECK(bs.onProbation && bs.boots == 1);  // not a count this firmware wrote: starts again
-  big.magic = BOOT_MAGIC; big.boots = 0xFFFFFFEFu;
-  bs = probationStep(true, big);
-  CHECK(bs.boots == 0xFFFFFFF0u && bs.rollback);
-  bs = probationStep(true, big);
-  CHECK(bs.boots == 1);  // at the top it starts over instead of wrapping to 0
+  CHECK(n.ops == 3);
+  // the image that does come back (valid, not on probation) finds the count and erases it
+  ProbationStep back = bootOnce(n, false, 0x0BADC0DEu);
+  CHECK(!back.onProbation && back.save == CountSave::Erase && !n.present && n.ops == 4);
 
-  // marked good: the count starts again, and the next probation is a fresh one
-  BootRecord good;
-  good.magic = BOOT_MAGIC; good.boots = 2;
-  probationOver(good);
-  CHECK(good.magic == BOOT_MAGIC && good.boots == 0);
-  CHECK(probationStep(true, good).boots == 1);
-  // a crash loop: the image restarts, counts, and on the 4th boot says so; a rollback gives a not-on-probation boot that resets
-  BootRecord loop;
-  loop.magic = 0; loop.boots = 0;
-  int rolledBackAt = 0;
-  for (int boot = 1; boot <= 6 && !rolledBackAt; boot++) {
-    ProbationStep s = probationStep(true, loop);
+  SECTION("probation: power cuts count (nothing but the stored item survives a restart)");
+  // The ticket's case: a display power-cycled during its first minutes. Each cycle is a start with nothing in RAM, and the 4th still rolls back.
+  FakeCount cuts;
+  int rolledBackAt = 0, lastBoots = 0;
+  for (int boot = 1; boot <= 12 && !rolledBackAt; boot++) {
+    ProbationStep s = bootOnce(cuts, true, X);
+    lastBoots = (int)s.boots;
     if (s.rollback) rolledBackAt = boot;
-    else if (boot == 1) { loop.magic = BOOT_MAGIC; }  // (the first boot after a power-on reset: the count is 1)
   }
-  CHECK(rolledBackAt == 4);
-  CHECK(!probationStep(false, loop).onProbation && loop.boots == 0);  // the previous image booted: reset
+  CHECK(rolledBackAt == 4 && lastBoots == 4);
+  // many cycles of a loop that is never rolled back (a board that cannot go back): the same decision, never a wrapped or growing number
+  FakeCount many;
+  for (int boot = 1; boot <= 1000; boot++) {
+    ProbationStep s = bootOnce(many, true, X);
+    CHECK(s.boots == (boot < 4 ? (uint32_t)boot : 4u) && s.rollback == (boot >= 4));
+  }
+  CHECK(unpackBootRecord(many.raw).boots == 3 && many.ops == 3);
+
+  SECTION("probation: a count of another image never counts against this one");
+  FakeCount stale;
+  stale.put(packBootRecord({X, 3}));  // the old image had used up its three boots
+  ProbationStep fresh = bootOnce(stale, true, Y);
+  CHECK(fresh.onProbation && fresh.boots == 1 && !fresh.rollback && fresh.save == CountSave::Write);
+  CHECK(unpackBootRecord(stale.raw).image == Y && unpackBootRecord(stale.raw).boots == 1);  // replaced, not added to
+  CHECK(bootOnce(stale, true, Y).boots == 2);
+  // the same program in the other slot is another image
+  static const uint8_t digest[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  uint32_t slot0 = imageIdentity(digest, 8, 0x10000), slot1 = imageIdentity(digest, 8, 0x210000);
+  CHECK(slot0 != slot1 && slot0 != 0 && slot1 != 0);
+  FakeCount slots;
+  slots.put(packBootRecord({slot0, 3}));
+  CHECK(bootOnce(slots, true, slot1).boots == 1);
+  // and another program in the same slot
+  static const uint8_t digest2[8] = {1, 2, 3, 4, 5, 6, 7, 9};
+  CHECK(imageIdentity(digest2, 8, 0x10000) != slot0);
+  // the identity is stable (the count of one boot must match at the next) and never 0
+  CHECK(imageIdentity(digest, 8, 0x10000) == slot0);
+  CHECK(imageIdentity(nullptr, 0, 0) != 0 && imageIdentity(digest, 8, 0) != 0);
+  for (uint32_t addr = 0; addr < 0x400000; addr += 0x10000) CHECK(imageIdentity(digest, 8, addr) != 0);
+  // an image of identity 0 (it cannot happen) never matches a stored count
+  FakeCount zero;
+  zero.put(packBootRecord({0, 3}));
+  CHECK(bootOnce(zero, true, 0).boots == 1);
+
+  SECTION("probation: a count this firmware could not have written is not a count");
+  for (uint32_t bad : {0u, 4u, 5u, 0xFFFFFFFFu, 0x80000000u}) {
+    FakeCount g;
+    g.put(packBootRecord({X, bad}));
+    ProbationStep s = bootOnce(g, true, X);
+    CHECK(s.onProbation && s.boots == 1 && !s.rollback && unpackBootRecord(g.raw).boots == 1);
+  }
+  CHECK(unpackBootRecord(packBootRecord({0xDEADBEEFu, 0x00000002u})).image == 0xDEADBEEFu);
+  CHECK(unpackBootRecord(packBootRecord({0xDEADBEEFu, 0x00000002u})).boots == 2);
+  CHECK(packBootRecord({1, 2}) == 0x0000000100000002ull);
+  CHECK(packBootRecord({0xFFFFFFFFu, 0xFFFFFFFFu}) == 0xFFFFFFFFFFFFFFFFull);
+
+  SECTION("probation: a store that cannot be read never rolls back by itself");
+  FakeCount rd;
+  rd.put(packBootRecord({X, 3}));  // the true count is 3: a readable store would roll back now
+  rd.failRead = true;
+  ProbationStep u = bootOnce(rd, true, X);
+  CHECK(u.onProbation && u.boots == 1 && !u.rollback && u.save == CountSave::Write);
+  // whatever the caller leaves in `stored`, it is looked at only when the read worked
+  ProbationStep ignoredCount = probationStep(true, X, CountRead::Unreadable, {X, 3});
+  CHECK(ignoredCount.boots == 1 && !ignoredCount.rollback);
+  ignoredCount = probationStep(true, X, CountRead::Missing, {X, 3});
+  CHECK(ignoredCount.boots == 1 && !ignoredCount.rollback);
+  CHECK(probationStep(true, X, CountRead::Found, {X, 3}).rollback);  // the same record, read properly: the 4th boot
+  for (int k = 0; k < 20; k++) {
+    FakeCount dead;
+    dead.failRead = dead.failWrite = true;  // nothing works at all
+    for (int boot = 0; boot <= k; boot++) {
+      ProbationStep s = bootOnce(dead, true, X);
+      CHECK(s.onProbation && s.boots == 1 && !s.rollback);
+    }
+  }
+  // a store that reads but cannot be written to: each start is counted as far as the item goes, and no rollback comes out of a count that is not there
+  FakeCount ro;
+  ro.failWrite = true;
+  for (int boot = 0; boot < 5; boot++) {
+    ProbationStep s = bootOnce(ro, true, X);
+    CHECK(s.boots == 1 && !s.rollback && !ro.present);
+  }
+  // the store comes back: counting starts from what is there
+  FakeCount back2;
+  back2.failRead = true;
+  bootOnce(back2, true, X);
+  back2.failRead = false;
+  CHECK(bootOnce(back2, true, X).boots == 2);
+
+  SECTION("probation: marked good, the count is gone and the next probation starts at 1");
+  FakeCount life;
+  CHECK(bootOnce(life, true, X).boots == 1);
+  CHECK(bootOnce(life, true, X).boots == 2);  // power cut once during the first minute
+  life.clear();                               // markGood(): the state is VALID, then the count is erased
+  CHECK(!life.present);
+  ProbationStep ordinary = bootOnce(life, false, X);  // ordinary starts afterwards cost nothing
+  int opsAfterGood = life.ops;
+  for (int k = 0; k < 50; k++) bootOnce(life, false, X);
+  CHECK(ordinary.save == CountSave::Keep && life.ops == opsAfterGood);
+  CHECK(bootOnce(life, true, Y).boots == 1);  // the next update
+  // a power cut between "the state is VALID" and the erase: the next start (not on probation) erases it
+  FakeCount cut;
+  bootOnce(cut, true, X);
+  bootOnce(cut, true, X);
+  ProbationStep afterCut = bootOnce(cut, false, X);
+  CHECK(afterCut.save == CountSave::Erase && !cut.present);
+  CHECK(bootOnce(cut, true, X).boots == 1);  // even the same image installed again starts at 1
+  // the erase in markGood fails (the store is read-only): harmless, the item is stale, and the next probation of ANOTHER image ignores it
+  FakeCount stuck;
+  bootOnce(stuck, true, X);
+  stuck.failWrite = true;
+  stuck.clear();
+  CHECK(stuck.present);
+  stuck.failWrite = false;
+  CHECK(bootOnce(stuck, true, Y).boots == 1);
+
+  SECTION("probation: an installed update clears what an earlier probation left");
+  FakeCount inst;
+  inst.put(packBootRecord({X, 3}));  // the same program again, in the same slot (an upload of the image that was rolled back)
+  inst.clear();                      // Installer::finish(), after the boot slot is switched
+  CHECK(!inst.present && bootOnce(inst, true, X).boots == 1);
+  FakeCount instNone;
+  int before = instNone.ops;
+  instNone.clear();  // the usual case: nothing there, nothing written
+  CHECK(instNone.ops == before);
+
+  SECTION("probation: flash writes, at most one per start and 4 for a whole update");
+  // a bad image: boots 1 to 3 write, the 4th rolls back, the image that comes back erases
+  FakeCount bad;
+  int worstPerBoot = 0;
+  auto boot = [&](bool on, uint32_t image) {
+    int b = bad.ops;
+    ProbationStep s = bootOnce(bad, on, image);
+    worstPerBoot = std::max(worstPerBoot, bad.ops - b);
+    return s;
+  };
+  while (!boot(true, X).rollback) {}
+  boot(false, 0x0BADC0DEu);
+  for (int k = 0; k < 20; k++) boot(false, 0x0BADC0DEu);
+  CHECK(bad.ops == 4 && worstPerBoot == 1 && !bad.present);
+  // a good image: boot 1 writes, markGood erases
+  FakeCount good;
+  bootOnce(good, true, X);
+  good.clear();
+  for (int k = 0; k < 20; k++) bootOnce(good, false, X);
+  CHECK(good.ops == 2);
+  // one that is power-cycled twice and then passes: 3 writes and the erase
+  FakeCount cycled;
+  bootOnce(cycled, true, X);
+  bootOnce(cycled, true, X);
+  bootOnce(cycled, true, X);
+  cycled.clear();
+  CHECK(cycled.ops == 4);
 
   SECTION("probation: which image states are on probation");
   CHECK(isProbation(ImageState::New));
@@ -1372,6 +1555,73 @@ static void testProbationStep() {
   // the service goes back to an older release than the one that failed: still not offered
   pv("0.10.0", pub);
   CHECK(!isOffered(run, pub, &failed));
+}
+
+// The record a rollback leaves (the version and why) becomes ONE entry in the problem list (ticket 47): ota.cpp builds the raw text with
+// problemRolledBackRaw and live.cpp words it with problemWords. Every reason the checklist can give must arrive whole.
+static void testRollbackEntry() {
+  SECTION("rollback: the problem list entry names the version and carries the reason whole");
+  std::vector<std::string> reasons;
+  {
+    Health h;
+    h.begin(0);
+    HealthInputs in = allGood();
+    in.framesOver1s = 1;
+    CHECK(h.evaluate(5 * SEC, in) == HealthVerdict::Failed);
+    reasons.push_back(h.why());
+  }
+  for (int missing = 0; missing < 4; missing++) {
+    Health h;
+    h.begin(0);
+    HealthInputs in = allGood();
+    if (missing == 0) in.wifiJoined = false;
+    if (missing == 1) in.portalAnswering = false;
+    if (missing == 2) in.framesDrawn = 0;
+    if (missing == 3) in.serviceReached = false;
+    h.evaluate(10 * SEC, in);
+    CHECK(h.evaluate(181 * SEC, in) == HealthVerdict::Failed);
+    reasons.push_back(h.why());
+  }
+  reasons.push_back(WHY_RESTART_LOOP);
+  CHECK(reasons.size() == 6);
+  for (const std::string &reason : reasons)
+    for (const char *version : {"0.10.1", "1.2.3", "9999.9999.9999"}) {
+      char raw[200], why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+      problemRolledBackRaw(version, reason.c_str(), raw, sizeof(raw));
+      CHECK(strlen(raw) < sizeof(raw) - 1);
+      problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+      CHECK(strstr(why, version) != nullptr);                     // the sentence names the version
+      CHECK(strstr(why, "went back to the previous firmware") != nullptr);
+      CHECK(why[strlen(why) - 1] == '.' && strlen(why) < sizeof(why) - 1);
+      CHECK(reason == detail);                                    // the reason is whole, not cut to the detail's size
+      for (const char *c = why; *c; c++) CHECK((unsigned char)*c >= 0x20 && (unsigned char)*c < 0x7F);
+      for (const char *c = detail; *c; c++) CHECK((unsigned char)*c >= 0x20 && (unsigned char)*c < 0x7F);
+    }
+  // the reason comes out of NVS: whatever is in there, the entry stays plain text that fits
+  std::string wild = "Bad\x03 reason\n\"quoted\" \x7F \xC3\xA9 " + std::string(300, 'z');
+  char raw[200], why[sizeof(ProblemEntry::why)], detail[sizeof(ProblemEntry::detail)];
+  problemRolledBackRaw("0.10.1", wild.c_str(), raw, sizeof(raw));
+  problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+  CHECK(strlen(raw) < sizeof(raw));  // cut to fit, terminated
+  for (const char *c = raw; *c; c++) CHECK((unsigned char)*c >= 0x20 && (unsigned char)*c < 0x7F);
+  for (const char *c = detail; *c; c++) CHECK((unsigned char)*c >= 0x20 && (unsigned char)*c < 0x7F);
+  CHECK(strlen(detail) == sizeof(detail) - 1 && strstr(why, "0.10.1") != nullptr);
+  // and a damaged record (no reason, no version) still says that it happened
+  problemRolledBackRaw("0.10.1", "", raw, sizeof(raw));
+  problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+  CHECK(strstr(why, "0.10.1") != nullptr && detail[0] == 0);
+  problemRolledBackRaw("", "The panel stalled for more than a second.", raw, sizeof(raw));
+  problemWords(raw, why, sizeof(why), detail, sizeof(detail));
+  CHECK(strstr(why, "went back to the previous firmware") != nullptr && strstr(why, "version") == nullptr);
+
+  SECTION("rollback: it is raised once, when this image is not itself on probation");
+  // (the rule lives in ota.cpp's dataTick: `!rolledNoted && !probationActive()`; the entry itself is the sentence above)
+  Version run, failed;
+  pv("0.10.0", run);
+  pv("0.10.1", failed);
+  CHECK(!failureRecordObsolete(run, failed));  // rolled back to 0.10.0: the record stays, so the entry is raised at every start
+  pv("0.10.2", run);
+  CHECK(failureRecordObsolete(run, failed));   // a newer version was installed and kept: the record is erased, nothing is raised again
 }
 
 static void testVersionTag() {
@@ -1596,6 +1846,7 @@ int main(int argc, char **argv) {
   testHealthSoak();
   testServiceReached();
   testProbationStep();
+  testRollbackEntry();
   testVersionTag();
   testChunks();
   testAnswers();
