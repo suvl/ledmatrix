@@ -1,5 +1,5 @@
 // ledmatrix-api answers the LedMatrix display in small JSON: nearby planes with their route,
-// IPMA weather, and news headlines. It exists so the display makes one cheap request instead of
+// weather (IPMA inside Portugal, Open-Meteo elsewhere), and news headlines. It exists so the display makes one cheap request instead of
 // fetching and parsing large responses from several servers.
 //
 //	GET /healthz
@@ -101,7 +101,7 @@ func (a *app) wrap(h func(*http.Request) (any, error)) http.HandlerFunc {
 			switch {
 			case errors.As(err, &ae):
 				writeJSON(w, ae.Status, map[string]string{"error": ae.Msg})
-			case errors.Is(err, errOutsideCoverage):
+			case errors.Is(err, errNoWeather):
 				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 			default:
 				log.Printf("upstream error: %v", err)

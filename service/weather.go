@@ -6,20 +6,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
 	"time"
 )
 
-// Weather turns IPMA's open data into a ~150 byte answer for the display.
+// Weather turns a weather provider's open data into a ~150 byte answer for the display. Inside
+// Portugal that is IPMA (this file); everywhere else it is Open-Meteo (worldwide.go). Which one
+// answers a location is decided in coverage.go and Get below.
+//
+// IPMA:
 //
 //	forecast: https://api.ipma.pt/public-data/forecast/aggregate/{globalIdLocal}.json
 //	          71 hourly entries (idPeriodo 1), then 3-hourly (3) and daily (24). About 36 KB.
 //	current:  https://api.ipma.pt/open-data/observation/meteorology/stations/observations.json
 //	          every station for the last 24 h, about 842 KB (74 KB gzipped).
 //
-// The data is IPMA's: it must be cited as the source wherever it is shown.
+// The data is IPMA's: it must be cited as the source wherever it is shown. Open-Meteo's must be
+// cited too (CC BY 4.0), see service/README.md.
 
 //go:embed data/distrits-islands.json
 var placesJSON []byte
@@ -42,20 +48,25 @@ type station struct {
 type Weather struct {
 	cache    *Cache
 	http     *Upstream
-	base     string
+	base     string // IPMA
+	omBase   string // Open-Meteo
 	places   []place
 	stations []station
 	now      func() time.Time
+	// maxPlaceKm: a point inside Portugal's outline is still sent to Open-Meteo when no IPMA forecast
+	// place is this close. It only guards against a wrong outline (the farthest Portuguese point
+	// from a place is Barrancos, 79 km). A field, not a constant, so a test can lower it.
+	maxPlaceKm float64
+	// maxStationKm: an IPMA observation station farther than this is not used for the current temperature.
+	maxStationKm float64
 }
 
-// maxPlaceKm is how far from an IPMA forecast city a location may be before we call it outside
-// IPMA's coverage.
-const maxPlaceKm = 150
-
-var errOutsideCoverage = errors.New("location is outside IPMA's coverage (Portugal, Madeira, Azores)")
+// errNoWeather is the only weather error that is not a 502: the provider answered, with no value at all.
+var errNoWeather = errors.New("no weather data for this location")
 
 func NewWeather(cache *Cache, up *Upstream) (*Weather, error) {
-	w := &Weather{cache: cache, http: up, base: "https://api.ipma.pt", now: time.Now}
+	w := &Weather{cache: cache, http: up, base: "https://api.ipma.pt", omBase: "https://api.open-meteo.com", now: time.Now,
+		maxPlaceKm: 100, maxStationKm: 50}
 	var pl struct {
 		Data []struct {
 			ID    int    `json:"globalIdLocal"`
@@ -215,7 +226,7 @@ type WeatherOut struct {
 	Lo   *int   `json:"lo,omitempty"`  // today's low
 	Pop  *int   `json:"pop,omitempty"` // chance of rain today, %
 	Icon string `json:"i"`             // sun | part | cloud | rain
-	Code int    `json:"code"`          // IPMA idTipoTempo for the current hour
+	Code int    `json:"code"`          // the provider's own code for the current hour (IPMA idTipoTempo, WMO code for Open-Meteo)
 	H3   *Slot  `json:"h3,omitempty"`  // in three hours
 	H6   *Slot  `json:"h6,omitempty"`  // in six hours
 	Src  string `json:"src"`
@@ -254,11 +265,24 @@ func zoneFor(lat, lon float64) *time.Location {
 
 func roundInt(v float64) *int { r := int(math.Round(v)); return &r }
 
+// Get answers the weather at a point: from IPMA inside Portugal (ipmaCovers), otherwise from
+// Open-Meteo. When IPMA fails and has nothing cached, not even a stale answer, Open-Meteo answers
+// instead of a 502: the temperature may differ by a degree or two and the place name is empty,
+// which the display handles.
 func (w *Weather) Get(ctx context.Context, lat, lon float64) (*WeatherOut, error) {
-	pl, dist := w.nearestPlace(lat, lon)
-	if dist > maxPlaceKm {
-		return nil, errOutsideCoverage
+	if w.ipmaCovers(lat, lon) {
+		out, err := w.getIPMA(ctx, lat, lon)
+		if err == nil {
+			return out, nil
+		}
+		// the error names a host and a status at most, never a URL or coordinates
+		log.Printf("weather: IPMA failed (%v), using Open-Meteo", err)
 	}
+	return w.getOpenMeteo(ctx, lat, lon)
+}
+
+func (w *Weather) getIPMA(ctx context.Context, lat, lon float64) (*WeatherOut, error) {
+	pl, _ := w.nearestPlace(lat, lon)
 	entries, err := w.forecast(ctx, pl.ID)
 	if err != nil {
 		return nil, err
@@ -329,9 +353,13 @@ func (w *Weather) Get(ctx context.Context, lat, lon float64) (*WeatherOut, error
 		}
 	}
 
-	// current temperature: the nearest station with a recent valid reading, else the forecast for this hour
+	// current temperature: the nearest station (within maxStationKm) with a recent valid reading,
+	// else the forecast for this hour
 	if obs, oerr := w.observations(ctx); oerr == nil {
 		for _, s := range w.nearestStations(lat, lon, 5) {
+			if haversineKm(lat, lon, s.Lat, s.Lon) > w.maxStationKm {
+				break // nearest first: the rest are farther
+			}
 			if rs := obs[s.ID]; len(rs) > 0 {
 				out.T, out.AsOf = roundInt(rs[0].Temp), rs[0].Hour
 				break

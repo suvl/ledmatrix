@@ -29,7 +29,7 @@ const (
 	testDevice = "aabbccddeeff"
 	testHost   = "ledmatrix.example.com"
 	testNow    = int64(1796000000)
-	weatherURI = "/v1/weather?lat=38.7&lon=-9.1"
+	weatherURI = "/v1/weather?lat=38.72&lon=-9.14" // on land: 38.7,-9.1 is in the Tagus, outside the outline, so it would go to Open-Meteo
 )
 
 type vectorFile struct {
@@ -302,7 +302,7 @@ func TestVectorRequestsAreAccepted(t *testing.T) {
 	want := []struct {
 		code int
 		body string
-	}{{200, `"planes"`}, {200, `"loc":"Lisboa"`}, {404, "no logo"}} // 404: authorised, and the logo folder is empty
+	}{{200, `"planes"`}, {200, `"src":"Open-Meteo"`}, {404, "no logo"}} // the vector's 38.7,-9.1 is in the Tagus, outside the outline; 404: authorised, and the logo folder is empty
 	for i, w := range want {
 		a.auth.now = fixedClock(v.Requests[i].Timestamp)
 		got := serve(h, vectorReq(v.Requests[i]))
