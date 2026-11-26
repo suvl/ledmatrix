@@ -15,6 +15,8 @@
 #include "net.h"
 #include "otalogic.h"
 #include "problems.h"
+#include "updatesig.h"
+#include "updatesig_mbedtls.h"
 #include "version.h"
 
 extern volatile uint32_t gFrames, gFramesOver1s;  // the render task's counters (ledmatrix.ino)
@@ -28,6 +30,11 @@ extern volatile uint32_t gFrames, gFramesOver1s;  // the render task's counters 
 // What this image says it is, for the updater of the image that comes after it (otalogic.h, VersionTagScanner). Kept in the image because
 // `version()` reads it (so the linker cannot drop it), and findable because nothing else holds this prefix followed by a version.
 extern "C" const char otaVersionTag[] __attribute__((used)) = OTA_VERSION_TAG_PREFIX FIRMWARE_VERSION "\x03";
+
+// What this image says about the signature check (updatesig.h, shared/manifest-signing.md section 4): "required" or "off" (a development build,
+// -DUPDATE_REQUIRE_SIGNATURE=0). tools/sign_manifest.py refuses an image that does not say "required". Kept in the image because signingMode()
+// reads it; this is the only copy of the whole marker. Control bytes inside: never hand a pointer into it to JSON, a header or a log.
+extern "C" const char otaSigningTag[] __attribute__((used)) = UPDATESIG_TAG;
 
 static_assert((int)ESP_CHIP_ID_ESP32S3 == (int)otalogic::CHIP_ID_ESP32S3, "otalogic.h checks the image header for this chip");
 
@@ -56,9 +63,16 @@ otalogic::Health health;
 struct Notice {
   bool have = false;      // a version newer than this one (and than any that failed here) is on offer
   otalogic::Manifest m;   // valid while `have`
+  char signedBy[otalogic::KEYID_HEX_LEN + 1] = "";  // the pinned key that verified `m` (its id); empty when nothing verified it (a development build)
   bool checked = false;   // a check has worked since boot
   int64_t checkedAtS = 0;  // esp_timer seconds of the last successful check (64 bit: it does not wrap)
 } notice;
+
+// The signed manifest (updatesig.h). `signingRefused` is the verdict of the LAST check that was refused and is cleared by the next check that is
+// not (guarded by `mu`); `pinned` holds the ids of the pinned keys, derived once in begin() (they are public; the portal shows them).
+updatesig::Sig signingRefused = updatesig::Sig::Ok;
+updatesig::PinnedIds pinned;
+bool pinnedReady = false;
 
 struct RolledBack {
   bool have = false;
@@ -314,15 +328,23 @@ void failUpdate(const Outcome &o) {
 }
 
 // A check could not be done or did not work: a sentence in `error` and, when the problem is real, in the problem list.
-void failCheck(const Outcome &o, bool listIt) {
+void failCheck(const Outcome &o, bool listIt, updatesig::Sig sig) {
   char why[160];
   plain(o.raw.c_str(), why, sizeof(why));
   if (listIt) liveNoteProblem(ProblemKind::Update, o.raw.c_str());
   lock();
   flow.setError(why);
-  if (o.fail == Fail::NoFirmware || o.fail == Fail::ManifestInvalid) notice.have = false;  // the service has nothing valid on offer now
+  // the service has nothing valid on offer now: no firmware, a broken manifest, or one that is not signed for this board (withdrawn, not just ignored)
+  if (o.fail == Fail::NoFirmware || o.fail == Fail::ManifestInvalid || updatesig::isRefusal(sig)) notice.have = false;
+  signingRefused = updatesig::isRefusal(sig) ? sig : updatesig::Sig::Ok;  // the last check that was refused; the next one that is not clears it
   unlock();
   Serial.printf("OTA check failed: %s\n", why);
+}
+
+// The manifest that is on offer, with the key that signed it (lock held). `sig` is what fetchManifest said: only Ok means a pinned key verified it.
+void setNotice(const otalogic::Manifest &m, updatesig::Sig sig) {
+  notice.m = m;
+  strlcpy(notice.signedBy, sig == updatesig::Sig::Ok ? m.keyid : "", sizeof(notice.signedBy));
 }
 
 // ---- the manifest --------------------------------------------------------------------------------------------------------
@@ -339,8 +361,14 @@ bool bufSink(const uint8_t *p, size_t len, void *ctx) {
   return true;
 }
 
-// GET /v1/firmware/manifest on the saved service host, unsigned, and every rule of the contract. No lock held.
-Outcome fetchManifest(const Settings &cfg, otalogic::Manifest &m) {
+// GET /v1/firmware/manifest on the saved service host, unsigned (the request carries no device signature: a display whose key the service refuses
+// still gets the fix), every rule of the contract, and then the signature check (shared/manifest-signing.md, section 5). The one place a manifest
+// comes from, for the check and for the download alike: a manifest that is returned here passed everything, so no path can use an unchecked one,
+// and nothing is requested from the service after it until it has. `sig` says what the signature check found: Ok (a pinned key verified it),
+// NotChecked (a development build), or the refusal when the Outcome is a failure; Ok when the manifest never got as far as that check (the
+// connection failed, a rule was broken). Runs on the data task, no lock held, so the render task never waits for it.
+Outcome fetchManifest(const Settings &cfg, otalogic::Manifest &m, updatesig::Sig &sig) {
+  sig = updatesig::Sig::Ok;
   Buf b;
   LiveStreamReply r;
   bool ok = liveHttpsStream(cfg.serviceHost, "/v1/firmware/manifest", 1024, -1, 5000, bufSink, &b, r);  // the same 5 s as the other fetches
@@ -351,6 +379,17 @@ Outcome fetchManifest(const Settings &cfg, otalogic::Manifest &m) {
   }
   otalogic::ManifestError e = otalogic::parseManifest(b.data, b.n, m);
   if (e != otalogic::ManifestError::None) return Outcome(Fail::ManifestInvalid, otalogic::manifestErrorText(e));
+
+  // The signature. No TLS connection is open now (the answer has been read), and the data task has nothing else to do while it works.
+  updatesig::MbedCrypto crypto;
+  uint32_t t0 = millis();
+  updatesig::SigResult sr = updatesig::checkManifest(updatesig::REQUIRED, m, updatesig::pinnedKeys(), crypto);
+  sig = sr.sig;
+  uint32_t took = millis() - t0;
+  if (sr.sig == updatesig::Sig::Ok) Serial.printf("OTA signature of %s checks out (key %s, %u ms)\n", m.version, sr.keyid, (unsigned)took);
+  else if (sr.sig == updatesig::Sig::NotChecked) Serial.println("OTA development build: the signature is not checked");
+  else Serial.printf("OTA signature refused (%s, %u ms)\n", updatesig::refusedName(sr.sig), (unsigned)took);  // the code only: never the signature, never the text
+  if (updatesig::isRefusal(sr.sig)) return Outcome(updatesig::failFor(sr.sig), updatesig::refusalDetail(sr.sig));
   return Outcome();
 }
 
@@ -358,16 +397,18 @@ Outcome fetchManifest(const Settings &cfg, otalogic::Manifest &m) {
 void runCheck(const Settings &cfg, uint32_t now, bool synced) {
   Outcome o;
   otalogic::Manifest m;
+  updatesig::Sig sig = updatesig::Sig::Ok;
   bool hostSaved = cfg.serviceHost[0] != 0;
   if (!hostSaved) o = Outcome(Fail::NoService);
   else if (!synced) o = Outcome(Fail::NoClock);
-  else o = fetchManifest(cfg, m);
+  else o = fetchManifest(cfg, m, sig);
 
   if (o.ok()) {
     lock();
     bool offered = runningValid && otalogic::isOffered(runningV, m.v, failedVersion());
     notice.have = offered;
-    if (offered) notice.m = m;
+    if (offered) setNotice(m, sig);
+    signingRefused = updatesig::Sig::Ok;
     notice.checked = true;
     notice.checkedAtS = esp_timer_get_time() / 1000000;
     flow.endCheck();
@@ -377,7 +418,7 @@ void runCheck(const Settings &cfg, uint32_t now, bool synced) {
     Serial.printf("OTA check: service has %s, %s\n", m.version, offered ? "newer: offered" : "not newer: nothing to offer");
   } else {
     // A missing address or clock is not a problem of the update: it only says why the check did nothing. The rest is listed.
-    failCheck(o, o.fail != Fail::NoService && o.fail != Fail::NoClock);
+    failCheck(o, o.fail != Fail::NoService && o.fail != Fail::NoClock, sig);
     lock();
     flow.endCheck();
     sched.done(now, false);
@@ -420,17 +461,22 @@ void runDownload(const Settings &cfg, bool synced) {
   if (WiFi.status() != WL_CONNECTED) { failUpdate(Outcome(Fail::DownloadFailed, "Wi-Fi is down")); return; }
   lock(); fetchingManifest = true; unlock();
   otalogic::Manifest m;
-  Outcome o = fetchManifest(cfg, m);
+  updatesig::Sig sig = updatesig::Sig::Ok;
+  Outcome o = fetchManifest(cfg, m, sig);  // the manifest that governs this download is the one just checked, never an earlier copy (contract 5.5, step 4)
   bool offered = false;
   lock();
   fetchingManifest = false;
   if (o.ok()) {
     offered = runningValid && otalogic::isOffered(runningV, m.v, failedVersion());
     notice.have = offered;
-    if (offered) notice.m = m;
+    if (offered) setNotice(m, sig);
+    signingRefused = updatesig::Sig::Ok;
     notice.checked = true;
     notice.checkedAtS = esp_timer_get_time() / 1000000;
     strlcpy(panelVersion, m.version, sizeof(panelVersion));
+  } else {
+    if (updatesig::isRefusal(sig)) notice.have = false;  // refused: the notice shown earlier is withdrawn; nothing was requested, nothing was written
+    signingRefused = updatesig::isRefusal(sig) ? sig : updatesig::Sig::Ok;
   }
   unlock();
   if (!o.ok()) { failUpdate(o); return; }
@@ -520,9 +566,11 @@ void buildJson(JsonDocument &doc, const char *note, const char *host, int http) 
     a["notes"] = notice.m.notes;
     a["size"] = notice.m.size;
     a["host"] = host;  // where the update comes from: the saved service host (the portal shows it next to the Update button)
+    updatesig::fillSignedBy(a, notice.signedBy);  // the key that verified it; null when nothing did (a development build)
   } else {
     doc["available"] = nullptr;
   }
+  updatesig::fillSigningJson(doc["signing"].to<JsonObject>(), updatesig::REQUIRED, pinned, signingRefused);  // the ids are derived in begin(): none until then
   if (notice.checked) doc["checkedAgo"] = otalogic::ageSeconds(nowS, notice.checkedAtS);
   else doc["checkedAgo"] = nullptr;
   doc["state"] = otalogic::stateName(flow.shown());
@@ -578,8 +626,29 @@ void begin() {
   if (!runningValid) Serial.println("OTA FIRMWARE_VERSION is not x.y.z: no update will be offered");
   loadSaved();
   if (probationActive()) flow.bootProbation();  // (the probation task, started by probationBoot, may already have marked it good: then not)
+  {
+    updatesig::MbedCrypto crypto;
+    updatesig::PinnedIds ids;
+    if (updatesig::derivePinnedIds(updatesig::pinnedKeys(), crypto, ids)) {
+      lock();
+      pinned = ids;
+      pinnedReady = true;
+      unlock();
+    }
+  }
   started = true;
   Serial.printf("OTA version %s%s\n", FIRMWARE_VERSION, rolled.have ? " (an update to a newer version failed here and was rolled back)" : "");
+  if (updatesig::REQUIRED) {
+    if (pinnedReady) {
+      Serial.print("OTA updates must be signed; accepted keys:");
+      for (size_t i = 0; i < pinned.count; i++) Serial.printf(" %s", pinned.id[i]);  // key ids are public
+      Serial.println();
+    } else {
+      Serial.println("OTA updates must be signed, but the pinned keys could not be read: no update can be accepted");
+    }
+  } else {
+    Serial.println("OTA DEVELOPMENT BUILD: updates are installed without checking a signature");
+  }
 }
 
 // FIRMWARE_VERSION as plain text (for /status). The read of the marker is what keeps the marker in the linked image; the marker
@@ -587,6 +656,13 @@ void begin() {
 const char *version() {
   (void)*(volatile const char *)otaVersionTag;
   return FIRMWARE_VERSION;
+}
+
+// "required" or "off", for /status. The read of the marker is what keeps it in the linked image (the sign tool looks for it there); the marker itself
+// is never returned: it holds control bytes.
+const char *signingMode() {
+  (void)*(volatile const char *)otaSigningTag;
+  return updatesig::modeName();
 }
 
 bool flashing() {
