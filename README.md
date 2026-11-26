@@ -15,7 +15,7 @@ weather and headline data, and the settings page (the [portal](docs/glossary.md#
 >
 > **Weather and headlines:** weather works anywhere: IPMA, the Portuguese weather service, inside Portugal and
 > Open-Meteo everywhere else. Headlines come from Google News in one of 12 language and region editions (the default is
-> Portuguese (Portugal)), and your topic words can be in any language. Planes work anywhere.
+> Portuguese (Portugal)), and topics work best in the language of the edition you pick. Planes work anywhere.
 
 ![Six example screens: a flight card, the weather now, a forecast for now and the next six hours, a news headline, a clock and an idle radar](docs/images/preview.png)
 
@@ -183,9 +183,9 @@ setup mode, the settings portal, live data from the service, signed requests, pa
 
 **Known limits** (the security ones are explained in [docs/security.md](docs/security.md)):
 
-- Outside Portugal the weather is coarser: drizzle, snow, sleet, storms and hail all show as the rain icon, because
-  there is no snow icon yet. The panel's fonts have no accented letters, so accents and curly quotes in headlines show
-  as odd marks or are dropped.
+- The weather screens have four icons; drizzle, snow, sleet, storms and hail show as rain everywhere. Outside Portugal
+  the position is rounded to about 11 km and layout B shows WEATHER instead of a place name. The panel's fonts have no
+  accented letters, so accents and curly quotes in headlines show as odd marks or are dropped.
 - The portal uses plain HTTP, on your home network, with no password. A web page in a browser cannot change the
   display's settings (the display refuses requests from other sites), but anyone on your network who sends the
   commands directly can.

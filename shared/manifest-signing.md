@@ -19,7 +19,7 @@ The maintainer's CI signs the firmware manifest (version, file name, size, SHA-2
 | Rotation, loss, leak | Swap the spare into CI, release a version that pins the spare and a fresh spare; no flag day. Both lost: USB flash |
 | Own builds | Replace `update_keys.h` and sign with your own key; `-DUPDATE_REQUIRE_SIGNATURE=0` (development builds only) switches enforcement off |
 | Downgrade, replay | Only a strictly newer version than the running one (and than any version that rolled back) is offered. No `expires`, no stored floor |
-| Bootstrap | 0.10.x boards ignore the new fields and install the first signed release from an unsigned check, once. From then on enforcement is on |
+| Bootstrap | 0.10.x boards ignore the new fields and install the first signing release (0.11.0) from an unsigned check, once. From then on enforcement is on. 0.11.0 itself was published unsigned (the transition flag `REQUIRE_SIGNING` is "0" until the repository secret exists), so the first SIGNED release is the one after it |
 | `.bin` upload | Still code-only (6-digit panel code). It cannot be signed. Residual risk, section 10 |
 | Fail-safe | A refusal is soft (nothing written, nothing rebooted), says why in plain words, and never affects the data side. Manifest and download stay public |
 
@@ -109,7 +109,7 @@ The check runs in `fetchManifest()` of `ota.cpp`, after the existing manifest ru
 1. The existing rules (`parseManifest`): the five fields, plus the one new rule that **notes hold no control character** (a manifest that breaks it is `ManifestInvalid`, as for any other broken field).
 2. `UPDATE_REQUIRE_SIGNATURE` is 0: the signature fields are ignored, the result is `NotChecked`, the update goes on, and the portal says so (5.3). Nothing below runs.
 3. Shape: `keyid` and `sig` both absent -> `Unsigned`. Exactly one present, or either not an 8 / 128 lowercase hex string -> `Malformed`.
-4. Key: derive the ids of the pinned keys; none equals `keyid` -> `UnknownKey` (no crypto has run: the cheap refusals come first).
+4. Key: derive the ids of the pinned keys; none equals `keyid` -> `UnknownKey` (no signature verification has run: the cheap refusals come first; hashing the pinned public keys to get their ids is the only cryptography so far).
 5. Build the canonical bytes from the parsed values, hash them (SHA-256, hardware), verify with the pinned key whose id matches (try each match; at most 2): valid -> `Ok(keyid)`; the library says "invalid signature" (any reason: wrong key, a flipped bit, other fields, `r` or `s` out of range) -> `BadSignature`; the library could not run (out of memory, an internal error) -> `CheckFailed`. The verify function is three-valued on purpose: running out of memory must not be reported as an attack, or an attack as a fault.
 6. Only an `Ok` or `NotChecked` manifest goes on to `isOffered` (strictly newer, not a failed version).
 
@@ -142,14 +142,14 @@ The check runs in `fetchManifest()` of `ota.cpp`, after the existing manifest ru
 - `/status` gains `"updateSigning":"required"` or `"off"`.
 - No signature, key bytes or canonical text is ever returned, logged or printed by the board; the portal shows key ids only. (They are public, but one rule is easier to keep than three.)
 - Portal text (exact): under the Firmware heading, `Updates must be signed. Accepted keys: f864ea3b, db10c343.`; in a development build `Development build: updates are installed without checking a signature.`; under the version in the notice `Signed with key f864ea3b.` (development build: `Signature not checked (development build).`); when `refused` is set, a warning box titled `An update was refused` with the `error` sentence. The existing "From: <host>" line stays.
-- The panel shows nothing new: a refused update never gets as far as the code screen, and no panel message is added for it.
+- The panel shows nothing new and no panel message is added for a refusal. A refusal at the daily or Check-now check never gets as far as the code screen; a refusal when a download starts (the board fetches the manifest again and checks it again after the code was typed) comes after the code screen.
 
 ### 5.4 Resources
 
 - Where: the data task (16 KB stack, `live.cpp`), core 0; the render task is on core 1 and is not involved. The 5-second fetch timeouts do not include the verification.
-- Time: software ECDSA on the S3 (it has no ECC accelerator): estimated 70 to 400 ms at 240 MHz (published figures for other stacks go from 66 ms to 900 ms; the compile-only proof cannot measure). Budget: up to 2 s without harm (core 0 shares only the portal's task and the Wi-Fi tasks; the idle task's 5 s watchdog is not reached). **The lead measures it** (bench plan in the design note).
+- Time: software ECDSA on the S3 (it has no ECC accelerator): estimated 70 to 400 ms at 240 MHz (published figures for other stacks go from 66 ms to 900 ms; the compile-only proof cannot measure). Budget: up to 2 s without harm (core 0 shares only the portal's task and the Wi-Fi tasks; the idle task's 5 s watchdog is not reached). Not measured on a board yet (the measurement sketch and bench plan are in the design note).
 - Stack: the check needs about 1.1 KB (the manifest) plus 1 KB (canonical bytes) plus about 2 KB inside mbedTLS, on a task whose TLS handshake already runs the same `mbedtls_ecdsa_verify` through certificate checks. Heap: a few KB, freed before the function returns, and no TLS connection is open at that moment (the manifest download has ended).
-- At most 2 verifications per manifest, 1 or 2 manifests per update, 1 daily check plus presses of "Check now". Cheap refusals (steps 3 and 4) cost no crypto.
+- At most 2 verifications per manifest, 1 or 2 manifests per update, 1 daily check plus presses of "Check now". Cheap refusals (steps 3 and 4) run no signature verification.
 - Flash: the verification adds about 0.5 KB to the real firmware (measured by compile: 1,479,333 to 1,479,873 bytes, RAM unchanged), because the TLS code already links all of mbedTLS's P-256 verification.
 - The reference verification (compiles and links for `esp32:esp32:adafruit_matrixportal_esp32s3`, and gives the right answers for all vectors with mbedTLS 3.6.8 on a laptop) is the function `p256Verify` quoted in the design note. It uses only `mbedtls_ecp_group_load`, `mbedtls_ecp_point_read_binary`, `mbedtls_ecp_check_pubkey`, `mbedtls_mpi_read_binary`, `mbedtls_ecdsa_verify` and `mbedtls_md`.
 
@@ -203,7 +203,7 @@ The image is built in one job. The new steps sit **after** "Write the manifest a
 - A manifest signed by a key that the previous release did not pin cannot be installed by the displays that run it. The tool cannot know the previous release's keys; the rotation procedure (section 9) keeps one key in common between consecutive releases, and the test bench checks it.
 
 `tools/gen_signing_key.py --out DIR --names A B` creates the keys (it runs `openssl ecparam -name prime256v1 -genkey -noout`; nothing is printed that is secret):
-- per name, `DIR/ledmatrix-update-<name>.pem` (mode 0600) and `DIR/ledmatrix-update-<name>.github-secret.txt` (mode 0600, the PEM as one base64 line, the value for `gh secret set UPDATE_SIGNING_KEY < file`);
+- per name, four files, each mode 0600: `DIR/ledmatrix-update-<name>.pem` (the private key), `.pub.pem` and `.pub.hex` (the public key) and `.github-secret.txt` (the PEM as one base64 line, the value for `gh secret set UPDATE_SIGNING_KEY < file`);
 - it prints, per name, the key id and the `#define UPDATE_KEY_n "04..."` line to paste into `update_keys.h`;
 - it refuses an output folder inside a git work tree, refuses to overwrite a file, and reminds the owner of the backup rule (section 8).
 - The same by hand: `openssl ecparam -name prime256v1 -genkey -noout -out key.pem`; the public key: `openssl ec -in key.pem -pubout -outform DER | tail -c 65 | xxd -p -c 130`; the key id: `openssl ec -in key.pem -pubout -outform DER | tail -c 65 | shasum -a 256 | cut -c1-8` (all three were run on the Mac's LibreSSL and give the same answers as the vectors' key A).
@@ -245,7 +245,7 @@ The key ids appear in `/api/update`, so the owner can see which keys a display t
 
 ## 11. The bootstrap
 
-0.10.x boards (no key, no check) read the new manifest with their existing parser: the two extra fields are ignored. So the first signed release (0.11.0) is offered by the same manifest, installed through the unsigned check **once**, and from 0.11.0 on the board enforces. What is needed before that release is built: both public keys pasted into `update_keys.h` (the build fails without them), the secret set in GitHub, the offline copies made. The owner's own display can skip the one-time trust entirely by flashing 0.11.0 over USB. The signed path is then proved by the next release (0.11.1, any change).
+0.10.x boards (no key, no check) read the new manifest with their existing parser: the two extra fields are ignored. So the first release with the check (0.11.0) is offered by the same manifest, installed through the unsigned check **once**, and from 0.11.0 on the board enforces. In practice 0.11.0 was published UNSIGNED, because the repository secret did not exist yet and `REQUIRE_SIGNING` was "0" (section 7); displays that enforce refuse the releases after it until the maintainer sets the secret and flips the flag. What is needed before that release is built: both public keys pasted into `update_keys.h` (the build fails without them), the secret set in GitHub, the offline copies made. The owner's own display can skip the one-time trust entirely by flashing 0.11.0 over USB. The signed path is then proved by the next release (0.11.1, any change).
 
 ## 12. Constraints
 

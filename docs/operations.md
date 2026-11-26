@@ -369,7 +369,7 @@ The shape (placeholder values):
 
 ```json
 {
-  "version": "0.10.1",
+  "version": "0.11.0",
   "ssid": "Example Home Wi-Fi",
   "ip": "192.0.2.10",
   "ip6_link_local": "fe80::1",
@@ -462,11 +462,11 @@ Nothing here is required by the display. It is a suggestion for keeping a small 
 
 **Public image or your own build?** If you run the public image, an update reaches your display only after two things: the maintainer publishes a release, and you update your service to the image that carries it (see "Update the service itself"). A notice you did not expect, when you have not just updated your service, is a reason to read the `From:` line twice. If you run your own build, no updates arrive unless you publish them yourself (see "For the maintainer: publish a firmware release"). A display built with its own keys accepts only updates signed with its own key, so it refuses the public image's firmware (see "Signed updates"). You can always flash a display over USB (see "The USB recovery").
 
-**Signed updates.** A display installs an update from the service only when the manifest it has just fetched carries a valid [signature](glossary.md#signature) by one of the [public keys](glossary.md#public-key) built into its firmware. On the public build these are the maintainer's two keys, with the [key ids](glossary.md#key-id) `eb6a67ad` (current) and `dfcb5742` (spare). The check is the first thing done, before anything is downloaded. After the download, the image's [SHA-256](glossary.md#sha-256), size and version must equal the signed ones. So a changed service address, a doctored service image or a hijacked name no longer gets anything installed except a genuine, signed release. The portal's "Firmware" section says `Updates must be signed. Accepted keys: eb6a67ad, dfcb5742.` and the update notice says `Signed with key eb6a67ad.` A refusal is soft: nothing is downloaded, written or restarted, and it is explained in plain words (see "Reading the Problems section").
+**Signed updates.** A display installs an update from the service only when the manifest it has just fetched carries a valid [signature](glossary.md#signature) by one of the [public keys](glossary.md#public-key) built into its firmware. On the public build these are the maintainer's two keys, with the [key ids](glossary.md#key-id) `eb6a67ad` (current) and `dfcb5742` (spare). The check is the first thing done, before anything is downloaded, and it is done again on a fresh copy of the manifest after you type the update code. After the download, the image's [SHA-256](glossary.md#sha-256), size and version must equal the signed ones. So a changed service address, a doctored service image or a hijacked name no longer gets anything installed except a genuine, signed release. The portal's "Firmware" section says `Updates must be signed. Accepted keys: eb6a67ad, dfcb5742.` and the update notice says `Signed with key eb6a67ad.` A refusal is soft: nothing is downloaded, written or restarted, and it is explained in plain words (see "Reading the Problems section").
 
-Which displays check: only those that run a version with the check. A display still on a version from before it (0.10.x) does not verify anything. It installs the first release that has the check once, from an unsigned check (that release may even be unsigned while the maintainer's signing key is being put in place), and from then on it enforces. The forced `.bin` upload cannot be signed (there is no manifest) and stays behind the panel code. A development build (`-DUPDATE_REQUIRE_SIGNATURE=0`, for experiments on your own desk) checks nothing: the portal says `Development build: updates are installed without checking a signature.`, the notice says `Signature not checked (development build).` and `/status` shows `"updateSigning":"off"`.
+Which displays check: only those that run a version with the check. A display still on a version from before it (0.10.x) does not verify anything. It installs the first release that has the check, 0.11.0, once, from an unsigned check: 0.11.0 was published without a signature, while the maintainer's signing key was being put in place. From then on the display enforces, so the release after 0.11.0 must be signed. The forced `.bin` upload cannot be signed (there is no manifest) and stays behind the panel code. A development build (`-DUPDATE_REQUIRE_SIGNATURE=0`, for experiments on your own desk) checks nothing: the portal says `Development build: updates are installed without checking a signature.`, the notice says `Signature not checked (development build).` and `/status` shows `"updateSigning":"off"`.
 
-(**Checked in the code**: `updatesig.h`, `ota.cpp`; the contract is [`shared/manifest-signing.md`](../shared/manifest-signing.md), which also explains why ECDSA on the P-256 curve was chosen. **Not tested here**: on a real board. No display has run the check yet, and the first signed release is not published yet.)
+(**Checked in the code**: `updatesig.h`, `ota.cpp`; the contract is [`shared/manifest-signing.md`](../shared/manifest-signing.md), which also explains why ECDSA on the P-256 curve was chosen. **Not tested here**: on a real board; nothing in this section is claimed as verified on a display. 0.11.0 is the first release with the check and is unsigned; the first signed release is not published yet.)
 
 ```mermaid
 flowchart TD
@@ -484,7 +484,7 @@ flowchart TD
 
 **Before you start.** Stand where you can see the panel and the portal. Do not start while the display is still checking an earlier update (the portal says so and the buttons are greyed out).
 
-1. **Open the portal and find the notice.** If a newer version exists you see two things: an amber banner at the top, `New firmware 0.10.2 is available. See Firmware below.`, and in the "Firmware" section a highlighted box titled `New firmware available` with the version and its size, the key that signed it (`Signed with key eb6a67ad.`), the first lines of the release notes, and an amber **Update** button.
+1. **Open the portal and find the notice.** If a newer version exists you see two things: an amber banner at the top, `New firmware 0.11.1 is available. See Firmware below.`, and in the "Firmware" section a highlighted box titled `New firmware available` with the version and its size, the key that signed it (`Signed with key eb6a67ad.`), the first lines of the release notes, and an amber **Update** button.
 
    If you see neither, press **Check now**. The line says `Checking for a new version…` and then either shows the box or says `Checked just now. You have the newest version.`
 
@@ -498,13 +498,13 @@ flowchart TD
    - After three wrong tries the code is gone. Starting again is blocked for 60 seconds, then 120, doubling up to an hour. A correct code resets that. The portal says `Too many wrong codes. Wait 60 seconds, then press Update.`
    - **Cancel** drops the code. It is refused while an image is being installed.
 
-5. **Watch the progress.** The panel shows `UPDATE`, a percentage, the new version (`v0.10.2`), a status word and a bar. The status word is first `Checking` (the display reads the manifest again), then `Downloading`. The portal shows `Downloading version 0.10.2: 512 of 1380 KB (37 %)`. The display goes on drawing and the portal keeps answering during the download. Before anything is requested, the display checks the signature of the manifest. Before anything is switched, it checks the size, the SHA-256 checksum against the manifest, that the file is a valid image for this chip, and that it says it is the version the manifest announced. Anything wrong: nothing changes, the running version stays, and a plain sentence goes into the problem list.
+5. **Watch the progress.** The panel shows `UPDATE`, a percentage, the new version (`v0.11.1`), a status word and a bar. The status word is first `Checking` (the display reads the manifest again), then `Downloading`. The portal shows `Downloading version 0.11.1: 512 of 1380 KB (37 %)`. The display goes on drawing and the portal keeps answering during the download. Before anything is requested, the display checks the signature of the manifest. Before anything is switched, it checks the size, the SHA-256 checksum against the manifest, that the file is a valid image for this chip, and that it says it is the version the manifest announced. Anything wrong: nothing changes, the running version stays, and a plain sentence goes into the problem list.
 
-6. **Installing and restarting.** The panel shows `Installing` at 100 %, then `Restarting`. The portal says `Installing version 0.10.2. Do not unplug the display.` and then `The display is restarting. This page reconnects by itself.` **Do not unplug the display while it installs.** The panel goes dark for a moment, shows the boot screen (`ledmatrix`, `connecting...`), then `WIFI OK`, then its normal pictures.
+6. **Installing and restarting.** The panel shows `Installing` at 100 %, then `Restarting`. The portal says `Installing version 0.11.1. Do not unplug the display.` and then `The display is restarting. This page reconnects by itself.` **Do not unplug the display while it installs.** The panel goes dark for a moment, shows the boot screen (`ledmatrix`, `connecting...`), then `WIFI OK`, then its normal pictures.
 
-7. **The start-up check.** When the portal reconnects it first says `Done: the display now runs version 0.10.2. It is on probation: ...`. The new version starts "on [probation](glossary.md#probation)". The "Firmware" section then says: `The display is still checking the new firmware. This takes a few minutes. It checks that Wi-Fi, this page and the data service work, and if they do not within 3 minutes it goes back to the previous version by itself.` During this time you cannot start another update or upload (the buttons are greyed out; the display answers `The new firmware is still being checked; try again in a few minutes.`). The check is described below. Leave the display alone until it has passed: a restart or a power cut during these minutes counts against the new version (see "Rollback").
+7. **The start-up check.** When the portal reconnects it first says `Done: the display now runs version 0.11.1. It is on probation: ...`. The new version starts "on [probation](glossary.md#probation)". The "Firmware" section then says: `The display is still checking the new firmware. This takes a few minutes. It checks that Wi-Fi, this page and the data service work, and if they do not within 3 minutes it goes back to the previous version by itself.` During this time you cannot start another update or upload (the buttons are greyed out; the display answers `The new firmware is still being checked; try again in a few minutes.`). The check is described below. Leave the display alone until it has passed: a restart or a power cut during these minutes counts against the new version (see "Rollback").
 
-8. **Done.** When the check passes, the portal says `Version 0.10.2 is running on this display.` and `Checked ... You have the newest version.` Open `/status` and confirm `"version":"0.10.2"`.
+8. **Done.** When the check passes, the portal says `Version 0.11.1 is running on this display.` and `Checked ... You have the newest version.` Open `/status` and confirm `"version":"0.11.1"`.
 
 **If something goes wrong.** The portal shows a red box with the reason in plain words, and the same sentence goes into the Problems section. The running version is never changed by a failed update. See "Reading the Problems section" for each sentence. If nothing seems to happen after you confirm, wait a minute: the download runs at a gentle pace on purpose, so the display never stalls.
 
@@ -530,7 +530,7 @@ The board's bootloader (Adafruit's prebuilt TinyUF2) does not roll back by itsel
 **What you see.** The display restarts (more than once, if it was crashing) and comes back on the *previous* version. In the portal, the "Firmware" section shows a red box:
 
 ```
-Version 0.10.2 failed on this display and was rolled back: The service did not answer within 3 minutes of starting.
+Version 0.11.1 failed on this display and was rolled back: The service did not answer within 3 minutes of starting.
 ```
 
 and the version line shows the old version. The reason is one of these sentences:
@@ -544,7 +544,7 @@ and the version line shows the old version. The reason is one of these sentences
 | `The panel stalled for more than a second.` | The new version broke the display's one-second rule. Faulty release. |
 | `The new version kept restarting.` | It crashed more than 3 times. Faulty release. |
 
-Where it is recorded, in two places. The **Firmware** section shows the red box above, kept from a record in the board's flash, so it is still there after later restarts. The **Problems** section lists the rollback too: a row of kind `update check`, with the sentence `The new firmware (version 0.10.2) did not pass its start-up check, so the board went back to the previous firmware.` and, in grey under it, the reason (for example `The new version kept restarting.`). That row is added once after each start, shortly after the display joins Wi-Fi, and again at every start for as long as the failure record exists. It goes away when a newer version is installed and passes its check. If the running version is itself on probation, the row is added only after it has passed. It is a note for you to read, not data that is failing, so it does **not** make the panel show its `PROBLEM` message. A crash-on-start update showed exactly this row after its rollback on the 4th start and did not trigger the panel message (**Verified on the author's own display on 26 November 2026**).
+Where it is recorded, in two places. The **Firmware** section shows the red box above, kept from a record in the board's flash, so it is still there after later restarts. The **Problems** section lists the rollback too: a row of kind `update check`, with the sentence `The new firmware (version 0.11.1) did not pass its start-up check, so the board went back to the previous firmware.` and, in grey under it, the reason (for example `The new version kept restarting.`). That row is added once after each start, shortly after the display joins Wi-Fi, and again at every start for as long as the failure record exists. It goes away when a newer version is installed and passes its check. If the running version is itself on probation, the row is added only after it has passed. It is a note for you to read, not data that is failing, so it does **not** make the panel show its `PROBLEM` message. A crash-on-start update showed exactly this row after its rollback on the 4th start and did not trigger the panel message (**Verified on the author's own display on 26 November 2026**).
 
 **What happens next.** The failed version, and every older one, is not offered again until a *newer* version exists. The record is cleared when a newer version installs and passes its own check, or when you flash that version or a newer one over USB.
 
@@ -654,7 +654,7 @@ The line under "Data service" (`Last problem: ...`) shows the technical text of 
 | `The service refused the request (HTTP 401) without a reason this device knows. Check the service address.` (also for 403) | A refusal that is not one of the five known reasons: an older service, or something in front of it. | Check the address and any proxy or access layer in front of the service. |
 | `The address answered, but it is not the data service (HTTP 404). Check the service address.` | The address leads to some other server. | Correct the address. |
 | `The service is limiting requests (HTTP 429). It should recover by itself.` | The service or a proxy is slowing the display down. | Wait. |
-| `The service, or the server in front of it, is down or had an error (HTTP 502).` (any 5xx) | The service or its proxy failed. On `weather`, 502 means the weather sources are not answering. | Look at the service's log and restart it if needed. For weather, the service needs outbound HTTPS to `api.open-meteo.com` (and to IPMA's server for Portugal): check that nothing blocks it. |
+| `The service, or the server in front of it, is down or had an error (HTTP 502).` (any 5xx) | The service or its proxy failed. On `weather`, 502 means the weather provider did not answer. | Look at the service's log and restart it if needed. For weather, the service needs outbound HTTPS to `api.open-meteo.com` (and to IPMA's server for Portugal): check that nothing blocks it. |
 | `The service answered with an unexpected status (HTTP 422).` | Any other status. 422 on `weather` means no weather source had any value for your location (`no weather data for this location`): this almost never happens. | For 422: check the location on the map. Otherwise look at the service's log. |
 
 **The service refuses the board's key**
@@ -711,11 +711,13 @@ These come from the service's 401 answer. The section "The service refuses the k
 | `Writing the new firmware to the board's memory failed. The board keeps running the current firmware.` | A flash write failed. | Try again. If it repeats, use the USB recovery. |
 | `The update was refused: the code was typed wrong three times. Starting again is blocked for a while.` | The 3 tries were used up. | Wait as the portal says, then press Update again. |
 | `The update was refused: the code on the panel ran out of time. Start again if you still want to update.` | 3 minutes passed. | Press Update again. |
-| `The new firmware (version 0.10.2) did not pass its start-up check, so the board went back to the previous firmware.` | A rollback happened. The version is the one that failed, and the grey text under the sentence is the reason. It comes back at every start until a newer version is installed, and it never triggers the panel's `PROBLEM` message. | See "Rollback". |
+| `The new firmware (version 0.11.1) did not pass its start-up check, so the board went back to the previous firmware.` | A rollback happened. The version is the one that failed, and the grey text under the sentence is the reason. It comes back at every start until a newer version is installed, and it never triggers the panel's `PROBLEM` message. | See "Rollback". |
 | `The new firmware failed its start-up check, but there is no previous firmware to go back to, so it keeps running.` | A rollback was wanted and was not possible. | The display keeps running. Open a GitHub issue and plan a USB re-flash. |
 | `The new firmware passed its start-up check, but the board could not record that, so it may go back after a few restarts.` | The board could not write the "good" mark. | It tries again at every start. Unplug and plug in once and wait 3 minutes. If it repeats, open a GitHub issue. |
 
-**Where the signature refusals show.** In the Problems section, as `update check` rows (the sentence, and in grey the technical text). In the portal, in the red box `An update was refused`, with the sentence. In `/api/update`, as `signing.refused` (`unsigned`, `malformed`, `unknown_key`, `bad_signature` or `check_failed`). On the serial line `OTA signature refused (<code>, N ms)`. Never on the panel: they never reach the code screen, and they never make the panel show its `PROBLEM` message, because the checks are an hour apart. A notice shown earlier is withdrawn. All of them are soft: nothing is downloaded, written or restarted, the data side is untouched, and the next check tries again (an hour after a failed one). (**Checked in the code**: `ota.cpp`, `problems.h`; **Not tested here**: on a real board.)
+**Where the signature refusals show.** In the Problems section, as `update check` rows (the sentence, and in grey the technical text). In the portal, in the red box `An update was refused`, with the sentence. In `/api/update`, as `signing.refused` (`unsigned`, `malformed`, `unknown_key`, `bad_signature` or `check_failed`). On the serial line `OTA signature refused (<code>, N ms)`. Never as a panel message: they never make the panel show its `PROBLEM` message, because the checks are an hour apart. A notice shown earlier is withdrawn.
+
+When the refusal comes depends on which check finds it. At the daily check, or at **Check now**, it comes first: no code screen, nothing downloaded. After you press **Update** and type the code, the display fetches the manifest again and checks the signature again, so a refusal at that point comes after the code screen: the panel shows `Checking` for a moment and returns to its normal picture. Either way the refusal is soft: nothing is downloaded, written or restarted, the data side is untouched, and the next check tries again (an hour after a failed one). (**Checked in the code**: `ota.cpp`, `problems.h`; **Not tested here**: on a real board.)
 
 A problem you do not find here is shown as it came. Write it down (with private values removed) and report it in a GitHub issue.
 
@@ -739,7 +741,7 @@ An illustration of what the lines look like:
 
 ```
 IDENT device aabbccddeeff record ok signer software check not_run
-OTA version 0.10.1
+OTA version 0.11.0
 ONLINE 192.0.2.10 as ledmatrix.local
 LIVE clock synchronised
 LIVE flights ok
@@ -763,7 +765,7 @@ docker compose logs --tail=100 api
 | Line | Meaning |
 | --- | --- |
 | `ledmatrix-api listening on :8080` | Started. |
-| `firmware: version 0.10.2 is published (204800 bytes), signed with key eb6a67ad` | The firmware folder is valid. Logged once per change. It ends `, not signed` for an unsigned release. The key id is public; the signature is never logged. |
+| `firmware: version 0.11.1 is published (204800 bytes), signed with key eb6a67ad` | The firmware folder is valid. Logged once per change. It ends `, not signed` for an unsigned release. The key id is public; the signature is never logged. |
 | `firmware: nothing is published, there is no manifest.json in the firmware folder` | No valid firmware, and the reason in plain words (here: the folder has no manifest). Other reasons for a signed manifest: `the keyid and the sig must be both present or both absent`, `the keyid is not 8 lowercase hex characters`, `the sig is not 128 lowercase hex characters`, `the notes hold a control character`, `the answer would be longer than 2048 bytes`. |
 | `GET "/v1/weather" 200 12ms` | Method, path, status and time. The query is never logged: it holds the display's location. |
 | `device seen aabbccddeeff` | A signed request from this display was accepted. At most once per display per hour, and nothing of what the display asked for is logged. Normal: one line per display per hour. Not logged with `AUTH_OFF=1`. After 256 different devices in an hour, one line says `device seen: more than 256 devices in the last hour, new ones are not logged until older ones expire`. An older image does not print it. |
@@ -1045,7 +1047,7 @@ Then:
 
 - **No planes.** The line under "Data service" says `Flights 12 s ago (0 in range)`: the fetch works and nothing is within your radius and altitude limits. Widen them under "Location" (the defaults are 15 km, 0 to 45,000 ft). A plane is shown once, then not again for 30 minutes.
 - **No headlines.** A headline is shown only once. A quiet topic gives no new headline for long stretches. After a restart only the newest headline per topic is shown. Check that "Headlines" is on and at least one topic is filled in. Topics are searched in the edition you chose under "Headlines language and region", so a topic written in another language finds little. Accents and curly quotes look odd on the panel (see "Change a setting").
-- **No weather.** Weather works anywhere. Inside Portugal (the mainland outline plus Madeira and the Azores, within 100 km of one of IPMA's 35 forecast places) the service uses IPMA. Everywhere else it uses [Open-Meteo](glossary.md#open-meteo). If IPMA fails and has nothing cached, Open-Meteo answers instead. Open-Meteo answers have no place name, so layout B shows `WEATHER`; that is normal. Snow, sleet, thunderstorms and hail show as the rain icon. For Open-Meteo, the service rounds your coordinates to one decimal (about 11 km) before it sends them, and keeps an answer for 15 minutes (up to 3 hours when Open-Meteo is not answering). If weather is missing: a `weather` row with HTTP 502 means neither source answered, so check that the service can reach `api.open-meteo.com` over HTTPS; HTTP 422 means no value at all for the location, which almost never happens (check the location on the map). Open-Meteo's free service is for non-commercial use: a service that is run for others, or paid for by advertising, needs Open-Meteo's paid plan. Open-Meteo keeps request logs with coordinates for up to 90 days, which is why the coordinates are rounded; [security.md](security.md) lists what each data provider sees. The data must be credited as "Weather data by Open-Meteo.com" (it is in the README). (**Checked in the code**: `service/weather.go`, `service/worldwide.go`; **Not tested here**: a real display outside Portugal.) (**Checked in the code**; not tried from outside Portugal.)
+- **No weather.** Weather works anywhere. Inside Portugal (the mainland outline plus Madeira and the Azores, within 100 km of one of IPMA's 35 forecast places) the service uses IPMA. Everywhere else it uses [Open-Meteo](glossary.md#open-meteo). If IPMA fails and has nothing cached, Open-Meteo answers instead. Open-Meteo answers have no place name, so layout B shows `WEATHER`; that is normal. Snow, sleet, thunderstorms and hail show as the rain icon. For Open-Meteo, the service rounds your coordinates to one decimal (about 11 km) before it sends them, and keeps an answer for 15 minutes (up to 3 hours when Open-Meteo is not answering). If weather is missing: a `weather` row with HTTP 502 means the weather provider did not answer (inside Portugal: neither IPMA nor Open-Meteo; outside it, Open-Meteo), so check that the service can reach `api.open-meteo.com` over HTTPS; HTTP 422 means no value at all for the location, which almost never happens (check the location on the map). Open-Meteo's free service is for non-commercial use: a service that is run for others, or paid for by advertising, needs Open-Meteo's paid plan. Open-Meteo keeps request logs with coordinates for up to 90 days, which is why the coordinates are rounded; [security.md](security.md) lists what each data provider sees. The data must be credited as "Weather data by Open-Meteo.com" (it is in the README). (**Checked in the code**: `service/weather.go`, `service/worldwide.go`; **Not tested here**: a real display outside Portugal.) (**Checked in the code**; not tried from outside Portugal.)
 - **A plane with no logo, or no route.** Logos come from your private logo set; without one the display draws a badge with the airline code. Routes come from community data and are missing for some flights.
 - **Everything is slow or times out.** Press **Test connections**. See the known issue below if the lines take about half a minute each.
 
@@ -1123,7 +1125,7 @@ Making a release (raising the number in `arduino/ledmatrix/version.h`, pushing t
    curl -s https://apis.example.com/v1/firmware/manifest
    ```
 
-   Good result: JSON that starts `{"version":"0.10.2","file":"ledmatrix-0.10.2.bin","size":...` and, for a signed release, ends with `"keyid":"eb6a67ad","sig":"<128 hex characters>"}`. Then:
+   Good result: JSON that starts `{"version":"0.11.1","file":"ledmatrix-0.11.1.bin","size":...` and, for a signed release, ends with `"keyid":"eb6a67ad","sig":"<128 hex characters>"}`. Then:
 
    ```
    curl -s "https://apis.example.com/v1/weather?lat=38.7&lon=-9.1"
@@ -1132,13 +1134,13 @@ Making a release (raising the number in `arduino/ledmatrix/version.h`, pushing t
    Good result: `{"error":"The request is not signed.","reason":"missing"}`. To be thorough, download the image and compare its checksum with the manifest's `sha256` (Tested, with a synthetic image: the two matched):
 
    ```
-   curl -s -o check.bin https://apis.example.com/v1/firmware/ledmatrix-0.10.2.bin
+   curl -s -o check.bin https://apis.example.com/v1/firmware/ledmatrix-0.11.1.bin
    shasum -a 256 check.bin
    ```
 
-3. **Check the signature and the logs.** The service's first log line after the deploy says `firmware: version 0.10.2 is published (N bytes), signed with key eb6a67ad` (or `..., not signed`). The workflow run's summary has the line `Signature: ok version=0.10.2 keyid=eb6a67ad`. Locally, with a clone and no key: `python3 -I tools/sign_manifest.py --check manifest.json --keys-header arduino/ledmatrix/update_keys.h` (**Tested** on macOS with throwaway keys: it passes for a good manifest and refuses one signed by a key that is not pinned).
+3. **Check the signature and the logs.** The service's first log line after the deploy says `firmware: version 0.11.1 is published (N bytes), signed with key eb6a67ad` (or `..., not signed`). The workflow run's summary has the line `Signature: ok version=0.11.1 keyid=eb6a67ad`. Locally, with a clone and no key: `python3 -I tools/sign_manifest.py --check manifest.json --keys-header arduino/ledmatrix/update_keys.h` (**Tested** on macOS with throwaway keys: it passes for a good manifest and refuses one signed by a key that is not pinned).
 4. **Check that a display offers it.** In the portal's "Firmware" section press **Check now**, then follow "Update step by step". Without it the display finds the update by itself within 24 hours.
-5. **Watch the first display through its start-up check.** A good release ends with `Version 0.10.2 is running on this display.` A bad one rolls back; "Rollback: when the new version does not pass" shows what that looks like and what the portal says.
+5. **Watch the first display through its start-up check.** A good release ends with `Version 0.11.1 is running on this display.` A bad one rolls back; "Rollback: when the new version does not pass" shows what that looks like and what the portal says.
 
 **Things that can go wrong.**
 
@@ -1149,7 +1151,7 @@ Making a release (raising the number in `arduino/ledmatrix/version.h`, pushing t
 
 ### The maintainer does this once
 
-*Labels: written from the workflow and the contract. **Not done yet**: as of 26 Nov 2026 the GitHub secret is not set and the flag below is still "0". Nothing here was run against GitHub.*
+*Labels: written from the workflow and the contract. **Not done yet**: as of 26 Nov 2026 the GitHub secret is not set and the flag below is still "0", which is why release 0.11.0 went out unsigned. Nothing here was run against GitHub.*
 
 Until it is done, a release goes out unsigned, with a yellow `Unsigned release` warning in the run, and a display that checks signatures refuses it. Do this before the first release that must be signed:
 
@@ -1215,10 +1217,10 @@ Details for the maintainer and for people who read logs. You do not need them to
 
 | Line starts with | Meaning |
 | --- | --- |
-| `ledmatrix 0.10.1` | The start-up banner: the firmware version, as plain text. |
+| `ledmatrix 0.11.0` | The start-up banner: the firmware version, as plain text. |
 | `matrix.begin() = 0` | The panel driver started. `0` is good. |
 | `IDENT device ... record ... signer ... check ...` | The identity at start: the same words as `/status`. |
-| `OTA version 0.10.1` | The firmware version. It adds `(an update to a newer version failed here and was rolled back)` when that record exists. |
+| `OTA version 0.11.0` | The firmware version. It adds `(an update to a newer version failed here and was rolled back)` when that record exists. |
 | `NET state N` | Wi-Fi state: 0 connecting, 1 online, 2 offline, 3 setup. |
 | `ONLINE 192.0.2.10 as ledmatrix.local` | Joined Wi-Fi; the portal is up. The name is your Display name. |
 | `SETUP network "ledmatrix" password ... at 192.168.4.1` | Setup mode started. The network name is your Display name. **It prints the setup network's password.** |
@@ -1239,10 +1241,10 @@ Details for the maintainer and for people who read logs. You do not need them to
 | `PROTECT mode=Dim brightness=10 drift=1,0` | Dim, night or drift changed. |
 | `SCREEN 2/3 weather` | You pressed UP or DOWN and the example screens moved. |
 | `TRUNC "..." -> "..."` | A text was too long for the panel and was cut. |
-| `OTA check: service has 0.10.2, newer: offered` | An update check. Others: `OTA a code is on the panel (service)` (never the code itself), `OTA downloading 0.10.2 (N bytes)`, `OTA download 40%`, `OTA installed 0.10.2`, `OTA restarting into the new firmware`, `OTA failed: ...`, `OTA this image is on probation: boot 1 of at most 3 (image 1a2b3c4d, counter kept in flash)`, `OTA probation: boot 1 of at most 3, 40 s since start, not yet marked good` (every 20 seconds while on probation), `OTA erased the boot counter that an earlier probation left`, `OTA the boot counter could not be read: counting this as boot 1`, `OTA the new firmware passed its start-up check: kept`, `OTA start-up check failed: ...`, `OTA going back to the previous firmware`. |
-| `EVENT update check: The new firmware (version 0.10.2) did not pass its start-up check, ...` | A rollback was added to the Problems list (a note, not a failure: it never starts the panel's `PROBLEM` message). |
+| `OTA check: service has 0.11.1, newer: offered` | An update check. Others: `OTA a code is on the panel (service)` (never the code itself), `OTA downloading 0.11.1 (N bytes)`, `OTA download 40%`, `OTA installed 0.11.1`, `OTA restarting into the new firmware`, `OTA failed: ...`, `OTA this image is on probation: boot 1 of at most 3 (image 1a2b3c4d, counter kept in flash)`, `OTA probation: boot 1 of at most 3, 40 s since start, not yet marked good` (every 20 seconds while on probation), `OTA erased the boot counter that an earlier probation left`, `OTA the boot counter could not be read: counting this as boot 1`, `OTA the new firmware passed its start-up check: kept`, `OTA start-up check failed: ...`, `OTA going back to the previous firmware`. |
+| `EVENT update check: The new firmware (version 0.11.1) did not pass its start-up check, ...` | A rollback was added to the Problems list (a note, not a failure: it never starts the panel's `PROBLEM` message). |
 | `OTA updates must be signed; accepted keys: eb6a67ad dfcb5742` | At start: the key ids this display accepts (public). A development build prints `OTA DEVELOPMENT BUILD: updates are installed without checking a signature`. |
-| `OTA signature of 0.10.2 checks out (key eb6a67ad, 120 ms)` | A manifest was checked and was good. A refusal prints `OTA signature refused (bad_signature, 3 ms)` with one of the codes `unsigned`, `malformed`, `unknown_key`, `bad_signature`, `check_failed`: never the signature itself. |
+| `OTA signature of 0.11.1 checks out (key eb6a67ad, 120 ms)` | A manifest was checked and was good. A refusal prints `OTA signature refused (bad_signature, 3 ms)` with one of the codes `unsigned`, `malformed`, `unknown_key`, `bad_signature`, `check_failed`: never the signature itself. |
 | `LIVE data task stack free N bytes` | Once a minute. For the maintainer. |
 
 ### The shape of `/api/problems`
@@ -1260,7 +1262,7 @@ Details for the maintainer and for people who read logs. You do not need them to
 `GET http://ledmatrix.local/api/update` answers the state of the update machine. It never holds the code. The shape (placeholders; the full list is in [`shared/firmware-update.md`](../shared/firmware-update.md)):
 
 ```json
-{"version":"0.10.1","available":{"version":"0.10.2","notes":"Example release notes","size":1412537,"host":"apis.example.com","signedBy":"eb6a67ad"},"checkedAgo":3600,"state":"idle","source":null,"progress":null,"codeSecondsLeft":null,"triesLeft":null,"error":null,"rolledBack":null,"signing":{"required":true,"keys":["eb6a67ad","dfcb5742"],"refused":null}}
+{"version":"0.11.0","available":{"version":"0.11.1","notes":"Example release notes","size":1412537,"host":"apis.example.com","signedBy":"eb6a67ad"},"checkedAgo":3600,"state":"idle","source":null,"progress":null,"codeSecondsLeft":null,"triesLeft":null,"error":null,"rolledBack":null,"signing":{"required":true,"keys":["eb6a67ad","dfcb5742"],"refused":null}}
 ```
 
 `state` is one of `idle`, `checking`, `waiting_code`, `downloading`, `installing`, `restarting`, `failed` and `probation`. `available` is `null` when there is nothing newer to offer. `rolledBack` holds `{"version":"...","why":"..."}` after a rollback. `signing.keys` lists the key ids the display accepts and `signing.refused` is `null` or the code of the last refused check; `available.signedBy` is the key that verified the offered manifest (`null` in a development build). Key ids are public; no signature or key bytes are ever returned.

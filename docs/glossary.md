@@ -192,7 +192,7 @@ Read [hosting.md](hosting.md), "Path 1: a home server".
 ## Display name
 
 The name of one display, set in the [portal](#portal) under "Wi-Fi and device". The default is `ledmatrix`. It is the display's [mDNS](#mdns) name (`<name>.local`), its name on your router and the name of its own setup Wi-Fi network once you have set one; the Connected screen and the Problem message show it too.
-A name is 1 to 24 characters: letters, digits and hyphens, with no hyphen at either end, and capitals become lower case. Saving a new name restarts the display (about 20 seconds) and the portal follows it to the new address. Two displays on one network need different names; with the same name the second one is answered as `<name>-2.local`, which was not seen on a board yet. A board that has never been set up always starts its setup network as `ledmatrix`.
+A name is 1 to 24 characters: letters, digits and hyphens, with no hyphen at either end, and capitals become lower case. Saving a new name restarts the display (about 20 seconds). If you opened the portal by a `.local` name, the page follows the display to its new address; if you opened it by its IP address, the page reloads at the same IP. Two displays on one network need different names; with the same name the second one is answered as `<name>-2.local`, which was not seen on a board yet. A board that has never been set up always starts its setup network as `ledmatrix`.
 Read [install.md](install.md), "A second display" and [operations.md](operations.md), "Change a setting".
 
 ## DNS
@@ -318,7 +318,7 @@ Read [build.md](build.md), "Get the code".
 ## Google News edition
 
 The language-and-region version of Google News that the headlines come from. The display sends it as three values, `hl`, `gl` and `ceid`.
-You choose one of 12 editions in the portal, under "Headlines language and region". The default is Portuguese (Portugal); your topic words can be in any language.
+You choose one of 12 editions in the portal, under "Headlines language and region". The default is Portuguese (Portugal). Topics are searched inside the edition you pick, so they work best in that edition's language.
 Read [operations.md](operations.md), "Change a setting".
 
 ## Hexadecimal
@@ -395,7 +395,7 @@ Read [architecture.md](architecture.md), "Networks and time".
 
 ## JSON
 
-A plain-text format for structured data, such as `{"version":"0.10.1"}`.
+A plain-text format for structured data, such as `{"version":"0.11.0"}`.
 In this project the service answers the display in small JSON, and the board's `/status` page is JSON too.
 Read [architecture.md](architecture.md), "The service".
 
