@@ -773,6 +773,8 @@ If a problem is not here, or a fix does not work, open an issue at <https://gith
 
 "Mac" is an Apple silicon Mac (macOS 27.0.1, Apple clang 21.0.0, git 2.54.0, Python 3.15.2, arduino-cli 1.6.0, OpenSSL 4.1.0 and LibreSSL 3.3.6, Homebrew mbedtls@3 3.6.8, Chrome 158); "Ubuntu" is an Ubuntu 24.04.5 x86_64 container (emulated on that Mac); "CI" is GitHub's own Linux runner, read from the log of a real run. Nothing was run on a display.
 
+Commit hashes in this section (and in [build.md](build.md), "What was run", and a few other pages) name the history as it was before 27 Nov 2026, when every commit was signed again: the files are identical and the hashes are not. Find the same commit in the current history by its title and date (`git log --oneline`). Published service images keep their old tags, because a tag is a fixed name.
+
 - **25 Nov 2026**, on the repository as committed at `1f9b6a5` (firmware 0.10.1), with the service parts (Go tests, image, local run) run again afterwards on the service code with Go 1.27, the `distroless static-debian13` base image and `MASTER_SECRET_FILE`, then uncommitted.
 - **26 Nov 2026, first part**, on a snapshot of `main` at `0789a98` (firmware 0.10.1): the rows marked "0789a98".
 - **26 Nov 2026, second part**, on snapshots of `main` at `81fe5ea` (signing tools and CI, firmware 0.10.1) and at `1929bf2` (the release commit, firmware 0.11.0): the rows marked with those commits. The Docker engine did not answer on 26 Nov, so nothing that needs Docker was run again (those rows say 25 Nov).
