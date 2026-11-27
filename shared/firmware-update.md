@@ -33,7 +33,7 @@ The service validates the manifest when it starts and re-reads it at most once a
 
 - **Check:** once a day (first check about 5 minutes after the clock is set, then every 24 hours) and when the owner presses "Check now". `GET /v1/firmware/manifest` on the saved service host only, without signature headers, with the same timeouts as the other fetches. The notice shows when the manifest version is strictly newer than `FIRMWARE_VERSION` and is not a version that already failed here (see Rollback). A failed check is a plain sentence in the problem list under `ProblemKind::Update`.
 - **Download:** from `https://<service host><path>` where the path is `/v1/firmware/` plus the manifest's `file` (the manifest's text is only validated, never used as a host or a free path: `file` must match `ledmatrix-<version>.bin`). No redirects. SHA-256 computed while streaming and compared to the manifest at the end; the size must equal the manifest's; the image must pass the ESP-IDF image validation for this chip (ESP32-S3 header, one app slot) before the boot slot is switched. Anything wrong: nothing is switched, the running image stays, a plain sentence in the problem list, the panel returns to normal.
-- **Never stall the display** (more than 1 s between frames) while checking, downloading or flashing: all of it on the data side, never on the render task; flash writes are chunked and the progress is shown on the panel.
+- **Never stall the display** (more than 1 s between frames) while checking, downloading or flashing: all of it on the data side, never on the render task; flash writes are chunked. One deliberate exception, since 0.11.2: while an image is being written the panel is switched off, because every flash erase and write stalls the panel's scan and the whole update flickers (measured: 20 to 40 times the normal variation of the picture for about 14 s). The panel shows the notice `Screen off` for 2.5 s first, switches off for the writes (Protomatter `stop()`), and is lit again for `Restarting`; dark time is not counted as a stalled frame, the render task keeps running, and the portal keeps answering. A failed or cancelled update always lights the panel again.
 - **Version** shown in `/status` as `"version":"0.10.0"` and on the portal.
 
 ## Where the update comes from (known limit)
@@ -48,7 +48,7 @@ Both paths (the service's image and an uploaded `.bin`) need a code shown only o
 - Guessing is throttled: when a code is used up by 3 wrong tries, a new `start` is refused for 60 seconds, then 120, doubling up to 1 hour; a correct code resets it. (The portal has no password; a page in a browser on the LAN could post to it, but only someone who can see the panel can read the code.)
 - `POST /api/update/confirm` with `{"code":"123456"}` starts the download for `source: service`.
 - `POST /api/update/upload` (the forced `.bin`): multipart form with the file and the code, sent by the portal after `start`; the code is checked before the first byte is written to flash, and a wrong code stops the upload. The same SHA-256-less checks apply (valid app image for this chip, fits the slot); there is no manifest to compare against.
-- After success, failure or expiry the panel returns to its normal screen (`Screen::UpdateProgress` while installing).
+- After success, failure or expiry the panel returns to its normal screen (`Screen::UpdateProgress` while installing, dark while the image is written: see above).
 
 ## The board's API for the portal (all JSON, LAN only, no password: the code is the authorisation)
 
