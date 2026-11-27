@@ -28,6 +28,9 @@ struct Reply {
 
 enum class PanelScreen : uint8_t { None, Code, Progress };
 
+// How long the panel shows "Restarting" (lit, at 100 %) before the board restarts, after the last flash write. Long enough to read.
+constexpr uint32_t RESTART_SHOW_MS = 3000;
+
 void begin();  // once, from setup(), after settings::begin(): creates the lock and reads the small saved state (namespace "update")
 const char *version();  // FIRMWARE_VERSION, for /status (read from the marker in the image that the next update looks for)
 const char *signingMode();  // "required" (updates must be signed) or "off" (a development build), for /status
@@ -42,7 +45,7 @@ void dataTick(uint32_t nowMs, bool timeSynced, const Settings &cfg);
 PanelScreen panel(uint32_t nowMs, UpdateView &out);
 
 // The render task, every frame, before it draws: flash writes make the panel flicker, so while an image is written the panel is off
-// (otalogic.h, QuietGate). Blank: call matrix.stop() and draw nothing until Light; Light: matrix.resume(). Never blocks, never locks.
+// (otalogic.h, QuietGate). Blank: show one black frame and draw nothing until Light; Light: draw again. Never blocks, never locks.
 otalogic::QuietGate::Act quietStep(uint32_t nowMs);
 
 // The portal's routes (net.cpp). Bodies are the request's JSON text. No answer ever holds the code.

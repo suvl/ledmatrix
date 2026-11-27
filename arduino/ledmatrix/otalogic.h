@@ -1019,8 +1019,9 @@ inline const char *refusalFallback(int http) {
 // Erasing and writing flash stops the panel's scan interrupts for tens of milliseconds at a time (the cache is off), and a row that
 // is lit when that happens stays lit: a flicker for the whole write. Measured on the real panel on 27 Nov 2026: steady (0.2 %
 // variation of the picture's brightness) before and after, 20 to 40 times that for the 14 s of an update. No setting of the core
-// changes it, so the render task switches the panel off cleanly (Protomatter stop(), outputs low) while an image is written and
-// back on afterwards. The panel first says "Screen off" for HOLD_MS, so nobody takes the dark for a fault.
+// changes it, so the render task puts one black frame on the panel (it keeps scanning it: with every pixel off a stalled scan shows
+// nothing) while an image is written, and draws again afterwards. Protomatter's stop()/resume() was tried first (0.11.2) and does
+// not work: after resume() this panel stays dark. The panel first says "Screen off" for HOLD_MS, so nobody takes the dark for a fault.
 // The render task is the only caller of step(); `want` is the other tasks' volatile flag "an image is being written or checked".
 class QuietGate {
  public:

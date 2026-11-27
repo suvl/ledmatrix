@@ -314,7 +314,7 @@ void registerStationRoutes() {
         sendOta(r);
         if (r.restart) {
           Serial.println("OTA restarting into the uploaded firmware");
-          vTaskDelay(pdMS_TO_TICKS(2000));
+          vTaskDelay(pdMS_TO_TICKS(ota::RESTART_SHOW_MS));  // the panel shows "Restarting" meanwhile
           ESP.restart();
         }
       },

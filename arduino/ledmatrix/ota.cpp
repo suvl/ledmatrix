@@ -469,7 +469,7 @@ bool downloadSink(const uint8_t *p, size_t len, void *ctx) {
 
 [[noreturn]] void restartSoon() {
   Serial.println("OTA restarting into the new firmware");
-  vTaskDelay(pdMS_TO_TICKS(2000));  // the portal polls the state and sees "restarting"
+  vTaskDelay(pdMS_TO_TICKS(RESTART_SHOW_MS));  // the panel shows "Restarting" and the portal polls the state and sees it
   ESP.restart();
   for (;;) vTaskDelay(1000);
 }
