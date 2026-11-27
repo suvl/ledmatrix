@@ -90,6 +90,21 @@ volatile bool onProbation = false;  // this image's slot is NEW or PENDING_VERIF
 uint32_t probationBoots = 0;   // the number of this boot within the probation
 volatile bool started = false;  // begin() has run: the lock, the flow and the problem list exist
 volatile Fail stuckFail = Fail::None;  // a rollback or a confirmation that did not work before begin() ran: reported by the data task
+
+// The panel is switched off while an image is written (otalogic.h, QuietGate: flash writes make it flicker). Set by the installer's task,
+// read by the render task, which switches the panel off and says so in quietBlank; the gate itself belongs to the render task.
+volatile bool quietWanted = false;
+volatile bool quietBlank = false;
+otalogic::QuietGate quietGate;
+// Before the first flash write: ask for the dark and wait (at most the notice plus a second and a half) until the panel is off. A render
+// task that never answers costs the flicker, not the update.
+void quietOn() {
+  quietWanted = true;
+  uint32_t waited = 0;
+  for (; !quietBlank && waited < otalogic::QuietGate::HOLD_MS + 1500; waited += 10) vTaskDelay(pdMS_TO_TICKS(10));
+  Serial.printf("OTA panel %s after %u ms\n", quietBlank ? "is off" : "did not answer", (unsigned)waited);
+}
+void quietOff() { quietWanted = false; }  // the render task lights the panel again within a frame
 char stuckDetail[40] = "";
 
 bool runningValid = false;
@@ -186,7 +201,10 @@ class Installer {
     abort();
     part_ = esp_ota_get_next_update_partition(nullptr);
     if (!part_) return fail(Fail::FlashFailed, "no update slot");
-    // Erased as the writes go (sector by sector), not all at once: no single flash operation is long enough to stall the display.
+    // Erased as the writes go (sector by sector), not all at once, so no single flash operation is long. That does not keep the panel
+    // steady: every erase and write still stops its scan for a moment, and together they flicker for the whole update. So the panel is
+    // switched off from here until the image is checked and the slot chosen (finish) or the attempt ends (abort).
+    quietOn();
     esp_err_t e = esp_ota_begin(part_, OTA_WITH_SEQUENTIAL_WRITES, &h_);
     if (e != ESP_OK) return fail(Fail::FlashFailed, esp_err_to_name(e));
     open_ = true;
@@ -254,6 +272,7 @@ class Installer {
     e = esp_ota_set_boot_partition(part_);  // checks the image once more, then writes the boot slot choice
     if (e != ESP_OK) return fail(e == ESP_ERR_OTA_VALIDATE_FAILED ? Fail::BadImage : Fail::FlashFailed, esp_err_to_name(e));
     clearCount();  // the new image starts its probation at boot 1, whatever an earlier one left behind (only writes when a count is there)
+    quietOff();    // the last flash write is done: the panel is lit again for "Restarting"
     return Fail::None;
   }
 
@@ -281,6 +300,7 @@ class Installer {
   }
 
   void abort() {
+    quietOff();  // whatever ended the attempt (a failure, a cancelled upload, the destructor), the panel comes back
     if (open_) esp_ota_abort(h_);
     open_ = false;
     h_ = 0;
@@ -720,9 +740,16 @@ PanelScreen panel(uint32_t now, UpdateView &out) {
     out.percent = flow.base == State::Downloading ? otalogic::progressPercent(flow.done, flow.total) : 100;
     if (out.percent > 99 && flow.base == State::Downloading) out.percent = 99;  // 100 is for when everything has arrived
     strlcpy(out.line, otalogic::progressWord(flow.base, flow.source, fetchingManifest), sizeof(out.line));
+    if (quietGate.notice()) strlcpy(out.line, "Screen off", sizeof(out.line));  // the next few seconds are dark: say so while it is still lit
   }
   unlock();
   return s;
+}
+
+otalogic::QuietGate::Act quietStep(uint32_t nowMs) {
+  otalogic::QuietGate::Act a = quietGate.step(quietWanted, nowMs);
+  quietBlank = quietGate.blank();
+  return a;
 }
 
 // ---- public: the portal's routes -----------------------------------------------------------------------------------------

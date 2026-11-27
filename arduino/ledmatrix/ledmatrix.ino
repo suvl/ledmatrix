@@ -64,6 +64,8 @@ static volatile bool gMatrixOk = false;
 
 // Frame timing while online (the boot is exempt from the 1 s budget); shown in /status for the soak test.
 volatile uint32_t gFrames = 0, gFrameMaxMs = 0, gFramesOver1s = 0;
+static uint32_t sLastShow = 0;  // the render task's: when the last frame was shown (0: not measured)
+static bool sQuiet = false;     // the render task's: the panel is switched off for a flash write (see renderTask)
 
 // Protomatter has no brightness control, so the finished frame is scaled before it is sent to the panel.
 // The panel runs at 6 bits per colour so that dimmed pictures keep their shades.
@@ -179,6 +181,27 @@ static void renderTask(void *) {
   for (;;) {
     if (gMatrixOk) {
       uint32_t now = millis();
+      // An image is being written to flash: every erase and write stalls the panel's scan and the whole update flickers (measured), so
+      // the panel is switched off for it, after a "Screen off" notice (ota.h, otalogic.h QuietGate). Dark time is not a stalled frame.
+      switch (ota::quietStep(now)) {
+        case otalogic::QuietGate::Act::Blank:
+          Serial.println("QUIET panel off");
+          matrix.stop();
+          sQuiet = true;
+          Serial.println("QUIET panel is off");
+          break;
+        case otalogic::QuietGate::Act::Light:
+          matrix.resume();
+          sQuiet = false;
+          Serial.println("QUIET panel on");
+          break;
+        default: break;
+      }
+      if (sQuiet) {
+        sLastShow = 0;  // the first frame after the dark is not measured against the last one before it
+        vTaskDelay(pdMS_TO_TICKS(33));
+        continue;
+      }
       NetInfo ni = netInfo();
       Settings cfg = settings::get();
       LiveView lv = liveView(now, cfg);
@@ -282,14 +305,13 @@ static void renderTask(void *) {
       if (hold > 8) matrix.fillRect(0, 31, PANEL_W * hold / 100, 1, matrix.color565(255, 176, 0));  // long-press progress
       applyBrightness(out.brightness);
       matrix.show();
-      static uint32_t lastShow = 0;
       uint32_t t = millis();
-      if (ni.state == NetState::Online && lastShow) {
-        uint32_t gap = t - lastShow;
+      if (ni.state == NetState::Online && sLastShow) {
+        uint32_t gap = t - sLastShow;
         if (gap > gFrameMaxMs) gFrameMaxMs = gap;
         if (gap > 1000) gFramesOver1s = gFramesOver1s + 1;
       }
-      lastShow = ni.state == NetState::Online ? t : 0;
+      sLastShow = ni.state == NetState::Online ? t : 0;
       gFrames = gFrames + 1;
     }
     vTaskDelay(pdMS_TO_TICKS(33));

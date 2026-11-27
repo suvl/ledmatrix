@@ -988,6 +988,40 @@ static void testFlowTransitions() {
   CHECK(strcmp(sourceName(Source::Upload), "upload") == 0 && sourceName(Source::None) == nullptr);
 }
 
+static void testQuietGate() {
+  SECTION("quiet gate (the panel is off while flash is written)");
+  using Act = QuietGate::Act;
+  QuietGate g;
+  CHECK(g.step(false, 1000) == Act::None && !g.notice() && !g.blank());  // nothing wanted: nothing happens, however often it is asked
+  CHECK(g.step(false, 2000) == Act::None);
+  // wanted at t = 10 s: the notice shows at once, the panel goes dark only after HOLD_MS
+  CHECK(g.step(true, 10000) == Act::None && g.notice() && !g.blank());
+  CHECK(g.step(true, 10000 + QuietGate::HOLD_MS - 1) == Act::None && g.notice() && !g.blank());
+  CHECK(g.step(true, 10000 + QuietGate::HOLD_MS) == Act::Blank && !g.notice() && g.blank());
+  CHECK(g.step(true, 10000 + QuietGate::HOLD_MS + 1) == Act::None && g.blank());  // Blank is returned once, not every frame
+  CHECK(g.step(true, 10000 + 30000) == Act::None && g.blank());
+  // not wanted any more: lit again, once
+  CHECK(g.step(false, 50000) == Act::Light && !g.blank() && !g.notice());
+  CHECK(g.step(false, 50033) == Act::None);
+  // a write that ends (or fails) during the notice: the panel never goes dark, and there is nothing to light
+  CHECK(g.step(true, 60000) == Act::None && g.notice());
+  CHECK(g.step(false, 60500) == Act::None && !g.notice() && !g.blank());
+  CHECK(g.step(false, 90000) == Act::None);
+  // the hold starts again for the next write
+  CHECK(g.step(true, 100000) == Act::None && g.notice());
+  CHECK(g.step(true, 100000 + QuietGate::HOLD_MS - 1) == Act::None);
+  CHECK(g.step(true, 100000 + QuietGate::HOLD_MS) == Act::Blank);
+  CHECK(g.step(false, 101000 + QuietGate::HOLD_MS) == Act::Light);
+  // the millisecond counter wraps in the middle of the hold
+  QuietGate w;
+  uint32_t t0 = 0xFFFFFFFFu - 1000;
+  CHECK(w.step(true, t0) == Act::None && w.notice());
+  CHECK(w.step(true, t0 + 1000) == Act::None);  // still before the wrap
+  CHECK(w.step(true, t0 + QuietGate::HOLD_MS - 1) == Act::None);  // after the wrap, one millisecond short
+  CHECK(w.step(true, t0 + QuietGate::HOLD_MS) == Act::Blank);
+  CHECK(w.step(false, t0 + QuietGate::HOLD_MS + 10) == Act::Light);
+}
+
 static void testProgress() {
   SECTION("progress");
   CHECK(progressPercent(0, 0) == 0);
@@ -1887,6 +1921,7 @@ int main(int argc, char **argv) {
   testFlowAllow();
   testFlowTransitions();
   testProgress();
+  testQuietGate();
   testSchedule();
   testHealth();
   testHealthSoak();

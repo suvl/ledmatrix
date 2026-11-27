@@ -13,6 +13,7 @@
 #pragma once
 #include <Arduino.h>
 
+#include "otalogic.h"
 #include "screens.h"
 #include "settings.h"
 
@@ -39,6 +40,10 @@ void dataTick(uint32_t nowMs, bool timeSynced, const Settings &cfg);
 // The render task, every frame: which update screen is wanted, with its data filled in `out` (not touched when None comes back).
 // The code is in `out` only while the code screen is wanted; it never goes anywhere else.
 PanelScreen panel(uint32_t nowMs, UpdateView &out);
+
+// The render task, every frame, before it draws: flash writes make the panel flicker, so while an image is written the panel is off
+// (otalogic.h, QuietGate). Blank: call matrix.stop() and draw nothing until Light; Light: matrix.resume(). Never blocks, never locks.
+otalogic::QuietGate::Act quietStep(uint32_t nowMs);
 
 // The portal's routes (net.cpp). Bodies are the request's JSON text. No answer ever holds the code.
 Reply apiState();                              // GET  /api/update

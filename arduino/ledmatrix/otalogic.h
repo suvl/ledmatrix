@@ -1015,4 +1015,43 @@ inline const char *refusalFallback(int http) {
   }
 }
 
+// ---- the panel while flash is written -----------------------------------------------------------------------------------------
+// Erasing and writing flash stops the panel's scan interrupts for tens of milliseconds at a time (the cache is off), and a row that
+// is lit when that happens stays lit: a flicker for the whole write. Measured on the real panel on 27 Nov 2026: steady (0.2 %
+// variation of the picture's brightness) before and after, 20 to 40 times that for the 14 s of an update. No setting of the core
+// changes it, so the render task switches the panel off cleanly (Protomatter stop(), outputs low) while an image is written and
+// back on afterwards. The panel first says "Screen off" for HOLD_MS, so nobody takes the dark for a fault.
+// The render task is the only caller of step(); `want` is the other tasks' volatile flag "an image is being written or checked".
+class QuietGate {
+ public:
+  enum class Act : uint8_t { None, Blank, Light };
+  static constexpr uint32_t HOLD_MS = 2500;  // how long the notice shows before the panel goes dark
+  Act step(bool want, uint32_t nowMs) {
+    if (want) {
+      if (!wanting_) {
+        wanting_ = true;
+        since_ = nowMs;
+      }
+      if (!blank_ && (uint32_t)(nowMs - since_) >= HOLD_MS) {  // unsigned difference: the millisecond counter may wrap
+        blank_ = true;
+        return Act::Blank;
+      }
+      return Act::None;
+    }
+    wanting_ = false;
+    if (blank_) {
+      blank_ = false;
+      return Act::Light;
+    }
+    return Act::None;
+  }
+  bool notice() const { return wanting_ && !blank_; }  // the "Screen off" line is on the panel (the panel is still lit)
+  bool blank() const { return blank_; }                // the panel is off: the installer may write
+
+ private:
+  bool wanting_ = false;
+  bool blank_ = false;
+  uint32_t since_ = 0;
+};
+
 }  // namespace otalogic
