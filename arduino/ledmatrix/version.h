@@ -3,5 +3,5 @@
 // when the published version is strictly newer than this one.
 #pragma once
 #ifndef FIRMWARE_VERSION  // a test build may override it with -DFIRMWARE_VERSION=\"x.y.z\"; the build workflow reads the line below
-#define FIRMWARE_VERSION "0.11.0"
+#define FIRMWARE_VERSION "0.11.1"
 #endif
